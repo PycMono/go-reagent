@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -19,6 +20,7 @@ const defaultMaxParallelTools = 4
 type AgentEngine struct {
 	provider provider.LLMProvider
 	registry tools.Registry
+	composer *ctxpkg.PromptComposer
 
 	// WorkDir (工作区): 借鉴 OpenClaw 的理念，Agent 必须有一个明确的物理边界
 	WorkDir string
@@ -39,6 +41,7 @@ func NewAgentEngine(
 	return &AgentEngine{
 		provider:         p,
 		registry:         r,
+		composer:         ctxpkg.NewPromptComposer(workDir),
 		WorkDir:          workDir,
 		EnableThinking:   enableThinking,
 		MaxParallelTools: defaultMaxParallelTools,
@@ -66,14 +69,9 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 		logsdk.Any("thinking_enabled", e.EnableThinking),
 	)
 
+	systemMessage := e.composer.Build()
 	contextHistory := []schema.Message{
-		{
-			Role: schema.RoleSystem,
-			Content: `You are go-reagent, an expert coding assistant.
-You may call workspace tools only when tool definitions are provided in the current request.
-When no tools are provided, you are in the Thinking phase: only make a plan, never simulate tool calls, never claim a tool ran, and never invent file contents.
-After real tool results are present, use those observations in the next Action response and provide the complete user-facing answer.`,
-		},
+		systemMessage,
 		{
 			Role:    schema.RoleUser,
 			Content: userPrompt,

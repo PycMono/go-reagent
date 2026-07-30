@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -141,6 +143,60 @@ func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 	}
 	if calls := registry.Calls(); len(calls) != 0 {
 		t.Fatalf("tool calls = %d, want 0", len(calls))
+	}
+}
+
+func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
+	workDir := t.TempDir()
+	agentsPath := filepath.Join(workDir, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("engine-agent-guide-v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(workDir, ".claw", "skills", "engine")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: engine-skill\ndescription: engine-trigger\n---\nengine-body"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &fakeProvider{responses: []*schema.Message{
+		{Role: schema.RoleAssistant, Content: "done one"},
+		{Role: schema.RoleAssistant, Content: "done two"},
+	}}
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
+	if err := agentEngine.Run(context.Background(), "hello one", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := provider.requests[0]
+	if len(request) != 2 || request[0].Role != schema.RoleSystem || request[1].Content != "hello one" {
+		t.Fatalf("initial context = %#v", request)
+	}
+	for _, want := range []string{"engine-agent-guide-v1", "engine-skill", "engine-body"} {
+		if !strings.Contains(request[0].Content, want) {
+			t.Fatalf("system prompt missing %q: %q", want, request[0].Content)
+		}
+	}
+
+	if err := os.WriteFile(agentsPath, []byte("engine-agent-guide-v2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentEngine.Run(context.Background(), "hello two", nil); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+
+	secondRequest := provider.requests[1]
+	if len(secondRequest) != 2 || secondRequest[1].Content != "hello two" {
+		t.Fatalf("second initial context = %#v", secondRequest)
+	}
+	if !strings.Contains(secondRequest[0].Content, "engine-agent-guide-v2") ||
+		strings.Contains(secondRequest[0].Content, "engine-agent-guide-v1") {
+		t.Fatalf("second system prompt did not refresh AGENTS.md: %q", secondRequest[0].Content)
 	}
 }
 
