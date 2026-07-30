@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/logtest"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -139,6 +141,73 @@ func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 	}
 	if calls := registry.Calls(); len(calls) != 0 {
 		t.Fatalf("tool calls = %d, want 0", len(calls))
+	}
+}
+
+func TestAgentEngineEmitsStructuredLifecycleLogs(t *testing.T) {
+	recorder := &logtest.Recorder{}
+	logsdk.SetLogger(recorder)
+	t.Cleanup(func() {
+		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
+	})
+
+	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+	if err := agentEngine.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	started, ok := recorder.Find("info", "Agent 引擎启动")
+	if !ok || started.Fields["component"] != "engine" || started.Fields["work_dir"] != "/workspace" || started.Fields["thinking_enabled"] != false {
+		t.Fatalf("start event = %#v, found = %v", started, ok)
+	}
+	turn, ok := recorder.Find("info", "Agent 轮次开始")
+	if !ok || turn.Fields["turn"] != 1 {
+		t.Fatalf("turn event = %#v, found = %v", turn, ok)
+	}
+	phase, ok := recorder.Find("info", "Action 阶段开始")
+	if !ok || phase.Fields["phase"] != "action" || phase.Fields["turn"] != 1 {
+		t.Fatalf("phase event = %#v, found = %v", phase, ok)
+	}
+}
+
+func TestAgentEngineEmitsStructuredToolLogs(t *testing.T) {
+	recorder := &logtest.Recorder{}
+	logsdk.SetLogger(recorder)
+	t.Cleanup(func() {
+		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
+	})
+
+	provider := &fakeProvider{responses: []*schema.Message{
+		{
+			Role: schema.RoleAssistant,
+			ToolCalls: []schema.ToolCall{
+				{ID: "call-success", Name: "success", Arguments: json.RawMessage(`{"path":"README.md"}`)},
+				{ID: "call-error", Name: "error", Arguments: json.RawMessage(`{"path":"missing"}`)},
+			},
+		},
+		{Role: schema.RoleAssistant, Content: "done"},
+	}}
+	registry := &fakeRegistry{results: map[string]schema.ToolResult{
+		"success": {Output: "ok"},
+		"error":   {Output: "boom", IsError: true},
+	}}
+	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	if err := agentEngine.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	started, ok := recorder.Find("info", "工具执行开始")
+	if !ok || started.Fields["component"] != "engine" || started.Fields["tool_index"] != 0 || started.Fields["tool"] != "success" || started.Fields["tool_call_id"] != "call-success" || string(started.Fields["arguments"].(json.RawMessage)) != `{"path":"README.md"}` {
+		t.Fatalf("start event = %#v, found = %v", started, ok)
+	}
+	succeeded, ok := recorder.Find("info", "工具执行成功")
+	if !ok || succeeded.Fields["result_bytes"] != 2 {
+		t.Fatalf("success event = %#v, found = %v", succeeded, ok)
+	}
+	failed, ok := recorder.Find("error", "工具执行失败")
+	if !ok || failed.Fields["tool"] != "error" || failed.Fields["tool_call_id"] != "call-error" || failed.Fields["result"] != "boom" {
+		t.Fatalf("failure event = %#v, found = %v", failed, ok)
 	}
 }
 
