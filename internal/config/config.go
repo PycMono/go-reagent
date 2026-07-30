@@ -19,6 +19,17 @@ const (
 type Config struct {
 	CurrentPlatform string           `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []PlatformConfig `json:"platforms" yaml:"platforms" toml:"platforms"`
+	Bot             BotConfig        `json:"bot" yaml:"bot" toml:"bot"`
+}
+
+// BotConfig describes optional external notification channels.
+type BotConfig struct {
+	WeCom WeComConfig `json:"wecom" yaml:"wecom" toml:"wecom"`
+}
+
+// WeComConfig configures outbound enterprise WeChat group notifications.
+type WeComConfig struct {
+	WebhookURL string `json:"webhookURL" yaml:"webhookURL" toml:"webhookURL"`
 }
 
 // PlatformConfig is one self-contained model platform profile.
@@ -67,6 +78,9 @@ func (c *Config) normalizeAndValidate() error {
 	if len(c.Platforms) == 0 {
 		return errors.New("platforms 不能为空")
 	}
+	if err := c.Bot.normalizeAndValidate(); err != nil {
+		return err
+	}
 
 	ids := make(map[string]struct{}, len(c.Platforms))
 	for index := range c.Platforms {
@@ -87,6 +101,18 @@ func (c *Config) normalizeAndValidate() error {
 	}
 	if current.APIKey == "" {
 		return fmt.Errorf("当前平台 %q 未配置 apiKey", current.ID)
+	}
+	return nil
+}
+
+func (c *BotConfig) normalizeAndValidate() error {
+	c.WeCom.WebhookURL = strings.TrimSpace(c.WeCom.WebhookURL)
+	if c.WeCom.WebhookURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(c.WeCom.WebhookURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return errors.New("bot.wecom.webhookURL 必须是带 Host 的 HTTPS URL")
 	}
 	return nil
 }
