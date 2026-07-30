@@ -42,8 +42,8 @@ go-reagent/
 ├── config.json                  # 本地平台配置（已被 Git 忽略）
 ├── cmd/
 │   └── reagent/
-│       ├── main.go              # 组装真实 Provider、Registry 和 read_file
-│       └── main_test.go         # 启动配置与真实工具组装测试
+│       ├── main.go              # 组装日志、Provider、Registry 和文件工具
+│       └── main_test.go         # 启动配置、日志与真实工具组装测试
 ├── internal/
 │   ├── config/              # 启动配置层
 │   │   ├── config.go        # 严格加载、校验与选择当前平台
@@ -51,6 +51,8 @@ go-reagent/
 │   ├── engine/              # 核心引擎层
 │   │   ├── loop.go          # AgentEngine、ReAct Main Loop 与有界工具调度
 │   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
+│   ├── logtest/             # 日志测试支持
+│   │   └── recorder.go      # 并发安全的 logsdk.Logger 记录器
 │   ├── provider/            # 模型适配层
 │   │   ├── interface.go     # LLM Provider 接口
 │   │   ├── factory.go       # 根据协议创建 Provider
@@ -88,7 +90,7 @@ engine ──► provider ──► schema
 
 - Go 1.26 或更高版本
 
-项目使用 OpenAI Go v3 和 Anthropic Go SDK。
+项目使用 OpenAI Go v3、Anthropic Go SDK 和 `go-logger-sdk` v1.0.5。
 
 ## 快速开始
 
@@ -176,6 +178,9 @@ Configor 会先加载基础文件，再加载同目录下的环境文件，例�
 模型的内部思考 Trace 和最终回复仍以纯文本输出，因此直接运行命令时会看到 JSON 运行日志与
 模型文本结果共存；接入日志平台时应按 JSON 行采集运行日志。
 
+`go-logger-sdk` v1.0.5 的 `caller` 字段目前指向 SDK 内部方法，而不是实际业务调用位置。
+排查日志时应以 `component`、`turn`、`phase`、`tool` 和 `tool_call_id` 等结构化字段为准。
+
 ### 工具并发调度
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
@@ -218,6 +223,7 @@ go test ./...
 - 配置驱动的 OpenAI Chat Completions 兼容 Provider。
 - 配置驱动的 Anthropic Messages 兼容 Provider。
 - 通过 `currentPlatform` 一键切换 DeepSeek、智谱或其他兼容服务。
+- 基于 `go-logger-sdk` 的 JSON 运行日志，以及 Bootstrap、Engine 和 Registry 的结构化上下文字段。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的真实 `read_file` 和 `edit_file` 工具。
