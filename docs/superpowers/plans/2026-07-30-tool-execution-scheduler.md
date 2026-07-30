@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Internal imports remain `go-reagent/internal/...`.
+- Internal imports remain `github.com/PycMono/go-reagent/internal/...`.
 - Provider and Registry source files remain unchanged.
 - Provider requests continue to expose only tool name, description, and input Schema.
 - `ParallelSafe` defaults to false; unknown and unmarked tools are exclusive barriers.

@@ -45,8 +45,8 @@ func TestConfigurationPathUsesOptionalEnvironmentOverride(t *testing.T) {
 		t.Fatalf("configurationPath() = %q", got)
 	}
 
-	t.Setenv("CONFIG_PATH", " /secure/claw.json ")
-	if got := configurationPath(); got != "/secure/claw.json" {
+	t.Setenv("CONFIG_PATH", " /secure/reagent.json ")
+	if got := configurationPath(); got != "/secure/reagent.json" {
 		t.Fatalf("configurationPath() = %q", got)
 	}
 }

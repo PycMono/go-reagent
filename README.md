@@ -41,7 +41,7 @@ go-reagent/
 ├── config.example.json          # 不含真实密钥的平台配置模板
 ├── config.json                  # 本地平台配置（已被 Git 忽略）
 ├── cmd/
-│   └── claw/
+│   └── reagent/
 │       ├── main.go              # 组装真实 Provider、Registry 和 read_file
 │       └── main_test.go         # 启动配置与真实工具组装测试
 ├── internal/
