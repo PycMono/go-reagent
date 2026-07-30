@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
+	go.uber.org/fx v1.23.0
 )
 
 require (
@@ -22,6 +23,9 @@ require (
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	go.uber.org/dig v1.18.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/zap v1.26.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
