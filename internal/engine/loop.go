@@ -57,16 +57,22 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		return errors.New("engine: context is required")
 	}
 
-	logsdk.Info(ctx, "Agent 引擎启动",
+	logsdk.Info(ctx, "[Engine] 引擎启动，锁定工作区",
 		logsdk.Any("component", "engine"),
 		logsdk.Any("work_dir", e.WorkDir),
+	)
+	logsdk.Info(ctx, "[Engine] 慢思考模式 (Thinking Phase)",
+		logsdk.Any("component", "engine"),
 		logsdk.Any("thinking_enabled", e.EnableThinking),
 	)
 
 	contextHistory := []schema.Message{
 		{
-			Role:    schema.RoleSystem,
-			Content: "You are go-reagent, an expert coding assistant. You have full access to tools in the workspace.",
+			Role: schema.RoleSystem,
+			Content: `You are go-reagent, an expert coding assistant.
+You may call workspace tools only when tool definitions are provided in the current request.
+When no tools are provided, you are in the Thinking phase: only make a plan, never simulate tool calls, never claim a tool ran, and never invent file contents.
+After real tool results are present, use those observations in the next Action response and provide the complete user-facing answer.`,
 		},
 		{
 			Role:    schema.RoleUser,
@@ -82,7 +88,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		}
 
 		turnCount++
-		logsdk.Info(ctx, "Agent 轮次开始",
+		logsdk.Info(ctx, fmt.Sprintf("========== [Turn %d] 开始 ==========", turnCount),
 			logsdk.Any("component", "engine"),
 			logsdk.Any("turn", turnCount),
 		)
@@ -98,7 +104,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 				return fmt.Errorf("Agent 运行已取消: %w", err)
 			}
 
-			logsdk.Info(ctx, "Thinking 阶段开始",
+			logsdk.Info(ctx, "[Engine][Phase 1] 剥夺工具访问权，强制进入慢思考与规划阶段",
 				logsdk.Any("component", "engine"),
 				logsdk.Any("turn", turnCount),
 				logsdk.Any("phase", "thinking"),
@@ -115,7 +121,6 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 			}
 
 			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkResp.Content)
-			contextHistory = append(contextHistory, *thinkResp)
 		}
 
 		// ====================================================================
@@ -124,7 +129,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("Agent 运行已取消: %w", err)
 		}
-		logsdk.Info(ctx, "Action 阶段开始",
+		logsdk.Info(ctx, "[Engine][Phase 2] 恢复工具挂载，等待模型采取行动",
 			logsdk.Any("component", "engine"),
 			logsdk.Any("turn", turnCount),
 			logsdk.Any("phase", "action"),
@@ -148,7 +153,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 		}
 
 		if len(actionResp.ToolCalls) == 0 {
-			logsdk.Info(ctx, "模型未请求调用工具，任务完成",
+			logsdk.Info(ctx, "[Engine] 模型未请求调用工具，任务宣告完成",
 				logsdk.Any("component", "engine"),
 				logsdk.Any("turn", turnCount),
 			)
@@ -158,20 +163,83 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
 			return fmt.Errorf("Action 阶段返回了无效的工具调用: %w", err)
 		}
 
-		logsdk.Info(ctx, "调度工具调用",
+		executionMode := e.actionExecutionMode(actionResp.ToolCalls, availableTools)
+		scheduleMessage := fmt.Sprintf("[Engine] 模型请求调用 %d 个工具", len(actionResp.ToolCalls))
+		switch executionMode {
+		case "parallel":
+			scheduleMessage = fmt.Sprintf("[Engine] 模型请求并发调用 %d 个工具", len(actionResp.ToolCalls))
+		case "mixed":
+			scheduleMessage = fmt.Sprintf("[Engine] 模型请求混合调度 %d 个工具", len(actionResp.ToolCalls))
+		}
+		logsdk.Info(ctx, scheduleMessage,
 			logsdk.Any("component", "engine"),
 			logsdk.Any("turn", turnCount),
 			logsdk.Any("tool_count", len(actionResp.ToolCalls)),
+			logsdk.Any("execution_mode", executionMode),
 		)
 
 		observationMsgs, err := e.executeToolCalls(ctx, actionResp.ToolCalls, availableTools)
 		if err != nil {
 			return fmt.Errorf("Agent 运行已取消: %w", err)
 		}
+		aggregationMessage := "[Engine] 所有工具执行完毕，开始聚合观察结果 (Observation)"
+		switch executionMode {
+		case "parallel":
+			aggregationMessage = "[Engine] 所有并发工具执行完毕，开始聚合观察结果 (Observation)"
+		case "mixed":
+			aggregationMessage = "[Engine] 混合工具执行完毕，开始聚合观察结果 (Observation)"
+		}
+		logsdk.Info(ctx, aggregationMessage,
+			logsdk.Any("component", "engine"),
+			logsdk.Any("turn", turnCount),
+			logsdk.Any("tool_count", len(actionResp.ToolCalls)),
+			logsdk.Any("execution_mode", executionMode),
+		)
 		contextHistory = append(contextHistory, observationMsgs...)
 	}
 
 	return nil
+}
+
+func (e *AgentEngine) actionExecutionMode(
+	calls []schema.ToolCall,
+	definitions []schema.ToolDefinition,
+) string {
+	if len(calls) == 0 || e.MaxParallelTools <= 1 {
+		return "serial"
+	}
+	parallelSafe := make(map[string]bool, len(definitions))
+	for _, definition := range definitions {
+		parallelSafe[definition.Name] = definition.ParallelSafe
+	}
+
+	hasParallelWave := false
+	hasSerialCall := false
+	for start := 0; start < len(calls); {
+		if !parallelSafe[calls[start].Name] {
+			hasSerialCall = true
+			start++
+			continue
+		}
+		end := start + 1
+		for end < len(calls) && parallelSafe[calls[end].Name] {
+			end++
+		}
+		if end-start > 1 {
+			hasParallelWave = true
+		} else {
+			hasSerialCall = true
+		}
+		start = end
+	}
+
+	if hasParallelWave && hasSerialCall {
+		return "mixed"
+	}
+	if hasParallelWave {
+		return "parallel"
+	}
+	return "serial"
 }
 
 func (e *AgentEngine) executeToolCalls(
@@ -191,7 +259,7 @@ func (e *AgentEngine) executeToolCalls(
 		}
 
 		if !parallelSafe[calls[start].Name] {
-			observations[start] = e.executeToolCall(ctx, start, calls[start])
+			observations[start] = e.executeToolCall(ctx, start, calls[start], false)
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -226,6 +294,7 @@ func (e *AgentEngine) executeParallelWave(
 	if waveSize := end - start; limit > waveSize {
 		limit = waveSize
 	}
+	parallel := limit > 1
 
 	semaphore := make(chan struct{}, limit)
 	var waitGroup sync.WaitGroup
@@ -245,26 +314,45 @@ func (e *AgentEngine) executeParallelWave(
 				return
 			}
 
-			observations[index] = e.executeToolCall(ctx, index, call)
+			observations[index] = e.executeToolCall(ctx, index, call, parallel)
 		}(index, call)
 	}
 	waitGroup.Wait()
 	return ctx.Err()
 }
 
-func (e *AgentEngine) executeToolCall(ctx context.Context, index int, call schema.ToolCall) schema.Message {
+func (e *AgentEngine) executeToolCall(
+	ctx context.Context,
+	index int,
+	call schema.ToolCall,
+	parallel bool,
+) schema.Message {
 	commonFields := []logsdk.Fields{
 		logsdk.Any("component", "engine"),
 		logsdk.Any("tool_index", index),
 		logsdk.Any("tool", call.Name),
 		logsdk.Any("tool_call_id", call.ID),
+		logsdk.Any("parallel", parallel),
 	}
-	logsdk.Info(ctx, "工具执行开始", append(commonFields, logsdk.Any("arguments", call.Arguments))...)
+	mode := "串行"
+	if parallel {
+		mode = "并行"
+	}
+	logsdk.Info(ctx,
+		fmt.Sprintf("  -> [Go-%d] 🛠️ 触发%s执行", index, mode),
+		append(commonFields, logsdk.Any("arguments", call.Arguments))...,
+	)
 	result := e.registry.Execute(ctx, call)
 	if result.IsError {
-		logsdk.Error(ctx, "工具执行失败", append(commonFields, logsdk.Any("result", result.Output))...)
+		logsdk.Error(ctx,
+			fmt.Sprintf("  -> [Go-%d] ❌ 工具执行失败", index),
+			append(commonFields, logsdk.Any("result", result.Output))...,
+		)
 	} else {
-		logsdk.Info(ctx, "工具执行成功", append(commonFields, logsdk.Any("result_bytes", len(result.Output)))...)
+		logsdk.Info(ctx,
+			fmt.Sprintf("  -> [Go-%d] ✅ 工具执行成功", index),
+			append(commonFields, logsdk.Any("result_bytes", len(result.Output)))...,
+		)
 	}
 	return schema.Message{
 		Role:       schema.RoleUser,

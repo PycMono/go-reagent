@@ -72,7 +72,7 @@ func (r *registryImpl) Register(tool BaseTool) (err error) {
 		return fmt.Errorf("tool %q is already registered", name)
 	}
 	r.tools[name] = tool
-	logsdk.Info(context.Background(), "工具注册成功",
+	logsdk.Info(context.Background(), "[Registry] 成功挂载工具",
 		logsdk.Any("component", "registry"),
 		logsdk.Any("tool", name),
 	)

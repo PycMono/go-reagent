@@ -203,7 +203,7 @@ func TestRegistryEmitsStructuredRegistrationAndPanicLogs(t *testing.T) {
 	}
 	_ = registry.Execute(context.Background(), schema.ToolCall{ID: "call-panic", Name: "panic"})
 
-	registered, ok := recorder.Find("info", "工具注册成功")
+	registered, ok := recorder.Find("info", "[Registry] 成功挂载工具")
 	if !ok || registered.Fields["component"] != "registry" || registered.Fields["tool"] != "panic" {
 		t.Fatalf("registration event = %#v, found = %v", registered, ok)
 	}
