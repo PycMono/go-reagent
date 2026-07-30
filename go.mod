@@ -3,6 +3,7 @@ module github.com/PycMono/go-reagent
 go 1.26
 
 require (
+	github.com/PycMono/go-logger-sdk v1.0.5
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
@@ -10,7 +11,6 @@ require (
 
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/PycMono/go-logger-sdk v1.0.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.6.0 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect

@@ -166,6 +166,16 @@ Configor 会先加载基础文件，再加载同目录下的环境文件，例�
 当前入口开启慢思考模式，挂载真实 `read_file` 和 `edit_file` 工具，默认要求模型同时读取并总结
 `README.md`、`go.mod` 和 `cmd/reagent/main.go`。
 
+### 日志输出
+
+运行日志通过 `go-logger-sdk` 以 JSON 写入 stdout，每条日志都包含
+`module=go-reagent`，并通过 `component`、`turn`、`phase`、`tool` 和
+`tool_call_id` 等结构化字段标识来源与执行上下文。平台启动日志只记录平台 ID、协议和模型，
+不会记录 API Key、Authorization Header 或完整平台配置。
+
+模型的内部思考 Trace 和最终回复仍以纯文本输出，因此直接运行命令时会看到 JSON 运行日志与
+模型文本结果共存；接入日志平台时应按 JSON 行采集运行日志。
+
 ### 工具并发调度
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
