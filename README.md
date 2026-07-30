@@ -147,7 +147,7 @@ go run ./cmd/reagent
 | `CONFIG_PATH` | `config.json` | 指定其他平台配置文件 |
 | `CONFIGOR_ENV` | `development`（测试时为 `test`） | 加载环境叠加文件，如 `config.production.json` |
 | `CONFIGOR_CURRENTPLATFORM` | 配置文件中的值 | 覆盖当前平台选择 |
-| `AGENT_PROMPT` | 并行读取并总结三个项目文件 | 覆盖启动测试任务 |
+| `AGENT_PROMPT` | 并行读取并总结 `a.txt`、`b.txt`、`c.txt` | 覆盖启动测试任务 |
 
 例如使用另一份配置：
 
@@ -166,7 +166,7 @@ Configor 会先加载基础文件，再加载同目录下的环境文件，例�
 `config.json` 已加入 `.gitignore`，不要把真实 API Key 写入 `config.example.json`。
 
 当前入口开启慢思考模式，挂载真实 `read_file` 和 `edit_file` 工具，默认要求模型同时读取并总结
-`README.md`、`go.mod` 和 `cmd/reagent/main.go`。
+当前工作区的 `a.txt`、`b.txt` 和 `c.txt`。
 
 ### 日志输出
 

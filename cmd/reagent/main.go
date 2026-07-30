@@ -61,8 +61,12 @@ func main() {
 
 	prompt := os.Getenv("AGENT_PROMPT")
 	if prompt == "" {
-		prompt = `请同时调用 read_file 工具读取当前工作区的 README.md、go.mod 和 cmd/reagent/main.go，
-然后综合说明这三个文件分别定义了什么内容。`
+		prompt = `我当前目录下有 a.txt、b.txt、c.txt 三个文件。
+为了节省时间，请你在同一个 Action 中同时调用三次 read_file，分别读取这三个文件，
+并将它们的内容综合起来，告诉我它们分别记录了什么领域的信息。
+Thinking 阶段只能制定计划，不能假装已经读取文件或编造文件内容。
+获得三个文件的真实内容后，下一轮 Action 的对外回复必须完整列出 a.txt、b.txt、c.txt 的内容和领域总结；
+即使 Thinking 已经完成分析，也不能只回复确认、致谢或其他简短客套话。`
 	}
 	if err := eng.Run(ctx, prompt); err != nil {
 		logsdk.Fatal(ctx, "Agent 引擎运行失败",
