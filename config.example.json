@@ -22,5 +22,10 @@
       "apiKey": "",
       "model": "glm-4.5-air"
     }
-  ]
+  ],
+  "bot": {
+    "wecom": {
+      "webhookURL": ""
+    }
+  }
 }

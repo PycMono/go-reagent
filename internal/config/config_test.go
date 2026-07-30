@@ -51,6 +51,60 @@ func TestLoadSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesOptionalWeComWebhookURL(t *testing.T) {
+	path := writeConfig(t, `{
+		"currentPlatform":"deepseek",
+		"platforms":[
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+		],
+		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
+	}`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Bot.WeCom.WebhookURL; got != "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key" {
+		t.Fatalf("WebhookURL = %q", got)
+	}
+}
+
+func TestLoadAllowsMissingWeComWebhookURL(t *testing.T) {
+	path := writeConfig(t, `{
+		"currentPlatform":"deepseek",
+		"platforms":[
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+		]
+	}`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Bot.WeCom.WebhookURL != "" {
+		t.Fatalf("WebhookURL = %q, want empty", cfg.Bot.WeCom.WebhookURL)
+	}
+}
+
+func TestLoadRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
+	const credential = "never-print-webhook-key"
+	path := writeConfig(t, `{
+		"currentPlatform":"deepseek",
+		"platforms":[
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+		],
+		"bot":{"wecom":{"webhookURL":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
+	}`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "webhookURL") {
+		t.Fatalf("Load() error = %v, want webhookURL validation error", err)
+	}
+	if strings.Contains(errorText(err), credential) {
+		t.Fatalf("Load() error leaks webhook credential: %v", err)
+	}
+}
+
 func TestLoadSupportsYAMLAndTOML(t *testing.T) {
 	tests := []struct {
 		name      string
