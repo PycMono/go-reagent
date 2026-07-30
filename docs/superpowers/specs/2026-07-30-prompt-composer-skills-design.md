@@ -52,6 +52,7 @@ type Skill struct {
 
 - 目录不存在或无法访问时静默返回空字符串，保持 Agent 可用；
 - 单个文件读取失败或解析失败时跳过该文件，继续加载其余 Skill；
+- 所有工作区读取通过 `os.Root` 锚定，且只接受普通文件；符号链接不会被注入 Prompt；
 - 使用 `filepath.WalkDir` 的词法顺序产生稳定输出；
 - 只有至少一个有效 Skill 时才输出 `### 可用专业技能 (Agent Skills)` 区块；
 - 不使用输出长度阈值判断是否加载成功；
@@ -81,7 +82,8 @@ System Prompt 按以下顺序组装：
 
 核心 Prompt 不要求调用当前不存在的 `bash`、`write_file`、`ls` 或 `test -f` 工具。
 
-若根目录 `AGENTS.md` 可读，Composer 将其放入独立的“项目专属指南”区块；缺失或不可读时静默略过。
+若根目录 `AGENTS.md` 是可读的普通文件，Composer 将其放入独立的“项目专属指南”区块；缺失、不可读或为
+符号链接时静默略过。读取同样通过 `os.Root` 锚定，不能逃逸工作区。
 Composer 不缓存文件内容，保证不同 Run 之间对 `AGENTS.md` 和 Skills 的修改即时生效。
 
 ## Engine 集成

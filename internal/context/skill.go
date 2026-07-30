@@ -36,13 +36,20 @@ func NewSkillLoader(workDir string) *SkillLoader {
 
 // LoadAll renders every valid SKILL.md below .claw/skills for Prompt injection.
 func (s *SkillLoader) LoadAll() string {
-	skillBaseDir := filepath.Join(s.workDir, ".claw", "skills")
-	if _, err := os.Stat(skillBaseDir); err != nil {
+	root, err := os.OpenRoot(s.workDir)
+	if err != nil {
+		return ""
+	}
+	defer root.Close()
+
+	skillBaseDir := filepath.Join(".claw", "skills")
+	info, err := root.Stat(skillBaseDir)
+	if err != nil || !info.IsDir() {
 		return ""
 	}
 
 	skills := make([]Skill, 0)
-	if err := filepath.WalkDir(skillBaseDir, func(path string, entry fs.DirEntry, walkErr error) error {
+	if err := fs.WalkDir(root.FS(), filepath.ToSlash(skillBaseDir), func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -50,7 +57,7 @@ func (s *SkillLoader) LoadAll() string {
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
+		content, err := readRootRegularFile(root, filepath.FromSlash(path))
 		if err != nil {
 			return nil
 		}
@@ -75,6 +82,17 @@ func (s *SkillLoader) LoadAll() string {
 		builder.WriteString("\n\n---\n")
 	}
 	return builder.String()
+}
+
+func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	return root.ReadFile(name)
 }
 
 type skillMetadata struct {
