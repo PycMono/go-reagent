@@ -10,6 +10,7 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent/internal/dispatch"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -27,7 +28,7 @@ func main() {
 		)
 	}
 
-	llmProvider, platform, err := providerFromConfig(configurationPath())
+	llmProvider, platform, botConfig, err := providerFromConfig(configurationPath())
 	if err != nil {
 		logsdk.Fatal(ctx, "初始化模型 Provider 失败",
 			logsdk.Any("component", "bootstrap"),
@@ -58,6 +59,13 @@ func main() {
 	}()
 
 	eng := engine.NewAgentEngine(llmProvider, registry, workDir, true)
+	reporter, err := reporterFromConfig(botConfig)
+	if err != nil {
+		logsdk.Fatal(ctx, "初始化 Reporter 失败",
+			logsdk.Any("component", "bootstrap"),
+			logsdk.Err(err),
+		)
+	}
 
 	prompt := os.Getenv("AGENT_PROMPT")
 	if prompt == "" {
@@ -68,7 +76,7 @@ Thinking 阶段只能制定计划，不能假装已经读取文件或编造文�
 获得三个文件的真实内容后，下一轮 Action 的对外回复必须完整列出 a.txt、b.txt、c.txt 的内容和领域总结；
 即使 Thinking 已经完成分析，也不能只回复确认、致谢或其他简短客套话。`
 	}
-	if err := eng.Run(ctx, prompt, engine.NewTerminalReporter()); err != nil {
+	if err := eng.Run(ctx, prompt, reporter); err != nil {
 		logsdk.Fatal(ctx, "Agent 引擎运行失败",
 			logsdk.Any("component", "bootstrap"),
 			logsdk.Err(err),
@@ -125,14 +133,14 @@ func configurationPath() string {
 	return path
 }
 
-func providerFromConfig(path string) (provider.LLMProvider, agentconfig.PlatformConfig, error) {
+func providerFromConfig(path string) (provider.LLMProvider, agentconfig.PlatformConfig, agentconfig.BotConfig, error) {
 	cfg, err := agentconfig.Load(path)
 	if err != nil {
-		return nil, agentconfig.PlatformConfig{}, err
+		return nil, agentconfig.PlatformConfig{}, agentconfig.BotConfig{}, err
 	}
 	platform, err := cfg.Current()
 	if err != nil {
-		return nil, agentconfig.PlatformConfig{}, err
+		return nil, agentconfig.PlatformConfig{}, agentconfig.BotConfig{}, err
 	}
 
 	llmProvider, err := provider.New(provider.Options{
@@ -143,7 +151,19 @@ func providerFromConfig(path string) (provider.LLMProvider, agentconfig.Platform
 		Model:    platform.Model,
 	})
 	if err != nil {
-		return nil, agentconfig.PlatformConfig{}, fmt.Errorf("初始化平台 %q: %w", platform.ID, err)
+		return nil, agentconfig.PlatformConfig{}, agentconfig.BotConfig{}, fmt.Errorf("初始化平台 %q: %w", platform.ID, err)
 	}
-	return llmProvider, platform, nil
+	return llmProvider, platform, cfg.Bot, nil
+}
+
+func reporterFromConfig(botConfig agentconfig.BotConfig) (engine.Reporter, error) {
+	terminalReporter := engine.NewTerminalReporter()
+	if botConfig.WeCom.WebhookURL == "" {
+		return terminalReporter, nil
+	}
+	weComReporter, err := dispatch.NewWeComReporter(botConfig.WeCom.WebhookURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("初始化企业微信群 Reporter: %w", err)
+	}
+	return engine.NewMultiReporter(terminalReporter, weComReporter), nil
 }

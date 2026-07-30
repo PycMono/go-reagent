@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -56,20 +59,59 @@ func TestProviderFromConfigBuildsSelectedPlatform(t *testing.T) {
 		}]
 	}`)
 
-	llmProvider, platform, err := providerFromConfig(path)
+	llmProvider, platform, bot, err := providerFromConfig(path)
 	if err != nil {
 		t.Fatalf("providerFromConfig() error = %v", err)
 	}
 	if llmProvider == nil || platform.ID != "zhipu" || platform.Protocol != "anthropic" || platform.Model != "glm-test" {
 		t.Fatalf("provider = %T, platform = %#v", llmProvider, platform)
 	}
+	if bot.WeCom.WebhookURL != "" {
+		t.Fatalf("bot config = %#v, want disabled WeCom", bot)
+	}
 }
 
 func TestProviderFromConfigReturnsLoadError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
-	_, _, err := providerFromConfig(path)
+	_, _, _, err := providerFromConfig(path)
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("providerFromConfig() error = %v, want path %q", err, path)
+	}
+}
+
+func TestReporterFromConfigSendsWeComNotificationWhenConfigured(t *testing.T) {
+	received := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received <- struct{}{}
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer server.Close()
+
+	reporter, err := reporterFromConfig(agentconfig.BotConfig{
+		WeCom: agentconfig.WeComConfig{WebhookURL: server.URL},
+	})
+	if err != nil {
+		t.Fatalf("reporterFromConfig() error = %v", err)
+	}
+	reporter.OnThinking(context.Background())
+
+	select {
+	case <-received:
+	default:
+		t.Fatal("WeCom webhook did not receive Reporter event")
+	}
+}
+
+func TestReporterFromConfigRejectsInvalidWebhookWithoutLeakingIt(t *testing.T) {
+	const webhook = "://invalid-webhook-secret"
+	_, err := reporterFromConfig(agentconfig.BotConfig{
+		WeCom: agentconfig.WeComConfig{WebhookURL: webhook},
+	})
+	if err == nil {
+		t.Fatal("reporterFromConfig() error = nil")
+	}
+	if strings.Contains(err.Error(), webhook) {
+		t.Fatalf("reporterFromConfig() error leaks webhook: %v", err)
 	}
 }
 
