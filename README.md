@@ -42,9 +42,14 @@ go-reagent/
 ├── config.json                  # 本地平台配置（已被 Git 忽略）
 ├── cmd/
 │   └── reagent/
-│       ├── main.go              # 组装日志、Provider、Registry 和文件工具
-│       └── main_test.go         # 启动配置、日志与真实工具组装测试
+│       ├── main.go              # 初始化日志并运行 Fx App
+│       └── main_test.go         # 应用日志测试
 ├── internal/
+│   ├── app/                 # Uber Fx 组合根与一次性进程生命周期
+│   │   ├── module.go        # 完整 Fx Option 依赖图
+│   │   ├── providers.go     # Config、Provider、Registry、Reporter 与 Engine 构造
+│   │   ├── runner.go        # AgentRunner 和 Fx 启停钩子
+│   │   └── *_test.go        # 构造链、资源关闭、退出码与依赖图测试
 │   ├── config/              # 启动配置层
 │   │   ├── config.go        # 严格加载、校验与选择当前平台
 │   │   └── config_test.go   # 配置解析与错误处理测试
@@ -76,11 +81,12 @@ go-reagent/
 └── README.md
 ```
 
-各模块之间保持单向依赖：
+`internal/app` 是唯一的 Fx 组合根，负责依赖注入；核心包不依赖 Fx：
 
 ```text
+cmd/reagent ──► app ──► config / dispatch / engine / provider / tools
+
 engine ──► provider ──► schema
-   │
    └─────► tools ─────► schema
 ```
 
@@ -89,13 +95,14 @@ engine ──► provider ──► schema
 - `provider` 通过 `LLMProvider.Generate` 隔离协议调用细节，通过工厂选择 OpenAI 或 Anthropic 适配器。
 - `tools` 通过 `BaseTool`、`MutableRegistry` 和 `Registry` 分离工具注册、发现与执行权限。
 - `engine` 持有工作区路径并负责编排上下文、模型推理与工具执行，不关心具体厂商和工具实现。
-- `cmd/reagent` 是依赖组装入口，不承载核心业务逻辑。
+- `app` 使用 Fx 注入 Config、WorkDir、Provider、Registry、Reporter、Engine 和 AgentRunner，并管理资源关闭顺序。
+- `cmd/reagent` 只初始化项目日志并运行 Fx App，不承载依赖组装和业务逻辑。
 
 ## 环境要求
 
 - Go 1.26 或更高版本
 
-项目使用 OpenAI Go v3、Anthropic Go SDK 和 `go-logger-sdk` v1.0.5。
+项目使用 OpenAI Go v3、Anthropic Go SDK、`go-logger-sdk` v1.0.5 和 Uber Fx v1.23.0。
 
 ## 快速开始
 
@@ -197,6 +204,18 @@ Reporter 生命周期逐条发送，不做聚合：每次 Thinking、每个 Tool
 当前能力仅为单向群通知，不接收群消息，也不需要配置企业微信回调、Token 或 EncodingAESKey。
 Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地配置中，不能写入示例配置、日志或提交。
 
+### Fx 启动与退出
+
+启动依赖链由 `internal/app.Module` 统一提供：
+
+```text
+Config -> WorkDir -> LLMProvider -> Registry -> Reporter -> AgentEngine -> AgentRunner
+```
+
+AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻塞启动钩子。任务完成后主动关闭 Fx：
+成功退出码为 0，Agent 错误退出码为 1。收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待 Agent，
+随后按 Fx 逆序生命周期关闭文件工具，避免运行中的 Tool 使用已释放资源。
+
 当前入口开启慢思考模式，挂载真实 `read_file` 和 `edit_file` 工具，默认要求模型同时读取并总结
 当前工作区的 `a.txt`、`b.txt` 和 `c.txt`。
 
@@ -265,6 +284,7 @@ go test ./...
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
 - 通过 Reporter 广播 Thinking、Tool Call、Tool Result 和模型回复生命周期事件。
 - 支持配置化企业微信群机器人 Webhook，将 Agent 生命周期逐条发送为 Markdown 通知。
+- 基于 Uber Fx 的完整启动依赖注入，以及一次性 Runner 的取消、退出码和资源关闭生命周期。
 - Provider 错误和空响应防护。
 - 工具调用 ID 的整批前置校验。
 - 取消信号的 Provider 与工具执行前置检查。
@@ -279,7 +299,7 @@ go test ./...
 - [x] 增加可开关的慢思考与行动双阶段循环。
 - [x] 实现内存版 Tool Registry 和基础 `read_file`、`edit_file` 工具。
 - [x] 实现配置驱动的 OpenAI/Anthropic 兼容 Provider。
-- [x] 在 `cmd/reagent` 中组装真实 Provider、Registry 和工具。
+- [x] 使用 Uber Fx 组装真实 Config、Provider、Registry、Reporter、Engine 和 Runner。
 - [x] 增加按工具安全等级分波的有界并发调度器。
 - [ ] 增加可配置的轮次、Token、时间与成本预算。
 - [x] 增加支持多格式、环境叠加和字段覆盖的平台启动配置。
