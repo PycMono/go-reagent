@@ -126,7 +126,7 @@ func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 	}}
 	engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
 
-	if err := engine.Run(context.Background(), "hello"); err != nil {
+	if err := engine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 1 {
@@ -153,7 +153,7 @@ func TestAgentEngineEmitsStructuredLifecycleLogs(t *testing.T) {
 
 	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
 	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
-	if err := agentEngine.Run(context.Background(), "hello"); err != nil {
+	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestAgentEngineEmitsStructuredThinkingPhaseLog(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: "done"},
 	}}
 	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
-	if err := agentEngine.Run(context.Background(), "hello"); err != nil {
+	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -223,7 +223,7 @@ func TestAgentEngineEmitsStructuredToolLogs(t *testing.T) {
 		"error":   {Output: "boom", IsError: true},
 	}}
 	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
-	if err := agentEngine.Run(context.Background(), "hello"); err != nil {
+	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestAgentEngineEmitsReferenceStyleParallelToolLogs(t *testing.T) {
 		},
 	}
 	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
-	if err := agentEngine.Run(context.Background(), "read both"); err != nil {
+	if err := agentEngine.Run(context.Background(), "read both", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestAgentEngineAppendsToolObservationAndContinues(t *testing.T) {
 	}}
 	engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
 
-	if err := engine.Run(context.Background(), "run echo"); err != nil {
+	if err := engine.Run(context.Background(), "run echo", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if calls := registry.Calls(); len(calls) != 1 {
@@ -358,7 +358,7 @@ func TestAgentEngineExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.
 
 	done := make(chan error, 1)
 	go func() {
-		done <- agentEngine.Run(context.Background(), "read all")
+		done <- agentEngine.Run(context.Background(), "read all", nil)
 	}()
 	runFinished := false
 	defer func() {
@@ -642,7 +642,7 @@ func runEngineForTest(
 	t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		done <- agentEngine.Run(context.Background(), prompt)
+		done <- agentEngine.Run(context.Background(), prompt, nil)
 	}()
 
 	finished := false
@@ -724,7 +724,7 @@ func TestAgentEngineRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 			registry := &fakeRegistry{results: map[string]schema.ToolResult{}}
 			engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
 
-			err := engine.Run(context.Background(), "run echo")
+			err := engine.Run(context.Background(), "run echo", nil)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("Run() error = %v, want error containing %q", err, tt.wantError)
 			}
@@ -739,7 +739,7 @@ func TestAgentEngineRejectsNilProviderResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
 	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
 
-	err := engine.Run(context.Background(), "hello")
+	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "empty response") {
 		t.Fatalf("Run() error = %v, want empty response error", err)
 	}
@@ -749,7 +749,7 @@ func TestAgentEngineWrapsProviderError(t *testing.T) {
 	provider := &fakeProvider{err: errors.New("provider unavailable")}
 	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
 
-	err := engine.Run(context.Background(), "hello")
+	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider unavailable") {
 		t.Fatalf("Run() error = %v, want wrapped provider error", err)
 	}
@@ -764,7 +764,7 @@ func TestAgentEngineDoesNotCallProviderAfterCancellation(t *testing.T) {
 	}}
 	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
 
-	err := engine.Run(ctx, "hello")
+	err := engine.Run(ctx, "hello", nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
@@ -802,7 +802,7 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
 	agentEngine.MaxParallelTools = 1
 
-	err := agentEngine.Run(ctx, "run both")
+	err := agentEngine.Run(ctx, "run both", nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
@@ -821,7 +821,7 @@ func TestAgentEngineThinkingPhaseHidesToolsWithoutPollutingActionContext(t *test
 	}}
 	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
 
-	if err := engine.Run(context.Background(), "检查目录"); err != nil {
+	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 2 {
@@ -843,7 +843,7 @@ func TestAgentEngineRejectsNilThinkingResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
 	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
 
-	err := engine.Run(context.Background(), "hello")
+	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "empty response") {
 		t.Fatalf("Run() error = %v, want empty Thinking response error", err)
 	}
@@ -861,7 +861,7 @@ func TestAgentEngineRejectsToolCallsDuringThinking(t *testing.T) {
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "bash"}}}
 	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
 
-	err := engine.Run(context.Background(), "hello")
+	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "tool calls") {
 		t.Fatalf("Run() error = %v, want Thinking tool-call error", err)
 	}
@@ -898,7 +898,7 @@ func TestAgentEngineRejectsInvalidThinkingMessages(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
 			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
 
-			err := engine.Run(context.Background(), "hello")
+			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Run() error = %v, want Thinking error containing %q", err, tt.want)
 			}
@@ -929,7 +929,7 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
 			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
 
-			err := engine.Run(context.Background(), "hello")
+			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Action") || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Run() error = %v, want Action error containing %q", err, tt.want)
 			}
@@ -957,7 +957,7 @@ func TestAgentEngineRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	}
 	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
 
-	if err := engine.Run(context.Background(), "检查目录"); err != nil {
+	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 4 {
