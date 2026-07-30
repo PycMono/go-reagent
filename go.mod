@@ -8,6 +8,7 @@ require (
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
 	go.uber.org/fx v1.23.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -29,5 +30,4 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
