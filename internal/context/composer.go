@@ -2,7 +2,6 @@ package context
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/PycMono/go-reagent/internal/schema"
@@ -39,13 +38,15 @@ func (c *PromptComposer) Build() schema.Message {
 	var builder strings.Builder
 	builder.WriteString(corePrompt)
 
-	agentsPath := filepath.Join(c.workDir, "AGENTS.md")
-	if content, err := os.ReadFile(agentsPath); err == nil {
-		builder.WriteString("\n# 项目专属指南 (来自 AGENTS.md)\n")
-		builder.WriteString("以下是当前工作区特有的架构规范与注意事项，你的行为必须符合以下要求：\n")
-		builder.WriteString("```markdown\n")
-		_, _ = builder.Write(content)
-		builder.WriteString("\n```\n")
+	if root, err := os.OpenRoot(c.workDir); err == nil {
+		defer root.Close()
+		if content, err := readRootRegularFile(root, "AGENTS.md"); err == nil {
+			builder.WriteString("\n# 项目专属指南 (来自 AGENTS.md)\n")
+			builder.WriteString("以下是当前工作区特有的架构规范与注意事项，你的行为必须符合以下要求：\n")
+			builder.WriteString("```markdown\n")
+			_, _ = builder.Write(content)
+			builder.WriteString("\n```\n")
+		}
 	}
 
 	if skills := c.skillLoader.LoadAll(); skills != "" {

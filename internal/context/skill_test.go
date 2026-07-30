@@ -130,6 +130,49 @@ func TestSkillLoaderReturnsEmptyWithoutValidSkills(t *testing.T) {
 	}
 }
 
+func TestSkillLoaderRejectsSkillSymlinkOutsideWorkspace(t *testing.T) {
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "outside-skill.md")
+	const secret = "outside-skill-secret"
+	if err := os.WriteFile(
+		outsidePath,
+		[]byte("---\nname: escaped\ndescription: escaped\n---\n"+secret),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	workDir := t.TempDir()
+	skillDir := filepath.Join(workDir, ".claw", "skills", "escaped")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Skipf("symlink is unavailable: %v", err)
+	}
+
+	got := NewSkillLoader(workDir).LoadAll()
+	if strings.Contains(got, secret) || got != "" {
+		t.Fatalf("LoadAll() followed an external symlink: %q", got)
+	}
+}
+
+func TestSkillLoaderRejectsSkillSymlinkInsideWorkspace(t *testing.T) {
+	workDir := t.TempDir()
+	writeSkill(t, workDir, "shared.md", "---\nname: linked\ndescription: linked\n---\nlinked body")
+	skillDir := filepath.Join(workDir, ".claw", "skills", "linked")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared.md", filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Skipf("symlink is unavailable: %v", err)
+	}
+
+	if got := NewSkillLoader(workDir).LoadAll(); got != "" {
+		t.Fatalf("LoadAll() loaded a symlinked Skill: %q", got)
+	}
+}
+
 func writeSkill(t *testing.T, workDir string, relativePath string, content string) {
 	t.Helper()
 	path := filepath.Join(workDir, ".claw", "skills", filepath.FromSlash(relativePath))
