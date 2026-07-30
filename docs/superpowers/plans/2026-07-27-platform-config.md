@@ -126,7 +126,7 @@ func (c *Config) Current() (PlatformConfig, error)
 
 Run: `GOCACHE=/tmp/go-reagent-build-cache go test -count=1 ./internal/config`
 
-Expected: PASS with package `go-reagent/internal/config`.
+Expected: PASS with package `github.com/PycMono/go-reagent/internal/config`.
 
 ---
 
