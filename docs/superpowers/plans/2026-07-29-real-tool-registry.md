@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Internal imports use `go-reagent/internal/...`, never `github.com/yourname/...`.
+- Internal imports use `github.com/PycMono/go-reagent/internal/...`, never `github.com/yourname/...`.
 - Engine, Provider, Schema, and `LLMProvider` behavior remain unchanged.
 - `Registry` remains the two-method Engine-facing interface.
 - `read_file` accepts only relative paths beneath WorkDir, including safe internal symlinks.
