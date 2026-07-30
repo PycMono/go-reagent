@@ -35,9 +35,11 @@ Reporter 保留 `bot.md` 定义的四类事件，不做聚合：
 
 ## 配置与安全
 
-- Webhook 地址从 `WECOM_WEBHOOK_URL` 环境变量读取。
-- 未配置时只启用 `TerminalReporter`，保证当前 CLI 仍能运行。
-- 不在配置样例、源码、测试或日志中输出完整 Webhook 地址。
+- Webhook 地址使用当前 Configor 配置体系中的 `bot.wecom.webhookURL` 字段。
+- 本地且已被 Git 忽略的 `config.json` 保存真实地址，`config.example.json` 只提供空值。
+- `webhookURL` 为空时只启用 `TerminalReporter`，保证当前 CLI 仍能运行。
+- 非空地址必须是带 Host 的 HTTPS URL。
+- 不在配置样例、源码、测试、日志或提交记录中输出真实 Webhook 地址。
 - 模型 Provider、模型配置、工具注册和 `go-logger-sdk` 保持不变。
 
 ## 消息格式
