@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 
+	logsdk "github.com/PycMono/go-logger-sdk"
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/provider"
@@ -16,29 +16,44 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+	logsdk.SetLogger(newApplicationLogger())
+
 	workDir, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("获取工作区失败: %v", err)
+		logsdk.Fatal(ctx, "获取工作区失败",
+			logsdk.Any("component", "bootstrap"),
+			logsdk.Err(err),
+		)
 	}
 
 	llmProvider, platform, err := providerFromConfig(configurationPath())
 	if err != nil {
-		log.Fatal(err)
+		logsdk.Fatal(ctx, "初始化模型 Provider 失败",
+			logsdk.Any("component", "bootstrap"),
+			logsdk.Err(err),
+		)
 	}
-	log.Printf(
-		"[Bootstrap] Platform: %s, Protocol: %s, Model: %s\n",
-		platform.ID,
-		platform.Protocol,
-		platform.Model,
+	logsdk.Info(ctx, "模型平台初始化成功",
+		logsdk.Any("component", "bootstrap"),
+		logsdk.Any("platform_id", platform.ID),
+		logsdk.Any("protocol", platform.Protocol),
+		logsdk.Any("model", platform.Model),
 	)
 
 	registry, registryCloser, err := registryForWorkDir(workDir)
 	if err != nil {
-		log.Fatal(err)
+		logsdk.Fatal(ctx, "初始化工具 Registry 失败",
+			logsdk.Any("component", "bootstrap"),
+			logsdk.Err(err),
+		)
 	}
 	defer func() {
 		if err := registryCloser.Close(); err != nil {
-			log.Printf("[Bootstrap] 关闭工具注册表资源失败: %v\n", err)
+			logsdk.Error(ctx, "关闭工具 Registry 资源失败",
+				logsdk.Any("component", "bootstrap"),
+				logsdk.Err(err),
+			)
 		}
 	}()
 
@@ -49,9 +64,19 @@ func main() {
 		prompt = `请同时调用 read_file 工具读取当前工作区的 README.md、go.mod 和 cmd/reagent/main.go，
 然后综合说明这三个文件分别定义了什么内容。`
 	}
-	if err := eng.Run(context.Background(), prompt); err != nil {
-		log.Fatalf("引擎运行崩溃: %v", err)
+	if err := eng.Run(ctx, prompt); err != nil {
+		logsdk.Fatal(ctx, "Agent 引擎运行失败",
+			logsdk.Any("component", "bootstrap"),
+			logsdk.Err(err),
+		)
 	}
+}
+
+func newApplicationLogger() logsdk.Logger {
+	return logsdk.NewLogrus(logsdk.Options{
+		LogFormat: "json",
+		Module:    "go-reagent",
+	})
 }
 
 func registryForWorkDir(workDir string) (tools.Registry, io.Closer, error) {

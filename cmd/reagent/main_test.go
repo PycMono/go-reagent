@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,38 @@ import (
 
 	"github.com/PycMono/go-reagent/internal/schema"
 )
+
+func TestNewApplicationLoggerEmitsJSONWithProjectModule(t *testing.T) {
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = writeEnd
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		_ = readEnd.Close()
+		_ = writeEnd.Close()
+	})
+
+	logger := newApplicationLogger()
+	logger.Info(context.Background(), "logger ready")
+	if err := writeEnd.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := io.ReadAll(readEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal(encoded, &event); err != nil {
+		t.Fatalf("log output = %q, error = %v", encoded, err)
+	}
+	if event["module"] != "go-reagent" || event["msg"] != "logger ready" || event["level"] != "info" {
+		t.Fatalf("log event = %#v", event)
+	}
+}
 
 func TestProviderFromConfigBuildsSelectedPlatform(t *testing.T) {
 	path := writeAppConfig(t, `{
@@ -45,8 +79,8 @@ func TestConfigurationPathUsesOptionalEnvironmentOverride(t *testing.T) {
 		t.Fatalf("configurationPath() = %q", got)
 	}
 
-	t.Setenv("CONFIG_PATH", " /secure/claw.json ")
-	if got := configurationPath(); got != "/secure/claw.json" {
+	t.Setenv("CONFIG_PATH", " /secure/reagent.json ")
+	if got := configurationPath(); got != "/secure/reagent.json" {
 		t.Fatalf("configurationPath() = %q", got)
 	}
 }

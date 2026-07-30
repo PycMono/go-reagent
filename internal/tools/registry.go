@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"reflect"
 	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
 
+	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -72,7 +72,10 @@ func (r *registryImpl) Register(tool BaseTool) (err error) {
 		return fmt.Errorf("tool %q is already registered", name)
 	}
 	r.tools[name] = tool
-	log.Printf("[Registry] 成功挂载工具: %s\n", name)
+	logsdk.Info(context.Background(), "工具注册成功",
+		logsdk.Any("component", "registry"),
+		logsdk.Any("tool", name),
+	)
 	return nil
 }
 
@@ -120,7 +123,11 @@ func (r *registryImpl) Execute(ctx context.Context, call schema.ToolCall) (resul
 		if recover() == nil {
 			return
 		}
-		log.Printf("[Registry] tool %q panicked:\n%s", call.Name, debug.Stack())
+		logsdk.Error(ctx, "工具执行 panic",
+			logsdk.Any("component", "registry"),
+			logsdk.Any("tool", call.Name),
+			logsdk.Any("stack", debug.Stack()),
+		)
 		result = schema.ToolResult{
 			ToolCallID: call.ID,
 			Output:     fmt.Sprintf("tool %q panicked during execution", call.Name),
