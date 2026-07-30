@@ -48,8 +48,13 @@ go-reagent/
 │   ├── config/              # 启动配置层
 │   │   ├── config.go        # 严格加载、校验与选择当前平台
 │   │   └── config_test.go   # 配置解析与错误处理测试
+│   ├── dispatch/            # 外部消息渠道输出适配层
+│   │   ├── wecom.go         # 企业微信群机器人 Reporter
+│   │   └── wecom_test.go    # Webhook 协议、长度与并发测试
 │   ├── engine/              # 核心引擎层
 │   │   ├── loop.go          # AgentEngine、ReAct Main Loop 与有界工具调度
+│   │   ├── reporter.go      # Agent 生命周期 Reporter 与广播实现
+│   │   ├── terminal_reporter.go # 终端输出 Reporter
 │   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
 │   ├── logtest/             # 日志测试支持
 │   │   └── recorder.go      # 并发安全的 logsdk.Logger 记录器
@@ -114,7 +119,12 @@ chmod 600 config.json
       "apiKey": "填写你的 DeepSeek API Key",
       "model": "deepseek-chat"
     }
-  ]
+  ],
+  "bot": {
+    "wecom": {
+      "webhookURL": ""
+    }
+  }
 }
 ```
 
@@ -164,6 +174,28 @@ CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd/rea
 Configor 会先加载基础文件，再加载同目录下的环境文件，例如 `config.production.yaml`。如果基础文件和环境文件都不存在，则尝试同扩展名的 example 文件，例如 `config.example.yaml`。字段也可以通过 `CONFIGOR_` 前缀的环境变量覆盖；数组内字段按结构路径命名，例如 `CONFIGOR_PLATFORMS_0_APIKEY`。
 
 `config.json` 已加入 `.gitignore`，不要把真实 API Key 写入 `config.example.json`。
+
+### 企业微信群通知
+
+在企业微信群中创建群机器人后，将机器人 Webhook 地址写入本地 `config.json`：
+
+```json
+{
+  "bot": {
+    "wecom": {
+      "webhookURL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=填写本地机器人Key"
+    }
+  }
+}
+```
+
+`webhookURL` 为空时只输出到终端；配置后，终端输出和企业微信群通知同时启用。当前按照
+Reporter 生命周期逐条发送，不做聚合：每次 Thinking、每个 Tool Call、每个 Tool Result 和
+每段非空模型回复各发送一条 Markdown 消息。单条内容最多 4096 字节，超长内容会在合法 UTF-8
+边界截断。
+
+当前能力仅为单向群通知，不接收群消息，也不需要配置企业微信回调、Token 或 EncodingAESKey。
+Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地配置中，不能写入示例配置、日志或提交。
 
 当前入口开启慢思考模式，挂载真实 `read_file` 和 `edit_file` 工具，默认要求模型同时读取并总结
 当前工作区的 `a.txt`、`b.txt` 和 `c.txt`。
@@ -231,6 +263,8 @@ go test ./...
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
+- 通过 Reporter 广播 Thinking、Tool Call、Tool Result 和模型回复生命周期事件。
+- 支持配置化企业微信群机器人 Webhook，将 Agent 生命周期逐条发送为 Markdown 通知。
 - Provider 错误和空响应防护。
 - 工具调用 ID 的整批前置校验。
 - 取消信号的 Provider 与工具执行前置检查。
@@ -251,3 +285,5 @@ go test ./...
 - [x] 增加支持多格式、环境叠加和字段覆盖的平台启动配置。
 - [ ] 增加上下文管理和持久化记忆。
 - [ ] 增加飞书等外部消息渠道适配。
+- [x] 增加企业微信群机器人单向生命周期通知。
+- [ ] 增加企业微信和飞书的双向消息接入。
