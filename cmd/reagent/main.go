@@ -68,7 +68,7 @@ Thinking 阶段只能制定计划，不能假装已经读取文件或编造文�
 获得三个文件的真实内容后，下一轮 Action 的对外回复必须完整列出 a.txt、b.txt、c.txt 的内容和领域总结；
 即使 Thinking 已经完成分析，也不能只回复确认、致谢或其他简短客套话。`
 	}
-	if err := eng.Run(ctx, prompt); err != nil {
+	if err := eng.Run(ctx, prompt, engine.NewTerminalReporter()); err != nil {
 		logsdk.Fatal(ctx, "Agent 引擎运行失败",
 			logsdk.Any("component", "bootstrap"),
 			logsdk.Err(err),

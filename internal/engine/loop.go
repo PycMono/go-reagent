@@ -46,7 +46,7 @@ func NewAgentEngine(
 }
 
 // Run 启动 Agent 的生命周期
-func (e *AgentEngine) Run(ctx context.Context, userPrompt string) error {
+func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Reporter) error {
 	if e == nil || e.provider == nil {
 		return errors.New("engine: LLM provider is required")
 	}
@@ -109,6 +109,9 @@ After real tool results are present, use those observations in the next Action r
 				logsdk.Any("turn", turnCount),
 				logsdk.Any("phase", "thinking"),
 			)
+			if reporter != nil {
+				reporter.OnThinking(ctx)
+			}
 			thinkResp, err := e.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
 				return fmt.Errorf("Thinking 阶段生成失败: %w", err)
@@ -148,8 +151,8 @@ After real tool results are present, use those observations in the next Action r
 
 		contextHistory = append(contextHistory, *actionResp)
 
-		if actionResp.Content != "" {
-			fmt.Printf("🤖 [对外回复]: %s\n", actionResp.Content)
+		if actionResp.Content != "" && reporter != nil {
+			reporter.OnMessage(ctx, actionResp.Content)
 		}
 
 		if len(actionResp.ToolCalls) == 0 {
@@ -178,7 +181,7 @@ After real tool results are present, use those observations in the next Action r
 			logsdk.Any("execution_mode", executionMode),
 		)
 
-		observationMsgs, err := e.executeToolCalls(ctx, actionResp.ToolCalls, availableTools)
+		observationMsgs, err := e.executeToolCalls(ctx, actionResp.ToolCalls, availableTools, reporter)
 		if err != nil {
 			return fmt.Errorf("Agent 运行已取消: %w", err)
 		}
@@ -246,6 +249,7 @@ func (e *AgentEngine) executeToolCalls(
 	ctx context.Context,
 	calls []schema.ToolCall,
 	definitions []schema.ToolDefinition,
+	reporter Reporter,
 ) ([]schema.Message, error) {
 	parallelSafe := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
@@ -259,7 +263,7 @@ func (e *AgentEngine) executeToolCalls(
 		}
 
 		if !parallelSafe[calls[start].Name] {
-			observations[start] = e.executeToolCall(ctx, start, calls[start], false)
+			observations[start] = e.executeToolCall(ctx, start, calls[start], false, reporter)
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -271,7 +275,7 @@ func (e *AgentEngine) executeToolCalls(
 		for end < len(calls) && parallelSafe[calls[end].Name] {
 			end++
 		}
-		if err := e.executeParallelWave(ctx, calls, observations, start, end); err != nil {
+		if err := e.executeParallelWave(ctx, calls, observations, start, end, reporter); err != nil {
 			return nil, err
 		}
 		start = end
@@ -286,6 +290,7 @@ func (e *AgentEngine) executeParallelWave(
 	observations []schema.Message,
 	start int,
 	end int,
+	reporter Reporter,
 ) error {
 	limit := e.MaxParallelTools
 	if limit <= 0 {
@@ -314,7 +319,7 @@ func (e *AgentEngine) executeParallelWave(
 				return
 			}
 
-			observations[index] = e.executeToolCall(ctx, index, call, parallel)
+			observations[index] = e.executeToolCall(ctx, index, call, parallel, reporter)
 		}(index, call)
 	}
 	waitGroup.Wait()
@@ -326,6 +331,7 @@ func (e *AgentEngine) executeToolCall(
 	index int,
 	call schema.ToolCall,
 	parallel bool,
+	reporter Reporter,
 ) schema.Message {
 	commonFields := []logsdk.Fields{
 		logsdk.Any("component", "engine"),
@@ -342,7 +348,13 @@ func (e *AgentEngine) executeToolCall(
 		fmt.Sprintf("  -> [Go-%d] 🛠️ 触发%s执行", index, mode),
 		append(commonFields, logsdk.Any("arguments", call.Arguments))...,
 	)
+	if reporter != nil {
+		reporter.OnToolCall(ctx, call.Name, string(call.Arguments))
+	}
 	result := e.registry.Execute(ctx, call)
+	if reporter != nil {
+		reporter.OnToolResult(ctx, call.Name, result.Output, result.IsError)
+	}
 	if result.IsError {
 		logsdk.Error(ctx,
 			fmt.Sprintf("  -> [Go-%d] ❌ 工具执行失败", index),
