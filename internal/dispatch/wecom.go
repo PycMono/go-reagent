@@ -55,7 +55,7 @@ func (r *WeComReporter) Report(ctx context.Context, event schema.AgentEvent) {
 		}
 		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", event.Tool.Call.Name, eventText(event.Tool.Result.Content)))
 	case schema.AgentEventMessage:
-		if event.Message == nil {
+		if event.Message == nil || event.Message.Role != schema.RoleAssistant {
 			return
 		}
 		r.send(ctx, eventText(event.Message.Content))
