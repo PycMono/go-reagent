@@ -154,7 +154,10 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 			return fmt.Errorf("Action 阶段返回了无效的工具调用: %w", err)
 		}
 
-		executionMode := e.actionExecutionMode(actionResp.ToolCalls, availableTools)
+		if e.scheduler.maxParallel != e.MaxParallelTools {
+			e.scheduler = NewToolScheduler(e.registry, e.MaxParallelTools)
+		}
+		executionMode := e.scheduler.Mode(actionResp.ToolCalls, availableTools)
 		scheduleMessage := fmt.Sprintf("[Engine] 模型请求调用 %d 个工具", len(actionResp.ToolCalls))
 		switch executionMode {
 		case "parallel":
@@ -169,9 +172,24 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 			logsdk.Any("execution_mode", executionMode),
 		)
 
-		observationMsgs, err := e.executeToolCalls(ctx, actionResp.ToolCalls, availableTools, reporter)
+		observer := func(ctx context.Context, event schema.ToolEvent) {
+			if reporter != nil {
+				reporter.Report(ctx, schema.NewAgentToolEvent(event))
+			}
+		}
+		results, err := e.scheduler.Schedule(ctx, actionResp.ToolCalls, availableTools, observer)
 		if err != nil {
 			return fmt.Errorf("Agent 运行已取消: %w", err)
+		}
+		observationMsgs := make([]schema.Message, len(results))
+		for index, result := range results {
+			observationMsgs[index] = schema.Message{
+				Role:       schema.RoleTool,
+				Content:    result.Content,
+				ToolCallID: result.ToolCallID,
+				ToolName:   result.ToolName,
+				IsError:    result.IsError,
+			}
 		}
 		aggregationMessage := "[Engine] 所有工具执行完毕，开始聚合观察结果 (Observation)"
 		switch executionMode {

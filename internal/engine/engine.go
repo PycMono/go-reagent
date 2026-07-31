@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"context"
+
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -8,10 +10,16 @@ import (
 
 const defaultMaxParallelTools = 4
 
+// Agent is the run contract consumed by the application lifecycle.
+type Agent interface {
+	Run(ctx context.Context, userPrompt string, reporter Reporter) error
+}
+
 // AgentEngine 是微型 OS 的核心驱动。
 type AgentEngine struct {
 	provider    provider.LLMProvider
 	registry    tools.Registry
+	scheduler   *ToolScheduler
 	composer    *ctxpkg.PromptComposer
 	skillLoader *ctxpkg.SkillLoader
 
@@ -25,19 +33,21 @@ type AgentEngine struct {
 	MaxParallelTools int
 }
 
-// NewAgentEngine 创建 Agent 引擎，绑定模型、工具注册表和工作区，
-// 同时初始化 Prompt/Skill 加载器以及默认的工具并发上限。
+// NewAgentEngine 创建 Agent 引擎，绑定模型、工具注册表、Context 组件和工作区。
 func NewAgentEngine(
 	p provider.LLMProvider,
 	r tools.Registry,
+	composer *ctxpkg.PromptComposer,
+	skillLoader *ctxpkg.SkillLoader,
 	workDir string,
 	enableThinking bool,
 ) *AgentEngine {
 	return &AgentEngine{
 		provider:         p,
 		registry:         r,
-		composer:         ctxpkg.NewPromptComposer(workDir),
-		skillLoader:      ctxpkg.NewSkillLoader(workDir),
+		scheduler:        NewToolScheduler(r, defaultMaxParallelTools),
+		composer:         composer,
+		skillLoader:      skillLoader,
 		WorkDir:          workDir,
 		EnableThinking:   enableThinking,
 		MaxParallelTools: defaultMaxParallelTools,
