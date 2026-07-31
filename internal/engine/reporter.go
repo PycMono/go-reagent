@@ -1,50 +1,54 @@
 package engine
 
-import "context"
+import (
+	"cmp"
+	"context"
+	"slices"
+	"strings"
+
+	"github.com/PycMono/go-reagent/internal/schema"
+)
 
 // Reporter receives user-facing Agent lifecycle events.
 type Reporter interface {
-	OnThinking(ctx context.Context)
-	OnToolCall(ctx context.Context, toolName string, args string)
-	OnToolResult(ctx context.Context, toolName string, result string, isError bool)
-	OnMessage(ctx context.Context, content string)
+	Report(context.Context, schema.AgentEvent)
+}
+
+// ReporterRegistration describes one deterministic Reporter subscriber.
+type ReporterRegistration struct {
+	Name     string
+	Order    int
+	Reporter Reporter
 }
 
 type multiReporter struct {
-	reporters []Reporter
+	registrations []ReporterRegistration
 }
 
-// NewMultiReporter broadcasts lifecycle events to every non-nil Reporter.
-func NewMultiReporter(reporters ...Reporter) Reporter {
-	filtered := make([]Reporter, 0, len(reporters))
-	for _, reporter := range reporters {
-		if reporter != nil {
-			filtered = append(filtered, reporter)
+// NewMultiReporter broadcasts events in Order then Name order.
+func NewMultiReporter(registrations []ReporterRegistration) Reporter {
+	filtered := append([]ReporterRegistration(nil), registrations...)
+	slices.SortFunc(filtered, func(a, b ReporterRegistration) int {
+		if order := cmp.Compare(a.Order, b.Order); order != 0 {
+			return order
 		}
-	}
-	return &multiReporter{reporters: filtered}
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return &multiReporter{registrations: filtered}
 }
 
-func (r *multiReporter) OnThinking(ctx context.Context) {
-	for _, reporter := range r.reporters {
-		reporter.OnThinking(ctx)
-	}
-}
-
-func (r *multiReporter) OnToolCall(ctx context.Context, toolName string, args string) {
-	for _, reporter := range r.reporters {
-		reporter.OnToolCall(ctx, toolName, args)
-	}
-}
-
-func (r *multiReporter) OnToolResult(ctx context.Context, toolName string, result string, isError bool) {
-	for _, reporter := range r.reporters {
-		reporter.OnToolResult(ctx, toolName, result, isError)
+func (r *multiReporter) Report(ctx context.Context, event schema.AgentEvent) {
+	for _, registration := range r.registrations {
+		if strings.TrimSpace(registration.Name) == "" || registration.Reporter == nil {
+			continue
+		}
+		reportSafely(ctx, registration.Reporter, event)
 	}
 }
 
-func (r *multiReporter) OnMessage(ctx context.Context, content string) {
-	for _, reporter := range r.reporters {
-		reporter.OnMessage(ctx, content)
-	}
+func reportSafely(ctx context.Context, reporter Reporter, event schema.AgentEvent) {
+	defer func() {
+		_ = recover()
+	}()
+	reporter.Report(ctx, event)
 }

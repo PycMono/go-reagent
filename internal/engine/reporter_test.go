@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 
@@ -11,67 +12,38 @@ import (
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-type reporterEvent struct {
-	kind     string
-	toolName string
-	payload  string
-	isError  bool
-}
-
 type recordingReporter struct {
 	mu     sync.Mutex
-	events []reporterEvent
+	events []schema.AgentEvent
 }
 
-func (r *recordingReporter) OnThinking(context.Context) {
-	r.record(reporterEvent{kind: "thinking"})
-}
-
-func (r *recordingReporter) OnToolCall(_ context.Context, toolName string, args string) {
-	r.record(reporterEvent{kind: "tool_call", toolName: toolName, payload: args})
-}
-
-func (r *recordingReporter) OnToolResult(_ context.Context, toolName string, result string, isError bool) {
-	r.record(reporterEvent{kind: "tool_result", toolName: toolName, payload: result, isError: isError})
-}
-
-func (r *recordingReporter) OnMessage(_ context.Context, content string) {
-	r.record(reporterEvent{kind: "message", payload: content})
-}
-
-func (r *recordingReporter) record(event reporterEvent) {
+func (r *recordingReporter) Report(_ context.Context, event schema.AgentEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 }
 
-func (r *recordingReporter) Events() []reporterEvent {
+func (r *recordingReporter) Events() []schema.AgentEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]reporterEvent(nil), r.events...)
+	return append([]schema.AgentEvent(nil), r.events...)
 }
 
-func TestMultiReporterForwardsEveryLifecycleMethod(t *testing.T) {
-	first := &recordingReporter{}
-	second := &recordingReporter{}
-	reporter := engine.NewMultiReporter(first, nil, second)
-	ctx := context.Background()
+type reporterFunc func(context.Context, schema.AgentEvent)
 
-	reporter.OnThinking(ctx)
-	reporter.OnToolCall(ctx, "read_file", `{"path":"a.txt"}`)
-	reporter.OnToolResult(ctx, "read_file", "file A", false)
-	reporter.OnMessage(ctx, "done")
+func (f reporterFunc) Report(ctx context.Context, event schema.AgentEvent) { f(ctx, event) }
 
-	want := []reporterEvent{
-		{kind: "thinking"},
-		{kind: "tool_call", toolName: "read_file", payload: `{"path":"a.txt"}`},
-		{kind: "tool_result", toolName: "read_file", payload: "file A"},
-		{kind: "message", payload: "done"},
-	}
-	for name, recorder := range map[string]*recordingReporter{"first": first, "second": second} {
-		if got := recorder.Events(); !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s events = %#v, want %#v", name, got, want)
-		}
+func TestMultiReporterSortsAndIsolatesPanic(t *testing.T) {
+	var got []string
+	reporter := engine.NewMultiReporter([]engine.ReporterRegistration{
+		{Name: "z", Order: 20, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { got = append(got, "z") })},
+		{Name: "panic", Order: 10, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { panic("boom") })},
+		{Name: "a", Order: 20, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { got = append(got, "a") })},
+	})
+
+	reporter.Report(context.Background(), schema.NewThinkingEvent())
+	if want := []string{"a", "z"}; !slices.Equal(got, want) {
+		t.Fatalf("reported to = %v, want %v", got, want)
 	}
 }
 
@@ -103,13 +75,14 @@ func TestAgentEngineReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := []reporterEvent{
-		{kind: "thinking"},
-		{kind: "message", payload: "starting tool"},
-		{kind: "tool_call", toolName: "read_file", payload: `{"path":"a.txt"}`},
-		{kind: "tool_result", toolName: "read_file", payload: "file A"},
-		{kind: "thinking"},
-		{kind: "message", payload: "done"},
+	call := schema.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	result := toolResult(call, "file A", false)
+	want := []schema.AgentEvent{
+		schema.NewThinkingEvent(),
+		schema.NewToolStartEvent(call),
+		schema.NewToolEndEvent(call, result),
+		schema.NewThinkingEvent(),
+		schema.NewMessageEvent(schema.Message{Role: schema.RoleAssistant, Content: blocks("done")}),
 	}
 	if got := reporter.Events(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("events = %#v, want %#v", got, want)

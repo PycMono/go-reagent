@@ -91,7 +91,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 				logsdk.Any("phase", "thinking"),
 			)
 			if reporter != nil {
-				reporter.OnThinking(ctx)
+				reporter.Report(ctx, schema.NewThinkingEvent())
 			}
 			thinkResp, err := e.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
@@ -140,15 +140,10 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 
 		contextHistory = append(contextHistory, *actionResp)
 
-		actionText, err := schema.TextContent(actionResp.Content)
-		if err != nil {
-			return fmt.Errorf("Action 阶段生成失败: response content: %w", err)
-		}
-		if actionText != "" && reporter != nil {
-			reporter.OnMessage(ctx, actionText)
-		}
-
 		if len(actionResp.ToolCalls) == 0 {
+			if reporter != nil {
+				reporter.Report(ctx, schema.NewMessageEvent(*actionResp))
+			}
 			logsdk.Info(ctx, "[Engine] 模型未请求调用工具，任务宣告完成",
 				logsdk.Any("component", "engine"),
 				logsdk.Any("turn", turnCount),
