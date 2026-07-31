@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 )
 
+// TestRenderSkillPromptContainsEscapedCatalogMetadata 验证 Skill 目录排序正确、元数据完成 XML 转义且包含渐进读取指令。
 func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
 	snapshot := newSkillSnapshot([]SkillSummary{
 		{
@@ -44,6 +45,7 @@ func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
 	}
 }
 
+// TestRenderSkillPromptOmitsEmptyCatalog 验证 nil 或空快照不会生成 Skill Prompt。
 func TestRenderSkillPromptOmitsEmptyCatalog(t *testing.T) {
 	for _, snapshot := range []*SkillSnapshot{nil, newSkillSnapshot(nil, nil)} {
 		prompt, report := renderSkillPrompt(snapshot)
@@ -53,6 +55,7 @@ func TestRenderSkillPromptOmitsEmptyCatalog(t *testing.T) {
 	}
 }
 
+// TestRenderSkillPromptHonorsCountAndRuneBudgets 验证渲染结果遵守技能数量和 Unicode 字符预算。
 func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
 	skills := make([]SkillSummary, 0, maxSkillsInPrompt+10)
 	for index := 0; index < maxSkillsInPrompt+10; index++ {
@@ -76,6 +79,7 @@ func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
 	}
 }
 
+// TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions 验证预算不足时优先保留 Skill 身份，再缩短描述。
 func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *testing.T) {
 	skills := make([]SkillSummary, 0, 10)
 	for index := 0; index < 10; index++ {
@@ -99,6 +103,7 @@ func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *tes
 	}
 }
 
+// TestRenderSkillPromptProducesWellFormedXMLForControlCharacters 验证非法控制字符被清理后仍能生成合法 XML。
 func TestRenderSkillPromptProducesWellFormedXMLForControlCharacters(t *testing.T) {
 	snapshot := newSkillSnapshot([]SkillSummary{{
 		Name:        "control",

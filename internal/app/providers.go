@@ -72,25 +72,50 @@ func NewLLMProvider(cfg *agentconfig.Config) (provider.LLMProvider, error) {
 
 // NewRegistry creates workspace tools and binds their resources to Fx lifecycle.
 func NewRegistry(lifecycle fx.Lifecycle, workDir WorkDir) (tools.Registry, error) {
+	var closer toolClosers
 	readFileTool, err := tools.NewReadFileTool(string(workDir))
 	if err != nil {
 		return nil, fmt.Errorf("初始化 read_file 工具失败: %w", err)
 	}
+	closer = append(closer, readFileTool)
 	editFileTool, err := tools.NewEditFileTool(string(workDir))
 	if err != nil {
-		_ = readFileTool.Close()
+		_ = closer.Close()
 		return nil, fmt.Errorf("初始化 edit_file 工具失败: %w", err)
 	}
-	closer := toolClosers{readFileTool, editFileTool}
+	closer = append(closer, editFileTool)
+	writeFileTool, err := tools.NewWriteFileTool(string(workDir))
+	if err != nil {
+		_ = closer.Close()
+		return nil, fmt.Errorf("初始化 write_file 工具失败: %w", err)
+	}
+	closer = append(closer, writeFileTool)
+	applyPatchTool, err := tools.NewApplyPatchTool(string(workDir))
+	if err != nil {
+		_ = closer.Close()
+		return nil, fmt.Errorf("初始化 apply_patch 工具失败: %w", err)
+	}
+	closer = append(closer, applyPatchTool)
+	processManager, err := tools.NewProcessManager(string(workDir))
+	if err != nil {
+		_ = closer.Close()
+		return nil, fmt.Errorf("初始化 exec/process 工具失败: %w", err)
+	}
+	closer = append(closer, processManager)
 
 	registry := tools.NewRegistry()
-	if err := registry.Register(readFileTool); err != nil {
-		_ = closer.Close()
-		return nil, fmt.Errorf("挂载 read_file 工具失败: %w", err)
-	}
-	if err := registry.Register(editFileTool); err != nil {
-		_ = closer.Close()
-		return nil, fmt.Errorf("挂载 edit_file 工具失败: %w", err)
+	for _, tool := range []tools.BaseTool{
+		readFileTool,
+		editFileTool,
+		writeFileTool,
+		applyPatchTool,
+		tools.NewExecTool(processManager),
+		tools.NewProcessTool(processManager),
+	} {
+		if err := registry.Register(tool); err != nil {
+			_ = closer.Close()
+			return nil, fmt.Errorf("挂载 %s 工具失败: %w", tool.Name(), err)
+		}
 	}
 
 	lifecycle.Append(fx.Hook{OnStop: func(ctx context.Context) error {

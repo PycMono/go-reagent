@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestParseSkillMDParsesStrictFrontmatter 验证解析器能够处理严格 Frontmatter、CRLF、多行描述和运行要求。
 func TestParseSkillMDParsesStrictFrontmatter(t *testing.T) {
 	content := []byte("---\r\nname: code-review\r\ndescription: |\r\n  Review code carefully.\r\n  Report concrete risks.\r\ndisable-model-invocation: true\r\nmetadata:\r\n  openclaw:\r\n    os: [darwin, linux]\r\n    requires:\r\n      bins: [git]\r\n      env: [REVIEW_TOKEN]\r\n---\r\n# Guide\r\nKeep this --- marker.\r\n")
 
@@ -34,6 +35,7 @@ func TestParseSkillMDParsesStrictFrontmatter(t *testing.T) {
 	}
 }
 
+// TestParseSkillMDRejectsInvalidContent 验证各种无效 SKILL.md 内容会返回对应的稳定错误代码。
 func TestParseSkillMDRejectsInvalidContent(t *testing.T) {
 	longName := strings.Repeat("a", 65)
 	longDescription := strings.Repeat("界", 1025)
@@ -70,6 +72,7 @@ func TestParseSkillMDRejectsInvalidContent(t *testing.T) {
 	}
 }
 
+// TestParseSkillMDAcceptsBoundaryLengths 验证名称和描述恰好达到长度上限时仍可解析。
 func TestParseSkillMDAcceptsBoundaryLengths(t *testing.T) {
 	name := strings.Repeat("a", 64)
 	description := strings.Repeat("界", 1024)
@@ -84,6 +87,7 @@ func TestParseSkillMDAcceptsBoundaryLengths(t *testing.T) {
 	}
 }
 
+// TestParseSkillMDRejectsYAMLDecodedXMLControlCharacters 验证 YAML 解码产生的非法 XML 控制字符会被拒绝。
 func TestParseSkillMDRejectsYAMLDecodedXMLControlCharacters(t *testing.T) {
 	content := []byte("---\nname: control\ndescription: \"\\0\"\n---\nBody")
 
@@ -94,6 +98,7 @@ func TestParseSkillMDRejectsYAMLDecodedXMLControlCharacters(t *testing.T) {
 	}
 }
 
+// TestParseSkillMDRedactsUnderlyingYAMLErrors 验证 YAML 解析错误不会泄露 Frontmatter 中的敏感内容。
 func TestParseSkillMDRedactsUnderlyingYAMLErrors(t *testing.T) {
 	content := []byte("---\nname: [frontmatter-secret-token]\ndescription: useful\n---\nBody")
 
@@ -107,6 +112,7 @@ func TestParseSkillMDRedactsUnderlyingYAMLErrors(t *testing.T) {
 	}
 }
 
+// writeSkill 在测试工作区的 .claw/skills 目录中创建指定内容的 SKILL.md。
 func writeSkill(t *testing.T, workDir string, relativePath string, content string) {
 	t.Helper()
 	path := filepath.Join(workDir, ".claw", "skills", filepath.FromSlash(relativePath))

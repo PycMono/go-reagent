@@ -31,11 +31,13 @@ type SkillLoader struct {
 	workDir string
 }
 
-// NewSkillLoader creates a loader rooted at workDir.
+// NewSkillLoader 创建一个以 workDir 为文件访问边界的 Skill 加载器。
 func NewSkillLoader(workDir string) *SkillLoader {
 	return &SkillLoader{workDir: workDir}
 }
 
+// readRootRegularFile 从受限工作区根目录读取普通文件，
+// 并拒绝目录、软链接及其他非普通文件，避免越过工作区边界。
 func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 	info, err := root.Lstat(name)
 	if err != nil {
@@ -73,14 +75,18 @@ type skillParseError struct {
 	Message string
 }
 
+// Error 返回适合暴露给诊断信息的 Skill 解析错误描述。
 func (e *skillParseError) Error() string {
 	return e.Message
 }
 
+// newSkillParseError 创建带稳定错误代码和脱敏描述的 Skill 解析错误。
 func newSkillParseError(code string, message string) error {
 	return &skillParseError{Code: code, Message: message}
 }
 
+// parseSkillMD 解析并严格校验 SKILL.md 的 YAML Frontmatter 和正文，
+// 提取名称、描述、运行环境要求及模型调用开关；无效内容返回可诊断的解析错误。
 func parseSkillMD(content []byte) (parsedSkill, error) {
 	if bytes.IndexByte(content, 0) >= 0 {
 		return parsedSkill{}, newSkillParseError("skill_binary_content", "SKILL.md 包含 NUL 字节")
@@ -149,6 +155,7 @@ func parseSkillMD(content []byte) (parsedSkill, error) {
 	}, nil
 }
 
+// allValidXMLText 检查字符串列表中的每一项是否都能安全写入 XML 文本节点。
 func allValidXMLText(values []string) bool {
 	for _, value := range values {
 		if !isValidXMLText(value) {
