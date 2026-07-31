@@ -25,14 +25,14 @@ func TestWriteFileToolCreatesParentsAndOverwritesText(t *testing.T) {
 	workDir := t.TempDir()
 	tool := newWriteFileToolForTest(t, workDir)
 
-	if _, err := tool.Execute(context.Background(), writeFileArguments(t, "nested/ping.go", "package main\n")); err != nil {
+	if _, err := tool.execute(context.Background(), writeFileArguments(t, "nested/ping.go", "package main\n")); err != nil {
 		t.Fatalf("create Execute() error = %v", err)
 	}
 	path := filepath.Join(workDir, "nested", "ping.go")
 	if got, err := os.ReadFile(path); err != nil || string(got) != "package main\n" {
 		t.Fatalf("created content = %q, error = %v", got, err)
 	}
-	if _, err := tool.Execute(context.Background(), writeFileArguments(t, "nested/ping.go", "package ping\n")); err != nil {
+	if _, err := tool.execute(context.Background(), writeFileArguments(t, "nested/ping.go", "package ping\n")); err != nil {
 		t.Fatalf("overwrite Execute() error = %v", err)
 	}
 	if got, err := os.ReadFile(path); err != nil || string(got) != "package ping\n" {
@@ -50,7 +50,7 @@ func TestWriteFileToolIdenticalContentIsNoOp(t *testing.T) {
 	}
 	tool := newWriteFileToolForTest(t, workDir)
 
-	output, err := tool.Execute(context.Background(), writeFileArguments(t, "same.txt", "same"))
+	output, err := tool.execute(context.Background(), writeFileArguments(t, "same.txt", "same"))
 	if err != nil || !strings.Contains(output, "未变化") {
 		t.Fatalf("Execute() output = %q, error = %v", output, err)
 	}
@@ -80,7 +80,7 @@ func TestWriteFileToolRejectsInvalidArgumentsAndText(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tool.Execute(context.Background(), tt.args)
+			_, err := tool.execute(context.Background(), tt.args)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 			}
@@ -99,17 +99,17 @@ func TestWriteFileToolEnforcesWorkspaceBoundaryAndRegularFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), writeFileArguments(t, relativeOutside, "changed")); err == nil {
+	if _, err := tool.execute(context.Background(), writeFileArguments(t, relativeOutside, "changed")); err == nil {
 		t.Fatal("path traversal Execute() error = nil")
 	}
 	if err := os.Mkdir(filepath.Join(workDir, "directory"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), writeFileArguments(t, "directory", "changed")); err == nil {
+	if _, err := tool.execute(context.Background(), writeFileArguments(t, "directory", "changed")); err == nil {
 		t.Fatal("directory Execute() error = nil")
 	}
 	if err := os.Symlink(outsidePath, filepath.Join(workDir, "outside-link")); err == nil {
-		if _, err := tool.Execute(context.Background(), writeFileArguments(t, "outside-link", "changed")); err == nil {
+		if _, err := tool.execute(context.Background(), writeFileArguments(t, "outside-link", "changed")); err == nil {
 			t.Fatal("external symlink Execute() error = nil")
 		}
 	}
@@ -127,7 +127,7 @@ func TestWriteFileToolHonorsCancellationAndClose(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tool.Execute(ctx, writeFileArguments(t, "a.txt", "a")); err == nil || !strings.Contains(err.Error(), "取消") {
+	if _, err := tool.execute(ctx, writeFileArguments(t, "a.txt", "a")); err == nil || !strings.Contains(err.Error(), "取消") {
 		t.Fatalf("canceled Execute() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "a.txt")); !os.IsNotExist(err) {
@@ -136,7 +136,7 @@ func TestWriteFileToolHonorsCancellationAndClose(t *testing.T) {
 	if err := tool.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), writeFileArguments(t, "a.txt", "a")); err == nil {
+	if _, err := tool.execute(context.Background(), writeFileArguments(t, "a.txt", "a")); err == nil {
 		t.Fatal("Execute() after Close error = nil")
 	}
 }

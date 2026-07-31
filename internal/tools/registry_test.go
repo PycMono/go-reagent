@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -14,50 +12,52 @@ import (
 )
 
 type stubTool struct {
-	name           string
-	definitionName string
-	output         string
-	err            error
-	panicOnExecute bool
-	mu             sync.Mutex
-	received       json.RawMessage
-	calls          atomic.Int32
+	definition schema.ToolDefinition
+	execute    func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error)
 }
 
-func (t *stubTool) Name() string {
-	return t.name
+func (t *stubTool) Definition() schema.ToolDefinition { return t.definition }
+
+func (t *stubTool) Execute(
+	ctx context.Context,
+	args json.RawMessage,
+	emit UpdateEmitter,
+) (schema.ToolOutput, error) {
+	return t.execute(ctx, args, emit)
 }
 
-func (t *stubTool) Definition() schema.ToolDefinition {
-	name := t.definitionName
-	if name == "" {
-		name = t.name
-	}
-	return schema.ToolDefinition{
-		Name:        name,
-		Description: "stub tool",
-		InputSchema: map[string]any{"type": "object"},
+func testTool(name string, execute func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error)) *stubTool {
+	return &stubTool{
+		definition: schema.ToolDefinition{
+			Name:        name,
+			Description: "test tool",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"text": map[string]any{"type": "string"},
+				},
+				"required":             []string{"text"},
+				"additionalProperties": false,
+			},
+		},
+		execute: execute,
 	}
 }
 
-func (t *stubTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
-	t.calls.Add(1)
-	t.mu.Lock()
-	t.received = append(json.RawMessage(nil), args...)
-	t.mu.Unlock()
-	if t.panicOnExecute {
-		panic("sensitive panic value")
+func newTestRegistry(t *testing.T, registrations []MiddlewareRegistration, tools ...Tool) Registry {
+	t.Helper()
+	registry, err := NewRegistry(RegistryParams{Tools: tools, Middlewares: registrations})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	return t.output, t.err
+	return registry
 }
 
-func TestRegistryRegistersAndSortsDefinitions(t *testing.T) {
-	registry := NewRegistry()
-	for _, name := range []string{"zeta", "alpha"} {
-		if err := registry.Register(&stubTool{name: name}); err != nil {
-			t.Fatalf("Register(%q) error = %v", name, err)
-		}
+func TestRegistrySortsDefinitions(t *testing.T) {
+	execute := func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("ok")}}, nil
 	}
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), testTool("zeta", execute), testTool("alpha", execute))
 
 	definitions := registry.GetAvailableTools()
 	if len(definitions) != 2 || definitions[0].Name != "alpha" || definitions[1].Name != "zeta" {
@@ -65,162 +65,149 @@ func TestRegistryRegistersAndSortsDefinitions(t *testing.T) {
 	}
 }
 
-func TestRegistryRejectsInvalidRegistrations(t *testing.T) {
-	var typedNil *stubTool
+func TestRegistryRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
+	var calls atomic.Int32
+	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+		calls.Add(1)
+		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("unexpected")}}, nil
+	})
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+
 	tests := []struct {
 		name string
-		tool BaseTool
-		want string
+		args json.RawMessage
 	}{
-		{name: "nil", tool: nil, want: "nil"},
-		{name: "typed nil", tool: typedNil, want: "nil"},
-		{name: "blank name", tool: &stubTool{name: " "}, want: "name"},
-		{name: "definition mismatch", tool: &stubTool{name: "route", definitionName: "schema"}, want: "must match"},
+		{name: "invalid JSON", args: json.RawMessage(`{"text":`)},
+		{name: "missing required field", args: json.RawMessage(`{}`)},
+		{name: "wrong type", args: json.RawMessage(`{"text":42}`)},
+		{name: "unknown field", args: json.RawMessage(`{"text":"ok","secret":true}`)},
+		{name: "trailing JSON", args: json.RawMessage(`{"text":"ok"} {}`)},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewRegistry().Register(tt.tool)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Register() error = %v, want containing %q", err, tt.want)
+			var events []schema.ToolEvent
+			call := schema.ToolCall{ID: "call-" + tt.name, Name: "echo", Arguments: tt.args}
+			result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+				events = append(events, event)
+			})
+			if err != nil || !result.IsError {
+				t.Fatalf("Execute() = (%#v, %v), want ordinary error result", result, err)
+			}
+			if len(events) != 2 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventEnd {
+				t.Fatalf("events = %#v, want start/end", events)
 			}
 		})
 	}
-}
-
-func TestRegistryRejectsDuplicateWithoutOverwriting(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&stubTool{name: "echo", output: "first"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.Register(&stubTool{name: "echo", output: "second"}); err == nil {
-		t.Fatal("duplicate Register() error = nil")
-	}
-
-	result := registry.Execute(context.Background(), schema.ToolCall{ID: "call-1", Name: "echo"})
-	if result.IsError || toolResultText(t, result) != "first" {
-		t.Fatalf("result = %#v", result)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("tool calls = %d, want 0", got)
 	}
 }
 
-func TestRegistryExecutesRegisteredTool(t *testing.T) {
-	tool := &stubTool{name: "echo", output: "ok"}
-	registry := NewRegistry()
-	if err := registry.Register(tool); err != nil {
-		t.Fatal(err)
-	}
-	call := schema.ToolCall{
-		ID:        "call-1",
-		Name:      "echo",
-		Arguments: json.RawMessage(`{"text":"hi"}`),
-	}
+func TestRegistryEmitsStartUpdateEndOnceWithCallIdentity(t *testing.T) {
+	tool := testTool("echo", func(_ context.Context, _ json.RawMessage, emit UpdateEmitter) (schema.ToolOutput, error) {
+		emit(schema.ToolUpdate{Content: []schema.ContentBlock{schema.TextBlock("chunk")}, Details: "progress"})
+		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("done")}, Details: "final"}, nil
+	})
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	call := schema.ToolCall{ID: "call-42", Name: "echo", Arguments: json.RawMessage(`{"text":"hello"}`)}
+	var events []schema.ToolEvent
 
-	result := registry.Execute(context.Background(), call)
-	if result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || toolResultText(t, result) != "ok" {
-		t.Fatalf("result = %#v", result)
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+		events = append(events, event)
+	})
+	if err != nil || result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || result.Details != "final" {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
-	tool.mu.Lock()
-	received := append(json.RawMessage(nil), tool.received...)
-	tool.mu.Unlock()
-	if string(received) != string(call.Arguments) {
-		t.Fatalf("args = %s, want %s", received, call.Arguments)
+	if len(events) != 3 {
+		t.Fatalf("events = %#v, want exactly three", events)
+	}
+	for index, phase := range []schema.ToolEventPhase{schema.ToolEventStart, schema.ToolEventUpdate, schema.ToolEventEnd} {
+		if events[index].Phase != phase || events[index].Call.ID != call.ID || events[index].Call.Name != call.Name {
+			t.Fatalf("events[%d] = %#v", index, events[index])
+		}
+	}
+	if events[1].Update == nil || events[1].Update.Details != "progress" || toolEventText(t, events[1].Update.Content) != "chunk" {
+		t.Fatalf("update = %#v", events[1].Update)
+	}
+	if events[2].Result == nil || events[2].Result.ToolCallID != call.ID {
+		t.Fatalf("end = %#v", events[2])
 	}
 }
 
-func TestRegistryReturnsExecutionErrors(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&stubTool{name: "broken", err: errors.New("disk failed")}); err != nil {
-		t.Fatal(err)
-	}
-
+func TestRegistryNormalizesOrdinaryAndContextErrors(t *testing.T) {
 	tests := []struct {
-		name string
-		call schema.ToolCall
-		want string
+		name       string
+		output     schema.ToolOutput
+		executeErr error
+		wantGoErr  error
+		wantText   string
 	}{
-		{name: "unknown", call: schema.ToolCall{ID: "call-unknown", Name: "missing"}, want: "not registered"},
-		{name: "tool error", call: schema.ToolCall{ID: "call-broken", Name: "broken"}, want: "disk failed"},
+		{name: "ordinary error uses error text", executeErr: errors.New("disk failed"), wantText: "disk failed"},
+		{name: "ordinary error retains output", output: schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("partial")}, Details: "kept"}, executeErr: errors.New("disk failed"), wantText: "partial"},
+		{name: "canceled", executeErr: context.Canceled, wantGoErr: context.Canceled, wantText: "context canceled"},
+		{name: "deadline", executeErr: context.DeadlineExceeded, wantGoErr: context.DeadlineExceeded, wantText: "context deadline exceeded"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := registry.Execute(context.Background(), tt.call)
-			if !result.IsError || result.ToolCallID != tt.call.ID || !strings.Contains(toolResultText(t, result), tt.want) {
+			tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+				return tt.output, tt.executeErr
+			})
+			registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+			result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "call", Name: "echo", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+			if !result.IsError || !strings.Contains(toolResultText(t, result), tt.wantText) {
 				t.Fatalf("result = %#v", result)
 			}
+			if !errors.Is(err, tt.wantGoErr) || (tt.wantGoErr == nil && err != nil) {
+				t.Fatalf("error = %v, want %v", err, tt.wantGoErr)
+			}
+			if tt.output.Details != nil && result.Details != tt.output.Details {
+				t.Fatalf("Details = %#v, want %#v", result.Details, tt.output.Details)
+			}
 		})
 	}
 }
 
-func TestRegistryHonorsCanceledAndNilContexts(t *testing.T) {
-	tool := &stubTool{name: "echo", output: "ok"}
-	registry := NewRegistry()
-	if err := registry.Register(tool); err != nil {
-		t.Fatal(err)
-	}
+func TestRegistryPreCanceledContextSkipsToolAndEvents(t *testing.T) {
+	var calls atomic.Int32
+	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+		calls.Add(1)
+		return schema.ToolOutput{}, nil
+	})
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	var events []schema.ToolEvent
 
-	for name, ctx := range map[string]context.Context{"canceled": ctx, "nil": nil} {
-		t.Run(name, func(t *testing.T) {
-			result := registry.Execute(ctx, schema.ToolCall{ID: "call-" + name, Name: "echo"})
-			if !result.IsError || result.ToolCallID != "call-"+name {
-				t.Fatalf("result = %#v", result)
-			}
-		})
-	}
-	if calls := tool.calls.Load(); calls != 0 {
-		t.Fatalf("tool calls = %d, want 0", calls)
+	result, err := registry.Execute(ctx, schema.ToolCall{ID: "call", Name: "echo"}, func(_ context.Context, event schema.ToolEvent) {
+		events = append(events, event)
+	})
+	if !errors.Is(err, context.Canceled) || len(result.Content) != 0 || calls.Load() != 0 || len(events) != 0 {
+		t.Fatalf("Execute() = (%#v, %v), calls=%d events=%#v", result, err, calls.Load(), events)
 	}
 }
 
-func TestRegistryRecoversToolPanicWithoutExposingValue(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&stubTool{name: "panic", panicOnExecute: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	result := registry.Execute(context.Background(), schema.ToolCall{ID: "call-panic", Name: "panic"})
-	text := toolResultText(t, result)
-	if !result.IsError || result.ToolCallID != "call-panic" || !strings.Contains(text, "panicked") {
-		t.Fatalf("result = %#v", result)
-	}
-	if strings.Contains(text, "sensitive panic value") {
-		t.Fatalf("panic value leaked in result: %q", text)
+func TestRegistryUnknownToolReturnsErrorResultWithoutEvents(t *testing.T) {
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations())
+	var events []schema.ToolEvent
+	call := schema.ToolCall{ID: "missing-id", Name: "missing"}
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+		events = append(events, event)
+	})
+	if err != nil || !result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || !strings.Contains(toolResultText(t, result), "not registered") || len(events) != 0 {
+		t.Fatalf("Execute() = (%#v, %v), events=%#v", result, err, events)
 	}
 }
 
 func toolResultText(t *testing.T, result schema.ToolResult) string {
 	t.Helper()
-	text, err := schema.TextContent(result.Content)
+	return toolEventText(t, result.Content)
+}
+
+func toolEventText(t *testing.T, content []schema.ContentBlock) string {
+	t.Helper()
+	text, err := schema.TextContent(content)
 	if err != nil {
 		t.Fatalf("TextContent() error = %v", err)
 	}
 	return text
-}
-
-func TestRegistrySupportsConcurrentDiscoveryAndExecution(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(&stubTool{name: "echo", output: "ok"}); err != nil {
-		t.Fatal(err)
-	}
-
-	var waitGroup sync.WaitGroup
-	for index := range 50 {
-		waitGroup.Add(2)
-		go func() {
-			defer waitGroup.Done()
-			_ = registry.GetAvailableTools()
-		}()
-		go func(index int) {
-			defer waitGroup.Done()
-			result := registry.Execute(context.Background(), schema.ToolCall{
-				ID:   fmt.Sprintf("call-%d", index),
-				Name: "echo",
-			})
-			if result.IsError {
-				t.Errorf("Execute() result = %#v", result)
-			}
-		}(index)
-	}
-	waitGroup.Wait()
 }

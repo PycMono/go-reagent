@@ -141,7 +141,7 @@ func TestExecToolRejectsInvalidArgumentsAndWorkDir(t *testing.T) {
 		{args: execArguments(t, map[string]any{"command": "true", "yield_ms": 30001}), want: "yield_ms"},
 	}
 	for _, tt := range tests {
-		if _, err := tool.Execute(context.Background(), tt.args); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if _, err := tool.execute(context.Background(), tt.args); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 		}
 	}
@@ -155,20 +155,20 @@ func TestExecToolHonorsCanceledContextAndClosedManager(t *testing.T) {
 	tool := NewExecTool(manager)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tool.Execute(ctx, execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "取消") {
+	if _, err := tool.execute(ctx, execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "取消") {
 		t.Fatalf("canceled Execute() error = %v", err)
 	}
 	if err := manager.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "关闭") {
+	if _, err := tool.execute(context.Background(), execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "关闭") {
 		t.Fatalf("closed Execute() error = %v", err)
 	}
 }
 
 func executeAndDecodeProcessObservation(t *testing.T, tool *ExecTool, input map[string]any) processObservation {
 	t.Helper()
-	output, err := tool.Execute(context.Background(), execArguments(t, input))
+	output, err := tool.execute(context.Background(), execArguments(t, input))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

@@ -72,7 +72,7 @@ func (r *fakeRegistry) GetAvailableTools() []schema.ToolDefinition {
 	return append([]schema.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *fakeRegistry) Execute(_ context.Context, call schema.ToolCall) schema.ToolResult {
+func (r *fakeRegistry) Execute(ctx context.Context, call schema.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	callCount := len(r.calls)
@@ -80,10 +80,21 @@ func (r *fakeRegistry) Execute(_ context.Context, call schema.ToolCall) schema.T
 	if r.afterExecute != nil {
 		r.afterExecute(callCount)
 	}
-	if result, ok := r.results[call.Name]; ok {
-		return result
+	if observer != nil {
+		observer(ctx, schema.NewToolStart(call))
 	}
-	return toolResult(call, "tool is not registered", true)
+	var result schema.ToolResult
+	if result, ok := r.results[call.Name]; ok {
+		if observer != nil {
+			observer(ctx, schema.NewToolEnd(call, result))
+		}
+		return result, nil
+	}
+	result = toolResult(call, "tool is not registered", true)
+	if observer != nil {
+		observer(ctx, schema.NewToolEnd(call, result))
+	}
+	return result, nil
 }
 
 func (r *fakeRegistry) Calls() []schema.ToolCall {
@@ -104,28 +115,51 @@ func (r *controlledRegistry) GetAvailableTools() []schema.ToolDefinition {
 	return append([]schema.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall) schema.ToolResult {
+func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
+	if observer != nil {
+		observer(ctx, schema.NewToolStart(call))
+	}
 	select {
 	case r.started <- call:
 	case <-ctx.Done():
-		return canceledToolResult(call, ctx.Err())
+		result := canceledToolResult(call, ctx.Err())
+		if observer != nil {
+			observer(ctx, schema.NewToolEnd(call, result))
+		}
+		return result, ctx.Err()
 	}
 
 	gate, exists := r.gates[call.ID]
 	if !exists {
-		return toolResult(call, fmt.Sprintf("tool %q is not registered", call.Name), true)
+		result := toolResult(call, fmt.Sprintf("tool %q is not registered", call.Name), true)
+		if observer != nil {
+			observer(ctx, schema.NewToolEnd(call, result))
+		}
+		return result, nil
 	}
 	select {
 	case <-gate:
 	case <-ctx.Done():
-		return canceledToolResult(call, ctx.Err())
+		result := canceledToolResult(call, ctx.Err())
+		if observer != nil {
+			observer(ctx, schema.NewToolEnd(call, result))
+		}
+		return result, ctx.Err()
 	}
 
 	r.finished <- call
+	var result schema.ToolResult
 	if result, ok := r.results[call.ID]; ok {
-		return result
+		if observer != nil {
+			observer(ctx, schema.NewToolEnd(call, result))
+		}
+		return result, nil
 	}
-	return toolResult(call, call.Name, false)
+	result = toolResult(call, call.Name, false)
+	if observer != nil {
+		observer(ctx, schema.NewToolEnd(call, result))
+	}
+	return result, nil
 }
 
 func canceledToolResult(call schema.ToolCall, err error) schema.ToolResult {

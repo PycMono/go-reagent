@@ -50,8 +50,8 @@ func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = readTool.Close() })
-	registry := tools.NewRegistry()
-	if err := registry.Register(readTool); err != nil {
+	registry, err := tools.NewRegistry(tools.RegistryParams{Tools: []tools.Tool{readTool}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	provider := &scriptedProvider{responses: []*schema.Message{

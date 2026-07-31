@@ -73,7 +73,11 @@ func (e *AgentEngine) executeToolCalls(
 		}
 
 		if !parallelSafe[calls[start].Name] {
-			observations[start] = e.executeToolCall(ctx, start, calls[start], false, reporter)
+			observation, err := e.executeToolCall(ctx, start, calls[start], false, reporter)
+			if err != nil {
+				return nil, err
+			}
+			observations[start] = observation
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -114,6 +118,7 @@ func (e *AgentEngine) executeParallelWave(
 	parallel := limit > 1
 
 	semaphore := make(chan struct{}, limit)
+	executionErrors := make([]error, end-start)
 	var waitGroup sync.WaitGroup
 	for index := start; index < end; index++ {
 		call := calls[index]
@@ -131,10 +136,17 @@ func (e *AgentEngine) executeParallelWave(
 				return
 			}
 
-			observations[index] = e.executeToolCall(ctx, index, call, parallel, reporter)
+			observation, err := e.executeToolCall(ctx, index, call, parallel, reporter)
+			observations[index] = observation
+			executionErrors[index-start] = err
 		}(index, call)
 	}
 	waitGroup.Wait()
+	for _, err := range executionErrors {
+		if err != nil {
+			return err
+		}
+	}
 	return ctx.Err()
 }
 
@@ -146,7 +158,7 @@ func (e *AgentEngine) executeToolCall(
 	call schema.ToolCall,
 	parallel bool,
 	reporter Reporter,
-) schema.Message {
+) (schema.Message, error) {
 	commonFields := []logsdk.Fields{
 		logsdk.Any("component", "engine"),
 		logsdk.Any("tool_index", index),
@@ -160,23 +172,22 @@ func (e *AgentEngine) executeToolCall(
 	}
 	logsdk.Info(ctx,
 		fmt.Sprintf("  -> [Go-%d] 🛠️ 触发%s执行", index, mode),
-		append(commonFields, logsdk.Any("arguments", call.Arguments))...,
+		commonFields...,
 	)
-	if reporter != nil {
-		reporter.Report(ctx, schema.NewToolStartEvent(call))
+	observer := func(ctx context.Context, event schema.ToolEvent) {
+		if reporter != nil {
+			reporter.Report(ctx, schema.NewAgentToolEvent(event))
+		}
 	}
-	result := e.registry.Execute(ctx, call)
+	result, executeErr := e.registry.Execute(ctx, call, observer)
 	resultText, err := schema.TextContent(result.Content)
 	if err != nil {
 		resultText = fmt.Sprintf("tool result content error: %v", err)
 	}
-	if reporter != nil {
-		reporter.Report(ctx, schema.NewToolEndEvent(call, result))
-	}
 	if result.IsError {
 		logsdk.Error(ctx,
 			fmt.Sprintf("  -> [Go-%d] ❌ 工具执行失败", index),
-			append(commonFields, logsdk.Any("result", resultText))...,
+			append(commonFields, logsdk.Any("result_bytes", len(resultText)))...,
 		)
 	} else {
 		logsdk.Info(ctx,
@@ -190,5 +201,5 @@ func (e *AgentEngine) executeToolCall(
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		IsError:    result.IsError,
-	}
+	}, executeErr
 }

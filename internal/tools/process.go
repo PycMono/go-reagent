@@ -19,7 +19,7 @@ type ProcessTool struct {
 	manager *ProcessManager
 }
 
-var _ BaseTool = (*ProcessTool)(nil)
+var _ Tool = (*ProcessTool)(nil)
 
 func NewProcessTool(manager *ProcessManager) *ProcessTool {
 	return &ProcessTool{manager: manager}
@@ -48,7 +48,12 @@ func (t *ProcessTool) Definition() schema.ToolDefinition {
 	}
 }
 
-func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *ProcessTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.manager == nil {
 		return "", errors.New("process 未初始化")
 	}

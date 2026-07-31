@@ -46,7 +46,7 @@ func TestApplyPatchToolAddsUpdatesDeletesAndMovesFiles(t *testing.T) {
 +move new
 *** End Patch`
 
-	output, err := tool.Execute(context.Background(), applyPatchArguments(t, patch))
+	output, err := tool.execute(context.Background(), applyPatchArguments(t, patch))
 	if err != nil || !strings.Contains(output, "4") {
 		t.Fatalf("Execute() output = %q, error = %v", output, err)
 	}
@@ -78,7 +78,7 @@ func TestApplyPatchToolPreflightsAllOperationsBeforeMutation(t *testing.T) {
 +second new
 *** End Patch`
 
-	if _, err := tool.Execute(context.Background(), applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "上下文") {
+	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "上下文") {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	assertFileContent(t, first, "first old\n")
@@ -105,7 +105,7 @@ func TestApplyPatchToolPreservesMoveSourceWhenDestinationWriteFails(t *testing.T
  source
 *** End Patch`
 
-	if _, err := tool.Execute(context.Background(), applyPatchArguments(t, patch)); err == nil {
+	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil {
 		t.Fatal("Execute() error = nil")
 	}
 	assertFileContent(t, source, "source\n")
@@ -139,7 +139,7 @@ func TestApplyPatchToolRejectsPathGraphConflictsBeforeMutation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			workDir := t.TempDir()
 			tool := newApplyPatchToolForTest(t, workDir)
-			if _, err := tool.Execute(context.Background(), applyPatchArguments(t, tt.patch)); err == nil || !strings.Contains(err.Error(), "冲突") {
+			if _, err := tool.execute(context.Background(), applyPatchArguments(t, tt.patch)); err == nil || !strings.Contains(err.Error(), "冲突") {
 				t.Fatalf("Execute() error = %v", err)
 			}
 			entries, err := os.ReadDir(workDir)
@@ -162,7 +162,7 @@ func TestApplyPatchToolRejectsAmbiguousUpdateContext(t *testing.T) {
 +changed
 *** End Patch`
 
-	if _, err := tool.Execute(context.Background(), applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "多处") {
+	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "多处") {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	assertFileContent(t, path, "same\nsame\n")
@@ -187,7 +187,7 @@ func TestApplyPatchToolRejectsMalformedAndConflictingPatches(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tool.Execute(context.Background(), applyPatchArguments(t, tt.patch))
+			_, err := tool.execute(context.Background(), applyPatchArguments(t, tt.patch))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 			}
@@ -207,7 +207,7 @@ func TestApplyPatchToolRejectsInvalidArguments(t *testing.T) {
 		{args: json.RawMessage(`{}`), want: "input"},
 	}
 	for _, tt := range tests {
-		_, err := tool.Execute(context.Background(), tt.args)
+		_, err := tool.execute(context.Background(), tt.args)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 		}
@@ -223,13 +223,13 @@ func TestApplyPatchToolHonorsCancellationAndClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	patch := "*** Begin Patch\n*** Add File: a.txt\n+a\n*** End Patch"
-	if _, err := tool.Execute(ctx, applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "取消") {
+	if _, err := tool.execute(ctx, applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "取消") {
 		t.Fatalf("canceled Execute() error = %v", err)
 	}
 	if err := tool.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), applyPatchArguments(t, patch)); err == nil {
+	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil {
 		t.Fatal("Execute() after Close error = nil")
 	}
 }

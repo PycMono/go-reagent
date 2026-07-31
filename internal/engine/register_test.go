@@ -26,8 +26,8 @@ type registerRegistry struct{}
 
 func (*registerRegistry) GetAvailableTools() []schema.ToolDefinition { return nil }
 
-func (*registerRegistry) Execute(context.Context, schema.ToolCall) schema.ToolResult {
-	return schema.ToolResult{}
+func (*registerRegistry) Execute(context.Context, schema.ToolCall, tools.ToolEventObserver) (schema.ToolResult, error) {
+	return schema.ToolResult{}, nil
 }
 
 func TestNewAgentEngineUsesInjectedContextComponents(t *testing.T) {

@@ -53,7 +53,7 @@ func TestReadFileToolReadsWorkspaceFiles(t *testing.T) {
 		{path: "nested/message.txt", want: "nested content\n"},
 	} {
 		t.Run(tt.path, func(t *testing.T) {
-			output, err := tool.Execute(context.Background(), readFileArguments(t, tt.path))
+			output, err := tool.execute(context.Background(), readFileArguments(t, tt.path))
 			if err != nil || output != tt.want {
 				t.Fatalf("Execute() output = %q, error = %v", output, err)
 			}
@@ -67,7 +67,7 @@ func TestReadFileToolPaginatesByLine(t *testing.T) {
 	tool := newReadFileToolForTest(t, workDir)
 	offset, limit := 2, 2
 
-	got, err := tool.Execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
+	got, err := tool.execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestReadFileToolPaginatesByLine(t *testing.T) {
 	}
 
 	offset = 4
-	got, err = tool.Execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
+	got, err = tool.execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
 	if err != nil || got != "four\n" {
 		t.Fatalf("final page = %q, error = %v", got, err)
 	}
@@ -92,7 +92,7 @@ func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
 	writeTestFile(t, filepath.Join(workDir, "many-lines.txt"), []byte(content.String()))
 	tool := newReadFileToolForTest(t, workDir)
 
-	first, err := tool.Execute(context.Background(), readFileArguments(t, "many-lines.txt"))
+	first, err := tool.execute(context.Background(), readFileArguments(t, "many-lines.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
 		t.Fatalf("first page ending = %q", first[len(first)-120:])
 	}
 	offset := 2001
-	last, err := tool.Execute(context.Background(), readFilePageArguments(t, "many-lines.txt", &offset, nil))
+	last, err := tool.execute(context.Background(), readFilePageArguments(t, "many-lines.txt", &offset, nil))
 	if err != nil || last != "line-2001\n" {
 		t.Fatalf("last page = %q, error = %v", last, err)
 	}
@@ -124,7 +124,7 @@ func TestReadFileToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
 	pageCount := 0
 	for {
 		pageCount++
-		page, err := tool.Execute(context.Background(), readFilePageArguments(t, "reconstruct.txt", &nextOffset, nil))
+		page, err := tool.execute(context.Background(), readFilePageArguments(t, "reconstruct.txt", &nextOffset, nil))
 		if err != nil {
 			t.Fatalf("page %d error = %v", pageCount, err)
 		}
@@ -174,7 +174,7 @@ func TestReadFileToolHandlesEmptyAndPastEOF(t *testing.T) {
 		{path: "one.txt", offset: intPointer(2)},
 		{path: "one.txt", offset: intPointer(20)},
 	} {
-		output, err := tool.Execute(context.Background(), readFilePageArguments(t, tt.path, tt.offset, nil))
+		output, err := tool.execute(context.Background(), readFilePageArguments(t, tt.path, tt.offset, nil))
 		if err != nil || output != "" {
 			t.Fatalf("Execute(%q) = %q, %v", tt.path, output, err)
 		}
@@ -205,7 +205,7 @@ func TestReadFileToolRejectsInvalidArguments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tool.Execute(context.Background(), tt.args)
+			_, err := tool.execute(context.Background(), tt.args)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 			}
@@ -224,7 +224,7 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), readFileArguments(t, relativeOutside)); err == nil {
+	if _, err := tool.execute(context.Background(), readFileArguments(t, relativeOutside)); err == nil {
 		t.Fatal("path traversal Execute() error = nil")
 	}
 
@@ -232,7 +232,7 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 		if err := os.Symlink("inside.txt", filepath.Join(workDir, "inside-link.txt")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		output, err := tool.Execute(context.Background(), readFileArguments(t, "inside-link.txt"))
+		output, err := tool.execute(context.Background(), readFileArguments(t, "inside-link.txt"))
 		if err != nil || output != "inside" {
 			t.Fatalf("Execute() output = %q, error = %v", output, err)
 		}
@@ -242,7 +242,7 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 		if err := os.Symlink(outsidePath, filepath.Join(workDir, "outside-link.txt")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		if _, err := tool.Execute(context.Background(), readFileArguments(t, "outside-link.txt")); err == nil {
+		if _, err := tool.execute(context.Background(), readFileArguments(t, "outside-link.txt")); err == nil {
 			t.Fatal("external symlink Execute() error = nil")
 		}
 	})
@@ -255,7 +255,7 @@ func TestReadFileToolRejectsNonFilesAndMissingPaths(t *testing.T) {
 	}
 	tool := newReadFileToolForTest(t, workDir)
 	for _, path := range []string{"directory", "missing.txt"} {
-		if _, err := tool.Execute(context.Background(), readFileArguments(t, path)); err == nil {
+		if _, err := tool.execute(context.Background(), readFileArguments(t, path)); err == nil {
 			t.Fatalf("Execute(%q) error = nil", path)
 		}
 	}
@@ -266,7 +266,7 @@ func TestReadFileToolLimitsFinalOutputTo50KiB(t *testing.T) {
 	writeTestFile(t, filepath.Join(workDir, "large.txt"), []byte(strings.Repeat("中文内容\n", 7000)))
 	tool := newReadFileToolForTest(t, workDir)
 
-	got, err := tool.Execute(context.Background(), readFileArguments(t, "large.txt"))
+	got, err := tool.execute(context.Background(), readFileArguments(t, "large.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestReadFileToolRejectsRequestedLineTooLargeForPage(t *testing.T) {
 	writeTestFile(t, filepath.Join(workDir, "long-line.txt"), []byte(strings.Repeat("a", defaultReadFileMaxBytes)+"\nnext\n"))
 	tool := newReadFileToolForTest(t, workDir)
 
-	_, err := tool.Execute(context.Background(), readFileArguments(t, "long-line.txt"))
+	_, err := tool.execute(context.Background(), readFileArguments(t, "long-line.txt"))
 	if err == nil || !strings.Contains(err.Error(), "单行超过 read_file 单页限制") {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -295,7 +295,7 @@ func TestReadFileToolSkipsLargeLinesWithoutReturningThem(t *testing.T) {
 	tool := newReadFileToolForTest(t, workDir)
 	offset := 2
 
-	got, err := tool.Execute(context.Background(), readFilePageArguments(t, "skip.txt", &offset, nil))
+	got, err := tool.execute(context.Background(), readFilePageArguments(t, "skip.txt", &offset, nil))
 	if err != nil || got != "target\n" {
 		t.Fatalf("Execute() = %q, %v", got, err)
 	}
@@ -309,16 +309,16 @@ func TestReadFileToolValidatesOnlyRequestedPage(t *testing.T) {
 	tool := newReadFileToolForTest(t, workDir)
 	limit := 1
 
-	first, err := tool.Execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", nil, &limit))
+	first, err := tool.execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", nil, &limit))
 	if err != nil || !strings.Contains(first, "Use offset=2") {
 		t.Fatalf("first page = %q, error = %v", first, err)
 	}
 	offset := 2
-	if _, err := tool.Execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", &offset, nil)); err == nil ||
+	if _, err := tool.execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", &offset, nil)); err == nil ||
 		!strings.Contains(err.Error(), "UTF-8") {
 		t.Fatalf("invalid UTF-8 error = %v", err)
 	}
-	if _, err := tool.Execute(context.Background(), readFileArguments(t, "nul.txt")); err == nil ||
+	if _, err := tool.execute(context.Background(), readFileArguments(t, "nul.txt")); err == nil ||
 		!strings.Contains(err.Error(), "NUL") {
 		t.Fatalf("NUL error = %v", err)
 	}
@@ -333,7 +333,7 @@ func TestReadFileToolDefersValidationForLineMovedToNextPage(t *testing.T) {
 	writeTestFile(t, filepath.Join(workDir, "marker-budget.txt"), content)
 	tool := newReadFileToolForTest(t, workDir)
 
-	first, err := tool.Execute(context.Background(), readFileArguments(t, "marker-budget.txt"))
+	first, err := tool.execute(context.Background(), readFileArguments(t, "marker-budget.txt"))
 	if err != nil {
 		t.Fatalf("first page error = %v", err)
 	}
@@ -342,7 +342,7 @@ func TestReadFileToolDefersValidationForLineMovedToNextPage(t *testing.T) {
 		t.Fatalf("first page boundaries are wrong: bytes=%d", len(first))
 	}
 	offset := 2
-	if _, err := tool.Execute(context.Background(), readFilePageArguments(t, "marker-budget.txt", &offset, nil)); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+	if _, err := tool.execute(context.Background(), readFilePageArguments(t, "marker-budget.txt", &offset, nil)); err == nil || !strings.Contains(err.Error(), "UTF-8") {
 		t.Fatalf("second page error = %v", err)
 	}
 }
@@ -357,13 +357,13 @@ func TestReadFileToolHonorsCancellationAndClose(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tool.Execute(ctx, readFileArguments(t, "hello.txt")); err == nil {
+	if _, err := tool.execute(ctx, readFileArguments(t, "hello.txt")); err == nil {
 		t.Fatal("canceled Execute() error = nil")
 	}
 	if err := tool.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := tool.Execute(context.Background(), readFileArguments(t, "hello.txt")); err == nil {
+	if _, err := tool.execute(context.Background(), readFileArguments(t, "hello.txt")); err == nil {
 		t.Fatal("Execute() after Close error = nil")
 	}
 }

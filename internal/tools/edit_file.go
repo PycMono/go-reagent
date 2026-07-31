@@ -18,7 +18,7 @@ type EditFileTool struct {
 	root *os.Root
 }
 
-var _ BaseTool = (*EditFileTool)(nil)
+var _ Tool = (*EditFileTool)(nil)
 
 func NewEditFileTool(workDir string) (*EditFileTool, error) {
 	workDir = strings.TrimSpace(workDir)
@@ -73,7 +73,12 @@ func (t *EditFileTool) Close() error {
 	return t.root.Close()
 }
 
-func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *EditFileTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.root == nil {
 		return "", errors.New("edit_file 未初始化")
 	}

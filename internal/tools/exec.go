@@ -24,7 +24,7 @@ type ExecTool struct {
 	manager *ProcessManager
 }
 
-var _ BaseTool = (*ExecTool)(nil)
+var _ Tool = (*ExecTool)(nil)
 
 func NewExecTool(manager *ProcessManager) *ExecTool {
 	return &ExecTool{manager: manager}
@@ -54,7 +54,12 @@ func (t *ExecTool) Definition() schema.ToolDefinition {
 	}
 }
 
-func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *ExecTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.manager == nil {
 		return "", errors.New("exec 未初始化")
 	}
