@@ -1,12 +1,8 @@
 package tools
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"io"
 
-	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/config"
 	"go.uber.org/fx"
 )
@@ -23,11 +19,10 @@ func NewRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir) (Registr
 	if err != nil {
 		return nil, err
 	}
-	return newRuntimeRegistry(lifecycle, workDir, workspace)
+	return newRuntimeRegistry(lifecycle, workspace)
 }
 
-func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspace *Workspace) (Registry, error) {
-	var closers toolClosers
+func newRuntimeRegistry(lifecycle fx.Lifecycle, workspace *Workspace) (Registry, error) {
 	readTool, err := NewReadTool(workspace)
 	if err != nil {
 		_ = workspace.Close()
@@ -38,58 +33,34 @@ func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspac
 
 	writeTool, err := NewWriteTool(workspace)
 	if err != nil {
-		_ = closers.Close()
 		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化 write 工具失败: %w", err)
 	}
 
 	applyPatchTool := NewApplyPatchTool(workspace)
 
-	processManager, err := NewProcessManager(string(workDir))
+	processSupervisor, err := NewProcessSupervisor(lifecycle, workspace)
 	if err != nil {
-		_ = closers.Close()
 		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化 exec/process 工具失败: %w", err)
 	}
-	closers = append(closers, processManager)
 
 	runtimeTools := []Tool{
 		readTool,
 		editTool,
 		writeTool,
 		applyPatchTool,
-		NewExecTool(processManager),
-		NewProcessTool(processManager),
+		NewExecTool(processSupervisor),
+		NewProcessTool(processSupervisor),
 	}
 	registry, err := NewRegistry(RegistryParams{
 		Tools:       runtimeTools,
 		Middlewares: defaultMiddlewareRegistrations(),
 	})
 	if err != nil {
-		_ = closers.Close()
+		_ = processSupervisor.Close()
 		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化工具 Registry 失败: %w", err)
 	}
-
-	lifecycle.Append(fx.Hook{OnStop: func(ctx context.Context) error {
-		if err := closers.Close(); err != nil {
-			logsdk.Error(ctx, "关闭工具 Registry 资源失败",
-				logsdk.Any("component", "bootstrap"),
-				logsdk.Err(err),
-			)
-			return err
-		}
-		return nil
-	}})
 	return registry, nil
-}
-
-type toolClosers []io.Closer
-
-func (closers toolClosers) Close() error {
-	closeErrors := make([]error, 0, len(closers))
-	for index := len(closers) - 1; index >= 0; index-- {
-		closeErrors = append(closeErrors, closers[index].Close())
-	}
-	return errors.Join(closeErrors...)
 }

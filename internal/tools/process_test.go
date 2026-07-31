@@ -9,7 +9,7 @@ import (
 )
 
 func TestProcessToolDefinitionIsExclusive(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	definition := NewProcessTool(manager).Definition()
 	if definition.Name != "process" || definition.Description == "" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
@@ -17,7 +17,7 @@ func TestProcessToolDefinitionIsExclusive(t *testing.T) {
 }
 
 func TestProcessToolPollsBackgroundCommandToCompletion(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("sleep-output", "50", "done"),
 		"background": true,
@@ -33,7 +33,7 @@ func TestProcessToolPollsBackgroundCommandToCompletion(t *testing.T) {
 }
 
 func TestProcessToolWritesStdinAndClosesIt(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("copy-stdin"),
 		"background": true,
@@ -58,7 +58,7 @@ func TestProcessToolWritesStdinAndClosesIt(t *testing.T) {
 }
 
 func TestProcessToolWriteHonorsCancellation(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("sleep", "1000"),
 		"background": true,
@@ -74,14 +74,14 @@ func TestProcessToolWriteHonorsCancellation(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "取消") || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("Execute() error = %v, elapsed = %v", err, time.Since(started))
 	}
-	result, err := manager.snapshot(execResult.SessionID)
+	result, err := manager.Poll(context.Background(), execResult.SessionID, 0)
 	if err != nil || result.Status != "canceled" {
 		t.Fatalf("snapshot = %#v, error = %v", result, err)
 	}
 }
 
 func TestProcessToolListsAndKillsOwnedSessions(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("sleep", "5000"),
 		"background": true,
@@ -100,7 +100,7 @@ func TestProcessToolListsAndKillsOwnedSessions(t *testing.T) {
 }
 
 func TestProcessToolRejectsUnknownSessionAndInvalidActions(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	tool := NewProcessTool(manager)
 	tests := []struct {
 		input map[string]any
@@ -118,11 +118,8 @@ func TestProcessToolRejectsUnknownSessionAndInvalidActions(t *testing.T) {
 	}
 }
 
-func TestProcessManagerCloseKillsRunningSessions(t *testing.T) {
-	manager, err := NewProcessManager(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestProcessSupervisorCloseKillsRunningSessions(t *testing.T) {
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("sleep", "5000"),
 		"background": true,
@@ -141,20 +138,14 @@ func TestProcessManagerCloseKillsRunningSessions(t *testing.T) {
 	if result := session.snapshot(); result.Status != "killed" {
 		t.Fatalf("snapshot = %#v", result)
 	}
-	manager.mu.Lock()
+	manager.mu.RLock()
 	retainedSessions := len(manager.sessions)
-	manager.mu.Unlock()
+	manager.mu.RUnlock()
 	if retainedSessions != 0 {
 		t.Fatalf("retained sessions after Close = %d", retainedSessions)
 	}
 	if _, err := NewProcessTool(manager).execute(context.Background(), processArguments(t, map[string]any{"action": "list"})); err == nil || !strings.Contains(err.Error(), "关闭") {
 		t.Fatalf("process Execute() after Close error = %v", err)
-	}
-}
-
-func TestNewProcessManagerRejectsMissingWorkDir(t *testing.T) {
-	if _, err := NewProcessManager(t.TempDir() + "/missing"); err == nil {
-		t.Fatal("NewProcessManager() error = nil")
 	}
 }
 
