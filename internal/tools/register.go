@@ -34,13 +34,7 @@ func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspac
 		return nil, fmt.Errorf("初始化 read 工具失败: %w", err)
 	}
 
-	editFileTool, err := NewEditFileTool(string(workDir))
-	if err != nil {
-		_ = closers.Close()
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化 edit_file 工具失败: %w", err)
-	}
-	closers = append(closers, editFileTool)
+	editTool := NewEditTool(workspace)
 
 	writeTool, err := NewWriteTool(workspace)
 	if err != nil {
@@ -67,7 +61,7 @@ func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspac
 
 	runtimeTools := []Tool{
 		readTool,
-		editFileTool,
+		editTool,
 		writeTool,
 		applyPatchTool,
 		NewExecTool(processManager),

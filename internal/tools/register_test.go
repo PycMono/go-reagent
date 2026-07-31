@@ -25,7 +25,7 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 	if len(definitions) != 6 {
 		t.Fatalf("tool definitions = %#v, want 6 tools", definitions)
 	}
-	wantNames := []string{"apply_patch", "edit_file", "exec", "process", "read", "write"}
+	wantNames := []string{"apply_patch", "edit", "exec", "process", "read", "write"}
 	for index, want := range wantNames {
 		if definitions[index].Name != want {
 			t.Fatalf("definitions[%d].Name = %q, want %q", index, definitions[index].Name, want)
