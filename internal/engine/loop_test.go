@@ -858,6 +858,11 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 		want     string
 	}{
 		{
+			name:     "empty response",
+			response: &schema.Message{Role: schema.RoleAssistant},
+			want:     "no content or tool calls",
+		},
+		{
 			name:     "wrong role",
 			response: &schema.Message{Role: schema.RoleUser, Content: blocks("done")},
 			want:     "assistant role",
