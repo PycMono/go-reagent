@@ -18,7 +18,7 @@ func TestPromptComposerBuildsCoreAgentsAndSkillsInOrder(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	writeSkill(t, workDir, "review/SKILL.md", "---\nname: Review\ndescription: Review changes\n---\nCheck tests.")
+	writeSkill(t, workDir, "review/SKILL.md", "---\nname: review\ndescription: Review changes\n---\nCheck tests.")
 
 	message := NewPromptComposer(workDir).Build()
 	if message.Role != schema.RoleSystem {
