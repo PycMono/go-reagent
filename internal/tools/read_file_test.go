@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,21 +11,31 @@ import (
 	"unicode/utf8"
 )
 
-func TestReadFileToolDefinition(t *testing.T) {
+func TestReadFileToolDefinitionDescribesPagination(t *testing.T) {
 	tool := newReadFileToolForTest(t, t.TempDir())
 	definition := tool.Definition()
-	if definition.Name != "read_file" || definition.Description == "" {
+	if definition.Name != "read_file" || definition.Description == "" || !definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
-	}
-	if !definition.ParallelSafe {
-		t.Fatal("read_file must be marked parallel-safe")
 	}
 	schemaObject, ok := definition.InputSchema.(map[string]any)
 	if !ok {
 		t.Fatalf("InputSchema = %T", definition.InputSchema)
 	}
-	if additional, exists := schemaObject["additionalProperties"]; !exists || additional != false {
-		t.Fatalf("additionalProperties = %#v", additional)
+	properties, ok := schemaObject["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %#v", schemaObject["properties"])
+	}
+	for _, field := range []string{"offset", "limit"} {
+		property, ok := properties[field].(map[string]any)
+		if !ok || property["type"] != "integer" || property["minimum"] != 1 {
+			t.Fatalf("%s schema = %#v", field, properties[field])
+		}
+	}
+	if limit := properties["limit"].(map[string]any); limit["maximum"] != 2000 {
+		t.Fatalf("limit schema = %#v", limit)
+	}
+	if schemaObject["additionalProperties"] != false {
+		t.Fatalf("additionalProperties = %#v", schemaObject["additionalProperties"])
 	}
 }
 
@@ -34,23 +45,86 @@ func TestReadFileToolReadsWorkspaceFiles(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(workDir, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(workDir, "nested", "message.txt"), []byte("nested content"))
+	writeTestFile(t, filepath.Join(workDir, "nested", "message.txt"), []byte("nested content\n"))
 	tool := newReadFileToolForTest(t, workDir)
 
-	tests := []struct {
-		path string
-		want string
-	}{
+	for _, tt := range []struct{ path, want string }{
 		{path: "hello.txt", want: "hello"},
-		{path: "nested/message.txt", want: "nested content"},
-	}
-	for _, tt := range tests {
+		{path: "nested/message.txt", want: "nested content\n"},
+	} {
 		t.Run(tt.path, func(t *testing.T) {
 			output, err := tool.Execute(context.Background(), readFileArguments(t, tt.path))
 			if err != nil || output != tt.want {
 				t.Fatalf("Execute() output = %q, error = %v", output, err)
 			}
 		})
+	}
+}
+
+func TestReadFileToolPaginatesByLine(t *testing.T) {
+	workDir := t.TempDir()
+	writeTestFile(t, filepath.Join(workDir, "lines.txt"), []byte("one\ntwo\nthree\nfour\n"))
+	tool := newReadFileToolForTest(t, workDir)
+	offset, limit := 2, 2
+
+	got, err := tool.Execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "two\nthree\n\n[Showing lines 2-3. Use offset=4 to continue.]"
+	if got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+
+	offset = 4
+	got, err = tool.Execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
+	if err != nil || got != "four\n" {
+		t.Fatalf("final page = %q, error = %v", got, err)
+	}
+}
+
+func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
+	workDir := t.TempDir()
+	var content strings.Builder
+	for line := 1; line <= 2001; line++ {
+		fmt.Fprintf(&content, "line-%04d\n", line)
+	}
+	writeTestFile(t, filepath.Join(workDir, "many-lines.txt"), []byte(content.String()))
+	tool := newReadFileToolForTest(t, workDir)
+
+	first, err := tool.Execute(context.Background(), readFileArguments(t, "many-lines.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(first, "line-2000\n") || strings.Contains(first, "line-2001\n") ||
+		!strings.HasSuffix(first, "[Showing lines 1-2000. Use offset=2001 to continue.]") {
+		t.Fatalf("first page ending = %q", first[len(first)-120:])
+	}
+	offset := 2001
+	last, err := tool.Execute(context.Background(), readFilePageArguments(t, "many-lines.txt", &offset, nil))
+	if err != nil || last != "line-2001\n" {
+		t.Fatalf("last page = %q, error = %v", last, err)
+	}
+}
+
+func TestReadFileToolHandlesEmptyAndPastEOF(t *testing.T) {
+	workDir := t.TempDir()
+	writeTestFile(t, filepath.Join(workDir, "empty.txt"), nil)
+	writeTestFile(t, filepath.Join(workDir, "one.txt"), []byte("one\n"))
+	tool := newReadFileToolForTest(t, workDir)
+
+	for _, tt := range []struct {
+		path   string
+		offset *int
+	}{
+		{path: "empty.txt"},
+		{path: "one.txt", offset: intPointer(2)},
+		{path: "one.txt", offset: intPointer(20)},
+	} {
+		output, err := tool.Execute(context.Background(), readFilePageArguments(t, tt.path, tt.offset, nil))
+		if err != nil || output != "" {
+			t.Fatalf("Execute(%q) = %q, %v", tt.path, output, err)
+		}
 	}
 }
 
@@ -70,6 +144,10 @@ func TestReadFileToolRejectsInvalidArguments(t *testing.T) {
 		{name: "trailing JSON", args: json.RawMessage(`{"path":"hello.txt"} {}`), want: "多余"},
 		{name: "blank path", args: json.RawMessage(`{"path":" "}`), want: "path 不能为空"},
 		{name: "absolute path", args: absoluteArgs, want: "相对路径"},
+		{name: "zero offset", args: json.RawMessage(`{"path":"hello.txt","offset":0}`), want: "offset"},
+		{name: "negative offset", args: json.RawMessage(`{"path":"hello.txt","offset":-1}`), want: "offset"},
+		{name: "zero limit", args: json.RawMessage(`{"path":"hello.txt","limit":0}`), want: "limit"},
+		{name: "excessive limit", args: json.RawMessage(`{"path":"hello.txt","limit":2001}`), want: "limit"},
 	}
 
 	for _, tt := range tests {
@@ -89,7 +167,6 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	outsidePath := filepath.Join(outsideDir, "outside.txt")
 	writeTestFile(t, outsidePath, []byte("outside"))
 	tool := newReadFileToolForTest(t, workDir)
-
 	relativeOutside, err := filepath.Rel(workDir, outsidePath)
 	if err != nil {
 		t.Fatal(err)
@@ -99,8 +176,7 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	}
 
 	t.Run("internal symlink", func(t *testing.T) {
-		link := filepath.Join(workDir, "inside-link.txt")
-		if err := os.Symlink("inside.txt", link); err != nil {
+		if err := os.Symlink("inside.txt", filepath.Join(workDir, "inside-link.txt")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 		output, err := tool.Execute(context.Background(), readFileArguments(t, "inside-link.txt"))
@@ -110,8 +186,7 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	})
 
 	t.Run("external symlink", func(t *testing.T) {
-		link := filepath.Join(workDir, "outside-link.txt")
-		if err := os.Symlink(outsidePath, link); err != nil {
+		if err := os.Symlink(outsidePath, filepath.Join(workDir, "outside-link.txt")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 		if _, err := tool.Execute(context.Background(), readFileArguments(t, "outside-link.txt")); err == nil {
@@ -126,55 +201,73 @@ func TestReadFileToolRejectsNonFilesAndMissingPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := newReadFileToolForTest(t, workDir)
-
 	for _, path := range []string{"directory", "missing.txt"} {
-		t.Run(path, func(t *testing.T) {
-			if _, err := tool.Execute(context.Background(), readFileArguments(t, path)); err == nil {
-				t.Fatalf("Execute(%q) error = nil", path)
-			}
-		})
+		if _, err := tool.Execute(context.Background(), readFileArguments(t, path)); err == nil {
+			t.Fatalf("Execute(%q) error = nil", path)
+		}
 	}
 }
 
-func TestReadFileToolTruncatesAtUTF8Boundary(t *testing.T) {
+func TestReadFileToolLimitsFinalOutputTo50KiB(t *testing.T) {
 	workDir := t.TempDir()
-	writeTestFile(t, filepath.Join(workDir, "exact.txt"), []byte(strings.Repeat("a", 8000)))
-	writeTestFile(t, filepath.Join(workDir, "large.txt"), []byte(strings.Repeat("b", 8001)))
-	writeTestFile(t, filepath.Join(workDir, "unicode.txt"), []byte(strings.Repeat("c", 7999)+"你tail"))
+	writeTestFile(t, filepath.Join(workDir, "large.txt"), []byte(strings.Repeat("中文内容\n", 7000)))
 	tool := newReadFileToolForTest(t, workDir)
 
-	exact, err := tool.Execute(context.Background(), readFileArguments(t, "exact.txt"))
-	if err != nil || len(exact) != 8000 || strings.Contains(exact, "已截断") {
-		t.Fatalf("exact output length = %d, error = %v", len(exact), err)
+	got, err := tool.Execute(context.Background(), readFileArguments(t, "large.txt"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, path := range []string{"large.txt", "unicode.txt"} {
-		t.Run(path, func(t *testing.T) {
-			output, err := tool.Execute(context.Background(), readFileArguments(t, path))
-			if err != nil {
-				t.Fatalf("Execute() error = %v", err)
-			}
-			if !utf8.ValidString(output) || !strings.Contains(output, "已截断至前 8000 字节") {
-				t.Fatalf("truncated output is invalid: %q", output[len(output)-80:])
-			}
-		})
+	if len([]byte(got)) > defaultReadFileMaxBytes || !utf8.ValidString(got) {
+		t.Fatalf("output bytes = %d, valid = %v", len([]byte(got)), utf8.ValidString(got))
+	}
+	if !strings.Contains(got, "Use offset=") {
+		t.Fatalf("missing continuation marker: %q", got[len(got)-120:])
 	}
 }
 
-func TestReadFileToolRejectsBinaryAndInvalidUTF8(t *testing.T) {
+func TestReadFileToolRejectsRequestedLineTooLargeForPage(t *testing.T) {
 	workDir := t.TempDir()
-	writeTestFile(t, filepath.Join(workDir, "nul.bin"), []byte{'a', 0, 'b'})
-	writeTestFile(t, filepath.Join(workDir, "invalid.bin"), []byte{0xff, 0xfe})
-	lateInvalid := append([]byte(strings.Repeat("a", 8001)), 0xff)
-	writeTestFile(t, filepath.Join(workDir, "late-invalid.bin"), lateInvalid)
+	writeTestFile(t, filepath.Join(workDir, "long-line.txt"), []byte(strings.Repeat("a", defaultReadFileMaxBytes)+"\nnext\n"))
 	tool := newReadFileToolForTest(t, workDir)
 
-	for _, path := range []string{"nul.bin", "invalid.bin", "late-invalid.bin"} {
-		t.Run(path, func(t *testing.T) {
-			if _, err := tool.Execute(context.Background(), readFileArguments(t, path)); err == nil {
-				t.Fatalf("Execute(%q) error = nil", path)
-			}
-		})
+	_, err := tool.Execute(context.Background(), readFileArguments(t, "long-line.txt"))
+	if err == nil || !strings.Contains(err.Error(), "单行超过 read_file 单页限制") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
+func TestReadFileToolSkipsLargeLinesWithoutReturningThem(t *testing.T) {
+	workDir := t.TempDir()
+	writeTestFile(t, filepath.Join(workDir, "skip.txt"), []byte(strings.Repeat("x", 100*1024)+"\ntarget\n"))
+	tool := newReadFileToolForTest(t, workDir)
+	offset := 2
+
+	got, err := tool.Execute(context.Background(), readFilePageArguments(t, "skip.txt", &offset, nil))
+	if err != nil || got != "target\n" {
+		t.Fatalf("Execute() = %q, %v", got, err)
+	}
+}
+
+func TestReadFileToolValidatesOnlyRequestedPage(t *testing.T) {
+	workDir := t.TempDir()
+	content := append([]byte("valid\n"), 0xff, '\n')
+	writeTestFile(t, filepath.Join(workDir, "invalid-later.txt"), content)
+	writeTestFile(t, filepath.Join(workDir, "nul.txt"), []byte{'a', 0, 'b', '\n'})
+	tool := newReadFileToolForTest(t, workDir)
+	limit := 1
+
+	first, err := tool.Execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", nil, &limit))
+	if err != nil || !strings.Contains(first, "Use offset=2") {
+		t.Fatalf("first page = %q, error = %v", first, err)
+	}
+	offset := 2
+	if _, err := tool.Execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", &offset, nil)); err == nil ||
+		!strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("invalid UTF-8 error = %v", err)
+	}
+	if _, err := tool.Execute(context.Background(), readFileArguments(t, "nul.txt")); err == nil ||
+		!strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("NUL error = %v", err)
 	}
 }
 
@@ -217,11 +310,27 @@ func newReadFileToolForTest(t *testing.T, workDir string) *ReadFileTool {
 
 func readFileArguments(t *testing.T, path string) json.RawMessage {
 	t.Helper()
-	arguments, err := json.Marshal(map[string]string{"path": path})
+	return readFilePageArguments(t, path, nil, nil)
+}
+
+func readFilePageArguments(t *testing.T, path string, offset, limit *int) json.RawMessage {
+	t.Helper()
+	input := map[string]any{"path": path}
+	if offset != nil {
+		input["offset"] = *offset
+	}
+	if limit != nil {
+		input["limit"] = *limit
+	}
+	arguments, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("marshal arguments: %v", err)
 	}
 	return arguments
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func writeTestFile(t *testing.T, path string, content []byte) {

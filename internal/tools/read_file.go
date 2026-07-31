@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,9 +16,10 @@ import (
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-const maxReadFileBytes = 8000
-
-const readFileTruncationMarker = "...[文件内容超过限制，已截断至前 8000 字节]..."
+const (
+	defaultReadFileMaxLines = 2000
+	defaultReadFileMaxBytes = 50 * 1024
+)
 
 // ReadFileTool 读取 os.Root 能力边界内的普通文本文件。
 type ReadFileTool struct {
@@ -50,7 +52,7 @@ func (t *ReadFileTool) Name() string {
 func (t *ReadFileTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name:         t.Name(),
-		Description:  "读取工作区内指定相对路径的文本文件内容。",
+		Description:  "按行读取工作区内指定相对路径的 UTF-8 文本文件。单页最多 2000 行且最终输出不超过 50 KiB；出现 Use offset=N to continue 时请用 offset 继续读取。",
 		ParallelSafe: true,
 		InputSchema: map[string]any{
 			"type": "object",
@@ -58,6 +60,17 @@ func (t *ReadFileTool) Definition() schema.ToolDefinition {
 				"path": map[string]any{
 					"type":        "string",
 					"description": "相对于工作区的文件路径，例如 cmd/reagent/main.go",
+				},
+				"offset": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "可选，1-based 起始行，默认 1",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"maximum":     defaultReadFileMaxLines,
+					"description": "可选，最多返回行数，默认且最大 2000",
 				},
 			},
 			"required":             []string{"path"},
@@ -97,6 +110,20 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
 		return "", errors.New("path 必须是相对于工作区的相对路径")
 	}
+	offset := 1
+	if input.Offset != nil {
+		offset = *input.Offset
+	}
+	if offset < 1 {
+		return "", errors.New("offset 必须大于等于 1")
+	}
+	limit := defaultReadFileMaxLines
+	if input.Limit != nil {
+		limit = *input.Limit
+	}
+	if limit < 1 || limit > defaultReadFileMaxLines {
+		return "", fmt.Errorf("limit 必须在 1 到 %d 之间", defaultReadFileMaxLines)
+	}
 
 	file, err := t.root.Open(path)
 	if err != nil {
@@ -115,36 +142,23 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("读取已取消: %w", err)
 	}
 
-	content, err := io.ReadAll(io.LimitReader(file, maxReadFileBytes+utf8.UTFMax))
-	if err != nil {
-		return "", fmt.Errorf("读取文件内容失败: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("读取已取消: %w", err)
-	}
-	if bytes.IndexByte(content, 0) >= 0 {
-		return "", errors.New("文件包含 NUL 字节，疑似二进制内容")
-	}
-
-	if len(content) <= maxReadFileBytes {
-		if !utf8.Valid(content) {
-			return "", errors.New("文件内容不是有效的 UTF-8 文本")
+	reader := bufio.NewReader(file)
+	for line := 1; line < offset; line++ {
+		exists, err := discardReadFileLine(ctx, reader)
+		if err != nil {
+			return "", err
 		}
-		return string(content), nil
+		if !exists {
+			return "", nil
+		}
 	}
-	if !validUTF8Window(content) {
-		return "", errors.New("文件内容不是有效的 UTF-8 文本")
-	}
-
-	cut, ok := validUTF8Cut(content, maxReadFileBytes)
-	if !ok {
-		return "", errors.New("文件内容不是有效的 UTF-8 文本")
-	}
-	return string(content[:cut]) + "\n\n" + readFileTruncationMarker, nil
+	return readFilePage(ctx, reader, offset, limit)
 }
 
 type readFileArgs struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Offset *int   `json:"offset,omitempty"`
+	Limit  *int   `json:"limit,omitempty"`
 }
 
 func decodeReadFileArgs(args json.RawMessage) (readFileArgs, error) {
@@ -165,29 +179,143 @@ func decodeReadFileArgs(args json.RawMessage) (readFileArgs, error) {
 	return input, nil
 }
 
-func validUTF8Window(content []byte) bool {
-	for len(content) > 0 {
-		if !utf8.FullRune(content) {
-			return true
+func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit int) (string, error) {
+	lines := make([][]byte, 0, limit)
+	contentBytes := 0
+	hasMore := false
+
+	for len(lines) < limit {
+		line, exists, tooLong, err := readFileLine(ctx, reader, defaultReadFileMaxBytes)
+		if err != nil {
+			return "", err
 		}
-		runeValue, size := utf8.DecodeRune(content)
-		if runeValue == utf8.RuneError && size == 1 {
-			return false
+		if !exists {
+			break
 		}
-		content = content[size:]
+		if tooLong || contentBytes+len(line) > defaultReadFileMaxBytes {
+			hasMore = true
+			if len(lines) == 0 {
+				return "", errors.New("单行超过 read_file 单页限制")
+			}
+			break
+		}
+		if bytes.IndexByte(line, 0) >= 0 {
+			return "", errors.New("文件包含 NUL 字节，疑似二进制内容")
+		}
+		if !utf8.Valid(line) {
+			return "", errors.New("文件内容不是有效的 UTF-8 文本")
+		}
+		lines = append(lines, line)
+		contentBytes += len(line)
 	}
-	return true
+
+	if !hasMore && len(lines) == limit {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("读取已取消: %w", err)
+		}
+		_, err := reader.Peek(1)
+		switch {
+		case err == nil:
+			hasMore = true
+		case errors.Is(err, io.EOF):
+			hasMore = false
+		default:
+			return "", fmt.Errorf("探测后续文件内容失败: %w", err)
+		}
+	}
+
+	if len(lines) == 0 {
+		return "", nil
+	}
+	if !hasMore {
+		return string(joinReadFileLines(lines)), nil
+	}
+
+	for len(lines) > 0 {
+		content := joinReadFileLines(lines)
+		end := offset + len(lines) - 1
+		marker := readFileContinuationMarker(offset, end, end+1)
+		separator := readFileMarkerSeparator(content)
+		if len(content)+len(separator)+len(marker) <= defaultReadFileMaxBytes {
+			return string(content) + separator + marker, nil
+		}
+		lines = lines[:len(lines)-1]
+	}
+	return "", errors.New("单行超过 read_file 单页限制")
 }
 
-func validUTF8Cut(content []byte, maximum int) (int, bool) {
-	minimum := maximum - (utf8.UTFMax - 1)
-	if minimum < 0 {
-		minimum = 0
-	}
-	for cut := maximum; cut >= minimum; cut-- {
-		if utf8.Valid(content[:cut]) {
-			return cut, true
+func readFileLine(ctx context.Context, reader *bufio.Reader, maximum int) ([]byte, bool, bool, error) {
+	line := make([]byte, 0, min(maximum, reader.Size()))
+	tooLong := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, false, false, fmt.Errorf("读取已取消: %w", err)
+		}
+		fragment, err := reader.ReadSlice('\n')
+		if !tooLong {
+			if len(line)+len(fragment) > maximum {
+				tooLong = true
+				line = nil
+			} else {
+				line = append(line, fragment...)
+			}
+		}
+		switch {
+		case err == nil:
+			return line, true, tooLong, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			if len(fragment) == 0 && len(line) == 0 && !tooLong {
+				return nil, false, false, nil
+			}
+			return line, true, tooLong, nil
+		default:
+			return nil, false, false, fmt.Errorf("读取文件内容失败: %w", err)
 		}
 	}
-	return 0, false
+}
+
+func discardReadFileLine(ctx context.Context, reader *bufio.Reader) (bool, error) {
+	readAny := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("读取已取消: %w", err)
+		}
+		fragment, err := reader.ReadSlice('\n')
+		readAny = readAny || len(fragment) > 0
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			return readAny, nil
+		default:
+			return false, fmt.Errorf("跳过文件内容失败: %w", err)
+		}
+	}
+}
+
+func joinReadFileLines(lines [][]byte) []byte {
+	total := 0
+	for _, line := range lines {
+		total += len(line)
+	}
+	content := make([]byte, 0, total)
+	for _, line := range lines {
+		content = append(content, line...)
+	}
+	return content
+}
+
+func readFileContinuationMarker(start int, end int, next int) string {
+	return fmt.Sprintf("[Showing lines %d-%d. Use offset=%d to continue.]", start, end, next)
+}
+
+func readFileMarkerSeparator(content []byte) string {
+	if bytes.HasSuffix(content, []byte{'\n'}) {
+		return "\n"
+	}
+	return "\n\n"
 }
