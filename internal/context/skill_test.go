@@ -84,6 +84,29 @@ func TestParseSkillMDAcceptsBoundaryLengths(t *testing.T) {
 	}
 }
 
+func TestParseSkillMDRejectsYAMLDecodedXMLControlCharacters(t *testing.T) {
+	content := []byte("---\nname: control\ndescription: \"\\0\"\n---\nBody")
+
+	_, err := parseSkillMD(content)
+	var parseErr *skillParseError
+	if !errors.As(err, &parseErr) || parseErr.Code != "skill_frontmatter_invalid" {
+		t.Fatalf("parseSkillMD() error = %v", err)
+	}
+}
+
+func TestParseSkillMDRedactsUnderlyingYAMLErrors(t *testing.T) {
+	content := []byte("---\nname: [frontmatter-secret-token]\ndescription: useful\n---\nBody")
+
+	_, err := parseSkillMD(content)
+	var parseErr *skillParseError
+	if !errors.As(err, &parseErr) || parseErr.Code != "skill_frontmatter_invalid" {
+		t.Fatalf("parseSkillMD() error = %v", err)
+	}
+	if parseErr.Message != "SKILL.md Frontmatter YAML 无效" || strings.Contains(parseErr.Message, "frontmatter-secret-token") {
+		t.Fatalf("parse error was not redacted: %#v", parseErr)
+	}
+}
+
 func writeSkill(t *testing.T, workDir string, relativePath string, content string) {
 	t.Helper()
 	path := filepath.Join(workDir, ".claw", "skills", filepath.FromSlash(relativePath))

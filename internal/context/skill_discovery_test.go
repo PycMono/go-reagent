@@ -53,6 +53,22 @@ func TestSkillLoaderExcludesSameSourceDuplicateNames(t *testing.T) {
 	requireDiagnosticCodes(t, snapshot.Diagnostics(), "skill_duplicate_name", "skill_shadowed")
 }
 
+func TestSkillLoaderReportsShadowedDuplicatesInLowerPrioritySource(t *testing.T) {
+	workDir := t.TempDir()
+	writeWorkspaceSkill(t, workDir, "skills/review/SKILL.md", "review", "winner", "winner body")
+	writeWorkspaceSkill(t, workDir, ".claw/skills/one/SKILL.md", "review", "legacy one", "legacy body one")
+	writeWorkspaceSkill(t, workDir, ".claw/skills/two/SKILL.md", "review", "legacy two", "legacy body two")
+
+	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Skills()) != 1 || snapshot.Skills()[0].Description != "winner" {
+		t.Fatalf("skills = %#v", snapshot.Skills())
+	}
+	requireDiagnosticCodes(t, snapshot.Diagnostics(), "skill_duplicate_name", "skill_shadowed")
+}
+
 func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/zeta/SKILL.md", "zeta", "last", "zeta body")
