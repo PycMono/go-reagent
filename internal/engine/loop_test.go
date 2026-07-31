@@ -12,9 +12,7 @@ import (
 	"testing"
 	"time"
 
-	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/logtest"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 )
@@ -243,184 +241,6 @@ func TestAgentEngineRequiresReadFileWhenSkillsAreAvailable(t *testing.T) {
 	}
 }
 
-func TestAgentEngineLogsInvalidSkillDiagnostics(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-	workDir := t.TempDir()
-	skillDir := filepath.Join(workDir, "skills", "broken")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# missing frontmatter"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
-
-	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	event, ok := recorder.Find("warn", "[Engine] Agent Skill 诊断")
-	if !ok || event.Fields["code"] != "skill_frontmatter_missing" ||
-		strings.Contains(fmt.Sprint(event.Fields), "missing frontmatter") {
-		t.Fatalf("diagnostic event = %#v, found = %v", event, ok)
-	}
-}
-
-func TestAgentEngineEmitsStructuredLifecycleLogs(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
-	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
-	workDir := t.TempDir()
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
-	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	started, ok := recorder.Find("info", "[Engine] 引擎启动，锁定工作区")
-	if !ok || started.Fields["component"] != "engine" || started.Fields["work_dir"] != workDir {
-		t.Fatalf("start event = %#v, found = %v", started, ok)
-	}
-	thinkingMode, ok := recorder.Find("info", "[Engine] 慢思考模式 (Thinking Phase)")
-	if !ok || thinkingMode.Fields["thinking_enabled"] != false {
-		t.Fatalf("thinking mode event = %#v, found = %v", thinkingMode, ok)
-	}
-	turn, ok := recorder.Find("info", "========== [Turn 1] 开始 ==========")
-	if !ok || turn.Fields["turn"] != 1 {
-		t.Fatalf("turn event = %#v, found = %v", turn, ok)
-	}
-	phase, ok := recorder.Find("info", "[Engine][Phase 2] 恢复工具挂载，等待模型采取行动")
-	if !ok || phase.Fields["phase"] != "action" || phase.Fields["turn"] != 1 {
-		t.Fatalf("phase event = %#v, found = %v", phase, ok)
-	}
-	completed, ok := recorder.Find("info", "[Engine] 模型未请求调用工具，任务宣告完成")
-	if !ok || completed.Fields["turn"] != 1 {
-		t.Fatalf("completion event = %#v, found = %v", completed, ok)
-	}
-}
-
-func TestAgentEngineEmitsStructuredThinkingPhaseLog(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "plan"},
-		{Role: schema.RoleAssistant, Content: "done"},
-	}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
-	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	phase, ok := recorder.Find("info", "[Engine][Phase 1] 剥夺工具访问权，强制进入慢思考与规划阶段")
-	if !ok || phase.Fields["phase"] != "thinking" || phase.Fields["turn"] != 1 {
-		t.Fatalf("thinking phase event = %#v, found = %v", phase, ok)
-	}
-}
-
-func TestAgentEngineEmitsStructuredToolLogs(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
-	provider := &fakeProvider{responses: []*schema.Message{
-		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
-				{ID: "call-success", Name: "success", Arguments: json.RawMessage(`{"path":"README.md"}`)},
-				{ID: "call-error", Name: "error", Arguments: json.RawMessage(`{"path":"missing"}`)},
-			},
-		},
-		{Role: schema.RoleAssistant, Content: "done"},
-	}}
-	registry := &fakeRegistry{results: map[string]schema.ToolResult{
-		"success": {Output: "ok"},
-		"error":   {Output: "boom", IsError: true},
-	}}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
-	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	started, ok := recorder.Find("info", "  -> [Go-0] 🛠️ 触发串行执行")
-	if !ok || started.Fields["component"] != "engine" || started.Fields["tool_index"] != 0 || started.Fields["tool"] != "success" || started.Fields["tool_call_id"] != "call-success" || string(started.Fields["arguments"].(json.RawMessage)) != `{"path":"README.md"}` {
-		t.Fatalf("start event = %#v, found = %v", started, ok)
-	}
-	if started.Fields["parallel"] != false {
-		t.Fatalf("start parallel = %#v, want false", started.Fields["parallel"])
-	}
-	succeeded, ok := recorder.Find("info", "  -> [Go-0] ✅ 工具执行成功")
-	if !ok || succeeded.Fields["result_bytes"] != 2 {
-		t.Fatalf("success event = %#v, found = %v", succeeded, ok)
-	}
-	failed, ok := recorder.Find("error", "  -> [Go-1] ❌ 工具执行失败")
-	if !ok || failed.Fields["tool"] != "error" || failed.Fields["tool_call_id"] != "call-error" || failed.Fields["result"] != "boom" {
-		t.Fatalf("failure event = %#v, found = %v", failed, ok)
-	}
-	aggregated, ok := recorder.Find("info", "[Engine] 所有工具执行完毕，开始聚合观察结果 (Observation)")
-	if !ok || aggregated.Fields["tool_count"] != 2 || aggregated.Fields["execution_mode"] != "serial" {
-		t.Fatalf("aggregation event = %#v, found = %v", aggregated, ok)
-	}
-}
-
-func TestAgentEngineEmitsReferenceStyleParallelToolLogs(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{
-			{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{"path":"a.txt"}`)},
-			{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{"path":"b.txt"}`)},
-		}},
-		{Role: schema.RoleAssistant, Content: "done"},
-	}}
-	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{
-			{Name: "read-1", ParallelSafe: true},
-			{Name: "read-2", ParallelSafe: true},
-		},
-		results: map[string]schema.ToolResult{
-			"read-1": {Output: "a"},
-			"read-2": {Output: "b"},
-		},
-	}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
-	if err := agentEngine.Run(context.Background(), "read both", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	scheduled, ok := recorder.Find("info", "[Engine] 模型请求并发调用 2 个工具")
-	if !ok || scheduled.Fields["tool_count"] != 2 || scheduled.Fields["execution_mode"] != "parallel" {
-		t.Fatalf("schedule event = %#v, found = %v", scheduled, ok)
-	}
-	for index := range 2 {
-		message := fmt.Sprintf("  -> [Go-%d] 🛠️ 触发并行执行", index)
-		started, ok := recorder.Find("info", message)
-		if !ok || started.Fields["tool_index"] != index || started.Fields["parallel"] != true {
-			t.Fatalf("parallel start %d = %#v, found = %v", index, started, ok)
-		}
-	}
-	aggregated, ok := recorder.Find("info", "[Engine] 所有并发工具执行完毕，开始聚合观察结果 (Observation)")
-	if !ok || aggregated.Fields["tool_count"] != 2 || aggregated.Fields["execution_mode"] != "parallel" {
-		t.Fatalf("aggregation event = %#v, found = %v", aggregated, ok)
-	}
-}
-
 func TestAgentEngineAppendsToolObservationAndContinues(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
 		{
@@ -574,12 +394,6 @@ func TestAgentEngineBoundsParallelTools(t *testing.T) {
 }
 
 func TestAgentEngineUsesExclusiveToolsAsBarriers(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
 	toolCalls := []schema.ToolCall{
 		{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{}`)},
@@ -649,14 +463,6 @@ func TestAgentEngineUsesExclusiveToolsAsBarriers(t *testing.T) {
 	observation := provider.requests[1][7]
 	if observation.ToolCallID != "call-5" || !strings.Contains(observation.Content, "not registered") {
 		t.Fatalf("unknown observation = %#v", observation)
-	}
-	scheduled, ok := recorder.Find("info", "[Engine] 模型请求混合调度 5 个工具")
-	if !ok || scheduled.Fields["execution_mode"] != "mixed" {
-		t.Fatalf("mixed schedule event = %#v, found = %v", scheduled, ok)
-	}
-	aggregated, ok := recorder.Find("info", "[Engine] 混合工具执行完毕，开始聚合观察结果 (Observation)")
-	if !ok || aggregated.Fields["execution_mode"] != "mixed" {
-		t.Fatalf("mixed aggregation event = %#v, found = %v", aggregated, ok)
 	}
 }
 

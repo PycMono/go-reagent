@@ -20,6 +20,8 @@ type SkillEnvironment struct {
 	BinLookup func(name string) bool
 }
 
+// DefaultSkillEnvironment 创建基于当前进程的 Skill 运行环境，
+// 用于检查当前操作系统、环境变量和可执行文件是否满足 Skill 的使用条件。
 func DefaultSkillEnvironment() SkillEnvironment {
 	return SkillEnvironment{
 		GOOS: runtime.GOOS,
@@ -49,6 +51,9 @@ type discoveredSkill struct {
 	Summary SkillSummary
 }
 
+// Discover 从工作区约定的 Skill 目录中扫描可用的 SKILL.md，
+// 过滤格式无效或不满足运行环境要求的 Skill，再按来源优先级处理同名项，
+// 最终返回排序稳定的 Skill 摘要和诊断信息快照。
 func (s *SkillLoader) Discover(env SkillEnvironment) (*SkillSnapshot, error) {
 	if s == nil {
 		return nil, errors.New("SkillLoader 不能为空")
@@ -91,6 +96,9 @@ func (s *SkillLoader) Discover(env SkillEnvironment) (*SkillSnapshot, error) {
 	return newSkillSnapshot(winners, diagnostics), nil
 }
 
+// discoverSkillSource 递归扫描一个 Skill 来源目录，读取并解析其中的 SKILL.md。
+// 它会跳过软链接和非普通文件，拒绝过大的文件和不符合当前环境要求的 Skill，
+// 并将单个 Skill 的问题记录为诊断，避免影响同一来源中的其他有效 Skill。
 func discoverSkillSource(
 	root *os.Root,
 	source skillSourceSpec,
@@ -178,6 +186,8 @@ func discoverSkillSource(
 	return candidates, diagnostics, nil
 }
 
+// readLimitedSkillFile 从工作区根目录安全读取一个普通 SKILL.md，
+// 最多读取 maxSkillFileBytes+1 字节，使调用方能够判断文件是否超过大小限制。
 func readLimitedSkillFile(root *os.Root, path string) ([]byte, error) {
 	file, err := root.Open(path)
 	if err != nil {
@@ -194,6 +204,8 @@ func readLimitedSkillFile(root *os.Root, path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(file, maxSkillFileBytes+1))
 }
 
+// skillEligibility 检查 Skill 是否允许模型调用，并验证当前操作系统、
+// 必需的二进制命令和环境变量是否满足要求；不满足时返回对应诊断和 false。
 func skillEligibility(path string, skill parsedSkill, env SkillEnvironment) (SkillDiagnostic, bool) {
 	if skill.DisableModelInvocation {
 		return skillDiagnostic(path, DiagnosticSeverityInfo, "skill_model_invocation_disabled",
@@ -225,6 +237,7 @@ func skillEligibility(path string, skill parsedSkill, env SkillEnvironment) (Ski
 	return SkillDiagnostic{}, true
 }
 
+// containsString 在清理列表元素两侧空白后，检查其中是否存在指定字符串。
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if strings.TrimSpace(value) == wanted {
@@ -234,6 +247,9 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
+// mergeDiscoveredSkills 按 skillSources 的顺序合并不同来源发现的 Skill。
+// 高优先级来源会覆盖低优先级的同名 Skill；同一来源出现重复名称时，
+// 该名称会被标记为冲突并阻止低优先级来源中的同名 Skill 补位。
 func mergeDiscoveredSkills(bySource map[SkillSource][]discoveredSkill) ([]SkillSummary, []SkillDiagnostic) {
 	winners := make(map[string]SkillSummary)
 	blocked := make(map[string]bool)
@@ -279,6 +295,7 @@ func mergeDiscoveredSkills(bySource map[SkillSource][]discoveredSkill) ([]SkillS
 	return result, diagnostics
 }
 
+// skillDiagnostic 创建路径格式统一的 Skill 诊断信息，供发现流程记录跳过原因。
 func skillDiagnostic(path string, severity DiagnosticSeverity, code string, message string) SkillDiagnostic {
 	return SkillDiagnostic{Path: filepath.ToSlash(path), Severity: severity, Code: code, Message: message}
 }
