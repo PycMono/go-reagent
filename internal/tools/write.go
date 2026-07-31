@@ -96,17 +96,9 @@ func (t *WriteTool) executeWithDetails(ctx context.Context, args json.RawMessage
 		return "", WriteDetails{}, fmt.Errorf("写入已取消: %w", err)
 	}
 
-	file, err := t.workspace.Open(path)
+	info, statErr := t.workspace.Stat(path)
 	switch {
-	case err == nil:
-		info, statErr := file.Stat()
-		closeErr := file.Close()
-		if statErr != nil {
-			return "", WriteDetails{}, fmt.Errorf("检查目标文件失败: %w", statErr)
-		}
-		if closeErr != nil {
-			return "", WriteDetails{}, fmt.Errorf("关闭目标文件失败: %w", closeErr)
-		}
+	case statErr == nil:
 		if !info.Mode().IsRegular() {
 			return "", WriteDetails{}, errors.New("只允许覆盖普通文件")
 		}
@@ -117,8 +109,8 @@ func (t *WriteTool) executeWithDetails(ctx context.Context, args json.RawMessage
 		if bytes.Equal(current, []byte(content)) {
 			return fmt.Sprintf("文件内容未变化: %s", path), WriteDetails{Path: path, Bytes: len(current), Changed: false}, nil
 		}
-	case !errors.Is(err, os.ErrNotExist):
-		return "", WriteDetails{}, fmt.Errorf("检查目标文件失败: %w", err)
+	case !errors.Is(statErr, os.ErrNotExist):
+		return "", WriteDetails{}, fmt.Errorf("检查目标文件失败: %w", statErr)
 	}
 
 	parent := filepath.Dir(path)
@@ -130,7 +122,7 @@ func (t *WriteTool) executeWithDetails(ctx context.Context, args json.RawMessage
 	if err := ctx.Err(); err != nil {
 		return "", WriteDetails{}, fmt.Errorf("写入已取消: %w", err)
 	}
-	file, err = t.workspace.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultWrittenFileMode)
+	file, err := t.workspace.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultWrittenFileMode)
 	if err != nil {
 		return "", WriteDetails{}, fmt.Errorf("打开目标文件失败: %w", err)
 	}

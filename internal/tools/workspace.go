@@ -85,6 +85,18 @@ func (w *Workspace) ReadFile(path string) ([]byte, error) {
 	return w.root.ReadFile(path)
 }
 
+// Stat follows only in-workspace links through the guarded root.
+func (w *Workspace) Stat(path string) (fs.FileInfo, error) {
+	path, err := cleanRelativePath(path, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.guard(path); err != nil {
+		return nil, err
+	}
+	return w.root.Stat(path)
+}
+
 func (w *Workspace) MkdirAll(path string, perm fs.FileMode) error {
 	path, err := cleanRelativePath(path, false)
 	if err != nil {

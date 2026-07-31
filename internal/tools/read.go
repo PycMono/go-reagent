@@ -100,18 +100,18 @@ func (t *ReadTool) executeWithDetails(ctx context.Context, args json.RawMessage)
 	if limit < 1 || limit > defaultReadFileMaxLines {
 		return "", ReadDetails{}, fmt.Errorf("limit 必须在 1 到 %d 之间", defaultReadFileMaxLines)
 	}
-	file, err := t.workspace.Open(path)
-	if err != nil {
-		return "", ReadDetails{}, fmt.Errorf("打开文件失败: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
+	info, err := t.workspace.Stat(path)
 	if err != nil {
 		return "", ReadDetails{}, fmt.Errorf("检查文件失败: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return "", ReadDetails{}, errors.New("只允许读取普通文件")
 	}
+	file, err := t.workspace.Open(path)
+	if err != nil {
+		return "", ReadDetails{}, fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer file.Close()
 	reader := bufio.NewReader(file)
 	for line := 1; line < offset; line++ {
 		exists, err := discardReadFileLine(ctx, reader)

@@ -151,6 +151,20 @@ func TestWriteToolEnforcesWorkspaceBoundaryAndRegularFiles(t *testing.T) {
 	}
 }
 
+func TestWriteToolRejectsExistingFIFOWithoutBlocking(t *testing.T) {
+	workDir := t.TempDir()
+	makeFIFO(t, filepath.Join(workDir, "stream"))
+	tool := newWriteToolForTest(t, workDir)
+
+	err := mustReturnBefore(t, func() error {
+		_, err := tool.execute(context.Background(), writeFileArguments(t, "stream", "content"))
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "普通文件") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
 func TestWriteToolHonorsCancellationAndWorkspaceClose(t *testing.T) {
 	workDir := t.TempDir()
 	workspace := newWorkspaceForTest(t, workDir)
