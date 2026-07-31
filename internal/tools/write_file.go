@@ -21,7 +21,7 @@ type WriteFileTool struct {
 	root *os.Root
 }
 
-var _ BaseTool = (*WriteFileTool)(nil)
+var _ Tool = (*WriteFileTool)(nil)
 
 func NewWriteFileTool(workDir string) (*WriteFileTool, error) {
 	workDir = strings.TrimSpace(workDir)
@@ -72,7 +72,12 @@ func (t *WriteFileTool) Close() error {
 	return t.root.Close()
 }
 
-func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *WriteFileTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.root == nil {
 		return "", errors.New("write_file 未初始化")
 	}

@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	go.uber.org/fx v1.23.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -30,4 +31,5 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

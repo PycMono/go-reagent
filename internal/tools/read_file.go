@@ -26,7 +26,7 @@ type ReadFileTool struct {
 	root *os.Root
 }
 
-var _ BaseTool = (*ReadFileTool)(nil)
+var _ Tool = (*ReadFileTool)(nil)
 
 // NewReadFileTool 为 workDir 创建一个不能逃逸的文件读取工具。
 func NewReadFileTool(workDir string) (*ReadFileTool, error) {
@@ -87,7 +87,12 @@ func (t *ReadFileTool) Close() error {
 	return t.root.Close()
 }
 
-func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *ReadFileTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.root == nil {
 		return "", errors.New("read_file 未初始化")
 	}

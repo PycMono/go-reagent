@@ -66,7 +66,7 @@ func TestProcessToolWriteHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := NewProcessTool(manager).Execute(ctx, processArguments(t, map[string]any{
+	_, err := NewProcessTool(manager).execute(ctx, processArguments(t, map[string]any{
 		"action":     "write",
 		"session_id": execResult.SessionID,
 		"data":       strings.Repeat("x", 1024*1024),
@@ -86,7 +86,7 @@ func TestProcessToolListsAndKillsOwnedSessions(t *testing.T) {
 		"command":    toolHelperCommand("sleep", "5000"),
 		"background": true,
 	})
-	output, err := NewProcessTool(manager).Execute(context.Background(), processArguments(t, map[string]any{"action": "list"}))
+	output, err := NewProcessTool(manager).execute(context.Background(), processArguments(t, map[string]any{"action": "list"}))
 	if err != nil || !strings.Contains(output, execResult.SessionID) {
 		t.Fatalf("list output = %q, error = %v", output, err)
 	}
@@ -112,7 +112,7 @@ func TestProcessToolRejectsUnknownSessionAndInvalidActions(t *testing.T) {
 		{input: map[string]any{"action": "poll", "session_id": "missing", "wait_ms": 30001}, want: "wait_ms"},
 	}
 	for _, tt := range tests {
-		if _, err := tool.Execute(context.Background(), processArguments(t, tt.input)); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if _, err := tool.execute(context.Background(), processArguments(t, tt.input)); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 		}
 	}
@@ -147,7 +147,7 @@ func TestProcessManagerCloseKillsRunningSessions(t *testing.T) {
 	if retainedSessions != 0 {
 		t.Fatalf("retained sessions after Close = %d", retainedSessions)
 	}
-	if _, err := NewProcessTool(manager).Execute(context.Background(), processArguments(t, map[string]any{"action": "list"})); err == nil || !strings.Contains(err.Error(), "关闭") {
+	if _, err := NewProcessTool(manager).execute(context.Background(), processArguments(t, map[string]any{"action": "list"})); err == nil || !strings.Contains(err.Error(), "关闭") {
 		t.Fatalf("process Execute() after Close error = %v", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestNewProcessManagerRejectsMissingWorkDir(t *testing.T) {
 
 func executeProcessAction(t *testing.T, tool *ProcessTool, input map[string]any) processObservation {
 	t.Helper()
-	output, err := tool.Execute(context.Background(), processArguments(t, input))
+	output, err := tool.execute(context.Background(), processArguments(t, input))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

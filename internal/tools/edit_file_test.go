@@ -129,7 +129,7 @@ func TestEditFileToolRejectsInvalidArguments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tool.Execute(tt.ctx, tt.args)
+			_, err := tool.execute(tt.ctx, tt.args)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
 			}
@@ -149,7 +149,7 @@ func TestEditFileToolEditsExistingText(t *testing.T) {
 		"if user == nil {\n\tfmt.Println(\"Forbidden!\")\n\treturn\n}",
 	)
 
-	output, err := tool.Execute(context.Background(), args)
+	output, err := tool.execute(context.Background(), args)
 	if err != nil || output != "成功修改文件: server.go" {
 		t.Fatalf("Execute() output = %q, error = %v", output, err)
 	}
@@ -169,7 +169,7 @@ func TestEditFileToolAllowsDeletion(t *testing.T) {
 	writeTestFile(t, path, []byte("keep\nremove me\nkeep too\n"))
 	tool := newEditFileToolForTest(t, workDir)
 
-	if _, err := tool.Execute(context.Background(), editFileArguments(t, "notes.txt", "remove me\n", "")); err != nil {
+	if _, err := tool.execute(context.Background(), editFileArguments(t, "notes.txt", "remove me\n", "")); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
@@ -190,7 +190,7 @@ func TestEditFileToolPreservesCRLFAndPermissions(t *testing.T) {
 	}
 	tool := newEditFileToolForTest(t, workDir)
 
-	if _, err := tool.Execute(
+	if _, err := tool.execute(
 		context.Background(),
 		editFileArguments(t, "config.txt", "old one\nold two", "new one\nnew two"),
 	); err != nil {
@@ -225,7 +225,7 @@ func TestEditFileToolEditsNestedPathAndInternalSymlink(t *testing.T) {
 	}
 	tool := newEditFileToolForTest(t, workDir)
 
-	if _, err := tool.Execute(context.Background(), editFileArguments(t, "target-link.txt", "old", "new")); err != nil {
+	if _, err := tool.execute(context.Background(), editFileArguments(t, "target-link.txt", "old", "new")); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)
@@ -251,7 +251,7 @@ func TestEditFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Execute(context.Background(), editFileArguments(t, relativeOutside, "outside", "changed")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
+	if _, err := tool.execute(context.Background(), editFileArguments(t, relativeOutside, "outside", "changed")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
 		t.Fatalf("path traversal Execute() error = %v", err)
 	}
 
@@ -259,7 +259,7 @@ func TestEditFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	if err := os.Symlink(outsidePath, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := tool.Execute(context.Background(), editFileArguments(t, "outside-link.txt", "outside", "changed")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
+	if _, err := tool.execute(context.Background(), editFileArguments(t, "outside-link.txt", "outside", "changed")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
 		t.Fatalf("external symlink Execute() error = %v", err)
 	}
 	got, err := os.ReadFile(outsidePath)
@@ -291,7 +291,7 @@ func TestEditFileToolRejectsNonFilesAndInvalidText(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			if _, err := tool.Execute(context.Background(), editFileArguments(t, tt.path, "a", "b")); err == nil || !strings.Contains(err.Error(), tt.want) {
+			if _, err := tool.execute(context.Background(), editFileArguments(t, tt.path, "a", "b")); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Execute(%q) error = %v, want containing %q", tt.path, err, tt.want)
 			}
 		})
@@ -308,13 +308,13 @@ func TestEditFileToolHonorsCancellationAndClose(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tool.Execute(ctx, editFileArguments(t, "file.txt", "old", "new")); err == nil || !strings.Contains(err.Error(), "已取消") {
+	if _, err := tool.execute(ctx, editFileArguments(t, "file.txt", "old", "new")); err == nil || !strings.Contains(err.Error(), "已取消") {
 		t.Fatalf("canceled Execute() error = %v", err)
 	}
 	if err := tool.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := tool.Execute(context.Background(), editFileArguments(t, "file.txt", "old", "new")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
+	if _, err := tool.execute(context.Background(), editFileArguments(t, "file.txt", "old", "new")); err == nil || !strings.Contains(err.Error(), "打开文件失败") {
 		t.Fatalf("Execute() after Close error = %v", err)
 	}
 }

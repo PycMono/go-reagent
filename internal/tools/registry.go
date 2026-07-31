@@ -6,90 +6,71 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"runtime/debug"
 	"sort"
 	"strings"
-	"sync"
 
-	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-// BaseTool 是所有具体工具必须实现的通用接口。
-type BaseTool interface {
-	Name() string
-	Definition() schema.ToolDefinition
-	Execute(ctx context.Context, args json.RawMessage) (string, error)
-}
-
-// Registry 定义了工具的注册与分发执行接口
-type Registry interface {
-	// GetAvailableTools 返回当前系统挂载的所有可用工具的 Schema
-	GetAvailableTools() []schema.ToolDefinition
-
-	// Execute 实际执行模型请求的工具，并返回结果
-	Execute(ctx context.Context, call schema.ToolCall) schema.ToolResult
-}
-
-// MutableRegistry 在 Engine 使用的只读执行接口上增加启动期注册能力。
-type MutableRegistry interface {
-	Registry
-	Register(tool BaseTool) error
+type registryEntry struct {
+	definition   schema.ToolDefinition
+	tool         Tool
+	validateArgs func(json.RawMessage) error
+	handler      Handler
 }
 
 type registryImpl struct {
-	mu    sync.RWMutex
-	tools map[string]BaseTool
+	tools map[string]registryEntry
 }
 
-// NewRegistry 创建一个线程安全的内存工具注册表。
-func NewRegistry() MutableRegistry {
-	return &registryImpl{tools: make(map[string]BaseTool)}
-}
-
-func (r *registryImpl) Register(tool BaseTool) (err error) {
-	if isNilTool(tool) {
-		return errors.New("tool must not be nil")
+func NewRegistry(params RegistryParams) (Registry, error) {
+	registry := &registryImpl{tools: make(map[string]registryEntry, len(params.Tools))}
+	handler := composeHandler(params.Middlewares)
+	for _, tool := range params.Tools {
+		if isNilTool(tool) {
+			return nil, errors.New("tool must not be nil")
+		}
+		definition, err := safeToolDefinition(tool)
+		if err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(definition.Name)
+		if name == "" {
+			return nil, errors.New("tool definition name must not be empty")
+		}
+		if definition.Name != name {
+			return nil, fmt.Errorf("tool definition name %q must not contain surrounding whitespace", definition.Name)
+		}
+		if _, exists := registry.tools[name]; exists {
+			return nil, fmt.Errorf("tool %q is already registered", name)
+		}
+		validateArgs, err := compileSchemaValidator(definition)
+		if err != nil {
+			return nil, err
+		}
+		registry.tools[name] = registryEntry{
+			definition:   definition,
+			tool:         tool,
+			validateArgs: validateArgs,
+			handler:      handler,
+		}
 	}
+	return registry, nil
+}
+
+func safeToolDefinition(tool Tool) (definition schema.ToolDefinition, err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("tool metadata panicked during registration")
 		}
 	}()
-
-	name := strings.TrimSpace(tool.Name())
-	if name == "" {
-		return errors.New("tool name must not be empty")
-	}
-	definition := tool.Definition()
-	if definition.Name != name {
-		return fmt.Errorf("tool definition name %q must match registered name %q", definition.Name, name)
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.tools[name]; exists {
-		return fmt.Errorf("tool %q is already registered", name)
-	}
-	r.tools[name] = tool
-	logsdk.Info(context.Background(), "[Registry] 成功挂载工具",
-		logsdk.Any("component", "registry"),
-		logsdk.Any("tool", name),
-	)
-	return nil
+	return tool.Definition(), nil
 }
 
 func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
-	r.mu.RLock()
-	tools := make([]BaseTool, 0, len(r.tools))
-	for _, tool := range r.tools {
-		tools = append(tools, tool)
-	}
-	r.mu.RUnlock()
-
-	definitions := make([]schema.ToolDefinition, 0, len(tools))
-	for _, tool := range tools {
-		definitions = append(definitions, tool.Definition())
+	definitions := make([]schema.ToolDefinition, 0, len(r.tools))
+	for _, entry := range r.tools {
+		definitions = append(definitions, entry.definition)
 	}
 	sort.Slice(definitions, func(i, j int) bool {
 		return definitions[i].Name < definitions[j].Name
@@ -97,63 +78,66 @@ func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
 	return definitions
 }
 
-func (r *registryImpl) Execute(ctx context.Context, call schema.ToolCall) (result schema.ToolResult) {
-	result.ToolCallID = call.ID
-	result.ToolName = call.Name
+func (r *registryImpl) Execute(
+	ctx context.Context,
+	call schema.ToolCall,
+	observer ToolEventObserver,
+) (schema.ToolResult, error) {
 	if ctx == nil {
-		result.Content = []schema.ContentBlock{schema.TextBlock("tool execution failed: context is nil")}
-		result.IsError = true
-		return result
+		return errorResult(call, errors.New("tool execution context is nil")), nil
 	}
 	if err := ctx.Err(); err != nil {
-		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool execution canceled: %v", err))}
-		result.IsError = true
-		return result
+		return schema.ToolResult{}, err
 	}
-
-	r.mu.RLock()
-	tool, exists := r.tools[call.Name]
-	r.mu.RUnlock()
-	if !exists {
-		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q is not registered", call.Name))}
-		result.IsError = true
-		return result
+	entry, ok := r.tools[call.Name]
+	if !ok {
+		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
-
-	defer func() {
-		if recover() == nil {
-			return
-		}
-		logsdk.Error(ctx, "工具执行 panic",
-			logsdk.Any("component", "registry"),
-			logsdk.Any("tool", call.Name),
-			logsdk.Any("stack", debug.Stack()),
-		)
-		result = schema.ToolResult{
-			ToolCallID: call.ID,
-			ToolName:   call.Name,
-			Content:    []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q panicked during execution", call.Name))},
-			IsError:    true,
-		}
-	}()
-
-	output, err := tool.Execute(ctx, call.Arguments)
-	if err != nil {
-		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q failed: %v", call.Name, err))}
-		result.IsError = true
-		return result
+	observe(ctx, observer, schema.NewToolStart(call))
+	execution := Execution{
+		Call:         call,
+		Definition:   entry.definition,
+		Tool:         entry.tool,
+		Observer:     observer,
+		ValidateArgs: entry.validateArgs,
 	}
-	if err := ctx.Err(); err != nil {
-		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool execution canceled: %v", err))}
-		result.IsError = true
-		return result
+	output, err := entry.handler(ctx, execution, nil)
+	result := normalizeToolResult(call, output, err)
+	observe(ctx, observer, schema.NewToolEnd(call, result))
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return result, err
 	}
-
-	result.Content = []schema.ContentBlock{schema.TextBlock(output)}
-	return result
+	return result, nil
 }
 
-func isNilTool(tool BaseTool) bool {
+func observe(ctx context.Context, observer ToolEventObserver, event schema.ToolEvent) {
+	if observer != nil {
+		observer(ctx, event)
+	}
+}
+
+func normalizeToolResult(call schema.ToolCall, output schema.ToolOutput, err error) schema.ToolResult {
+	if err != nil && len(output.Content) == 0 {
+		output.Content = []schema.ContentBlock{schema.TextBlock(err.Error())}
+	}
+	if err == nil && len(output.Content) == 0 {
+		output.Content = []schema.ContentBlock{schema.TextBlock("(no output)")}
+	}
+	output = limitToolOutput(output)
+	return schema.ToolResult{
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Content:    output.Content,
+		Details:    output.Details,
+		IsError:    err != nil,
+	}
+}
+
+func errorResult(call schema.ToolCall, err error) schema.ToolResult {
+	return normalizeToolResult(call, schema.ToolOutput{}, err)
+}
+
+func isNilTool(tool Tool) bool {
 	if tool == nil {
 		return true
 	}

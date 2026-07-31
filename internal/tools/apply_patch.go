@@ -20,7 +20,7 @@ type ApplyPatchTool struct {
 	root *os.Root
 }
 
-var _ BaseTool = (*ApplyPatchTool)(nil)
+var _ Tool = (*ApplyPatchTool)(nil)
 
 func NewApplyPatchTool(workDir string) (*ApplyPatchTool, error) {
 	workDir = strings.TrimSpace(workDir)
@@ -67,7 +67,12 @@ func (t *ApplyPatchTool) Close() error {
 	return t.root.Close()
 }
 
-func (t *ApplyPatchTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *ApplyPatchTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, err := t.execute(ctx, args)
+	return textToolOutput(output), err
+}
+
+func (t *ApplyPatchTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t == nil || t.root == nil {
 		return "", errors.New("apply_patch 未初始化")
 	}
