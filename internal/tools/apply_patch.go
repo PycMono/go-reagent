@@ -17,25 +17,18 @@ import (
 )
 
 type ApplyPatchTool struct {
-	root *os.Root
+	workspace *Workspace
 }
 
 var _ Tool = (*ApplyPatchTool)(nil)
 
-func NewApplyPatchTool(workDir string) (*ApplyPatchTool, error) {
-	workDir = strings.TrimSpace(workDir)
-	if workDir == "" {
-		return nil, errors.New("workDir 不能为空")
-	}
-	absoluteWorkDir, err := filepath.Abs(workDir)
-	if err != nil {
-		return nil, fmt.Errorf("解析工作区失败: %w", err)
-	}
-	root, err := os.OpenRoot(absoluteWorkDir)
-	if err != nil {
-		return nil, fmt.Errorf("打开工作区失败: %w", err)
-	}
-	return &ApplyPatchTool{root: root}, nil
+func NewApplyPatchTool(workspace *Workspace) *ApplyPatchTool {
+	return &ApplyPatchTool{workspace: workspace}
+}
+
+type ApplyPatchDetails struct {
+	Operations int      `json:"operations"`
+	Files      []string `json:"files"`
 }
 
 func (t *ApplyPatchTool) Name() string {
@@ -60,60 +53,61 @@ func (t *ApplyPatchTool) Definition() schema.ToolDefinition {
 	}
 }
 
-func (t *ApplyPatchTool) Close() error {
-	if t == nil || t.root == nil {
-		return nil
-	}
-	return t.root.Close()
-}
-
 func (t *ApplyPatchTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
-	output, err := t.execute(ctx, args)
-	return textToolOutput(output), err
+	output, details, err := t.executeWithDetails(ctx, args)
+	if err != nil {
+		return schema.ToolOutput{}, err
+	}
+	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *ApplyPatchTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if t == nil || t.root == nil {
-		return "", errors.New("apply_patch 未初始化")
+	output, _, err := t.executeWithDetails(ctx, args)
+	return output, err
+}
+
+func (t *ApplyPatchTool) executeWithDetails(ctx context.Context, args json.RawMessage) (string, ApplyPatchDetails, error) {
+	if t == nil || t.workspace == nil {
+		return "", ApplyPatchDetails{}, errors.New("apply_patch 未初始化")
 	}
 	if ctx == nil {
-		return "", errors.New("context 不能为空")
+		return "", ApplyPatchDetails{}, errors.New("context 不能为空")
 	}
 	if !utf8.Valid(args) {
-		return "", errors.New("参数不是有效的 UTF-8 JSON")
+		return "", ApplyPatchDetails{}, errors.New("参数不是有效的 UTF-8 JSON")
 	}
 	input, err := decodeApplyPatchArgs(args)
 	if err != nil {
-		return "", err
+		return "", ApplyPatchDetails{}, err
 	}
 	if input.Input == nil || strings.TrimSpace(*input.Input) == "" {
-		return "", errors.New("input 不能为空")
+		return "", ApplyPatchDetails{}, errors.New("input 不能为空")
 	}
 	if strings.IndexByte(*input.Input, 0) >= 0 {
-		return "", errors.New("input 包含 NUL 字节")
+		return "", ApplyPatchDetails{}, errors.New("input 包含 NUL 字节")
 	}
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("应用补丁已取消: %w", err)
+		return "", ApplyPatchDetails{}, fmt.Errorf("应用补丁已取消: %w", err)
 	}
 	operations, err := parseStructuredPatch(*input.Input)
 	if err != nil {
-		return "", err
+		return "", ApplyPatchDetails{}, err
 	}
 	staged, order, err := t.preflight(ctx, operations)
 	if err != nil {
-		return "", err
+		return "", ApplyPatchDetails{}, err
 	}
 	if err := validateStagedPatchPaths(staged); err != nil {
-		return "", err
+		return "", ApplyPatchDetails{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("应用补丁已取消: %w", err)
+		return "", ApplyPatchDetails{}, fmt.Errorf("应用补丁已取消: %w", err)
 	}
 	for _, path := range order {
 		file := staged[path]
 		if file.exists {
 			if err := t.writeStagedFile(path, file.content); err != nil {
-				return "", err
+				return "", ApplyPatchDetails{}, err
 			}
 		}
 	}
@@ -123,12 +117,18 @@ func (t *ApplyPatchTool) execute(ctx context.Context, args json.RawMessage) (str
 			if file.exists {
 				continue
 			}
-			if err := t.root.Remove(path); err != nil {
-				return "", fmt.Errorf("删除文件 %s 失败: %w", path, err)
+			if err := t.workspace.Remove(path); err != nil {
+				return "", ApplyPatchDetails{}, fmt.Errorf("删除文件 %s 失败: %w", path, err)
 			}
 		}
 	}
-	return fmt.Sprintf("成功应用补丁: %d 个文件操作", len(operations)), nil
+	files := make([]string, 0, len(staged))
+	for path := range staged {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	details := ApplyPatchDetails{Operations: len(operations), Files: files}
+	return fmt.Sprintf("Applied patch: %d operation(s) across %d file(s)", details.Operations, len(details.Files)), details, nil
 }
 
 type stagedPatchFile struct {
@@ -166,7 +166,7 @@ func (t *ApplyPatchTool) preflight(ctx context.Context, operations []patchOperat
 		if file, ok := staged[path]; ok {
 			return file, nil
 		}
-		info, err := t.root.Stat(path)
+		info, err := t.workspace.Stat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			file := stagedPatchFile{}
 			staged[path] = file
@@ -179,7 +179,7 @@ func (t *ApplyPatchTool) preflight(ctx context.Context, operations []patchOperat
 		if !info.Mode().IsRegular() {
 			return stagedPatchFile{}, fmt.Errorf("补丁目标不是普通文件: %s", path)
 		}
-		content, err := t.root.ReadFile(path)
+		content, err := t.workspace.ReadFile(path)
 		if err != nil {
 			return stagedPatchFile{}, fmt.Errorf("读取文件 %s 失败: %w", path, err)
 		}
@@ -254,11 +254,11 @@ func (t *ApplyPatchTool) preflight(ctx context.Context, operations []patchOperat
 func (t *ApplyPatchTool) writeStagedFile(path, content string) error {
 	parent := filepath.Dir(path)
 	if parent != "." {
-		if err := t.root.MkdirAll(parent, 0o755); err != nil {
+		if err := t.workspace.MkdirAll(parent, 0o755); err != nil {
 			return fmt.Errorf("创建父目录 %s 失败: %w", parent, err)
 		}
 	}
-	file, err := t.root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultWrittenFileMode)
+	file, err := t.workspace.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultWrittenFileMode)
 	if err != nil {
 		return fmt.Errorf("打开补丁目标 %s 失败: %w", path, err)
 	}

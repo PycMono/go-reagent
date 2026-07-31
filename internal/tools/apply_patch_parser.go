@@ -44,7 +44,7 @@ func parseStructuredPatch(input string) ([]patchOperation, error) {
 		line := lines[index]
 		switch {
 		case strings.HasPrefix(line, "*** Add File: "):
-			path, err := cleanWorkspaceFilePath(strings.TrimPrefix(line, "*** Add File: "))
+			path, err := cleanRelativePath(strings.TrimPrefix(line, "*** Add File: "), true)
 			if err != nil {
 				return nil, fmt.Errorf("Add File 路径无效: %w", err)
 			}
@@ -63,7 +63,7 @@ func parseStructuredPatch(input string) ([]patchOperation, error) {
 			operations = append(operations, patchOperation{kind: patchAdd, path: path, add: strings.Join(content, "\n") + "\n"})
 
 		case strings.HasPrefix(line, "*** Delete File: "):
-			path, err := cleanWorkspaceFilePath(strings.TrimPrefix(line, "*** Delete File: "))
+			path, err := cleanRelativePath(strings.TrimPrefix(line, "*** Delete File: "), true)
 			if err != nil {
 				return nil, fmt.Errorf("Delete File 路径无效: %w", err)
 			}
@@ -89,14 +89,14 @@ func parseStructuredPatch(input string) ([]patchOperation, error) {
 }
 
 func parseUpdateOperation(lines []string, index int) (patchOperation, int, error) {
-	path, err := cleanWorkspaceFilePath(strings.TrimPrefix(lines[index], "*** Update File: "))
+	path, err := cleanRelativePath(strings.TrimPrefix(lines[index], "*** Update File: "), true)
 	if err != nil {
 		return patchOperation{}, index, fmt.Errorf("Update File 路径无效: %w", err)
 	}
 	operation := patchOperation{kind: patchUpdate, path: path}
 	index++
 	if index < len(lines)-1 && strings.HasPrefix(lines[index], "*** Move to: ") {
-		operation.moveTo, err = cleanWorkspaceFilePath(strings.TrimPrefix(lines[index], "*** Move to: "))
+		operation.moveTo, err = cleanRelativePath(strings.TrimPrefix(lines[index], "*** Move to: "), true)
 		if err != nil {
 			return patchOperation{}, index, fmt.Errorf("Move to 路径无效: %w", err)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -46,9 +47,23 @@ func TestApplyPatchToolAddsUpdatesDeletesAndMovesFiles(t *testing.T) {
 +move new
 *** End Patch`
 
-	output, err := tool.execute(context.Background(), applyPatchArguments(t, patch))
-	if err != nil || !strings.Contains(output, "4") {
-		t.Fatalf("Execute() output = %q, error = %v", output, err)
+	output, err := tool.Execute(context.Background(), applyPatchArguments(t, patch), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output.Content) != 1 || output.Content[0].Text != "Applied patch: 4 operation(s) across 5 file(s)" {
+		t.Fatalf("Execute() content = %#v", output.Content)
+	}
+	details, ok := output.Details.(ApplyPatchDetails)
+	if !ok {
+		t.Fatalf("Execute() details = %#v", output.Details)
+	}
+	wantDetails := ApplyPatchDetails{
+		Operations: 4,
+		Files:      []string{"delete.txt", "move.txt", "nested/added.txt", "nested/moved.txt", "update.txt"},
+	}
+	if !reflect.DeepEqual(details, wantDetails) {
+		t.Fatalf("Execute() details = %#v, want %#v", details, wantDetails)
 	}
 	assertFileContent(t, filepath.Join(workDir, "nested", "added.txt"), "added one\nadded two\n")
 	assertFileContent(t, filepath.Join(workDir, "update.txt"), "before\nnew\nafter\n")
@@ -214,40 +229,46 @@ func TestApplyPatchToolRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestApplyPatchToolHonorsCancellationAndClose(t *testing.T) {
+func TestApplyPatchToolHonorsCancellationAndWorkspaceClose(t *testing.T) {
 	workDir := t.TempDir()
-	tool, err := NewApplyPatchTool(workDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	workspace := newWorkspaceForTest(t, workDir)
+	tool := NewApplyPatchTool(workspace)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	patch := "*** Begin Patch\n*** Add File: a.txt\n+a\n*** End Patch"
 	if _, err := tool.execute(ctx, applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "取消") {
 		t.Fatalf("canceled Execute() error = %v", err)
 	}
-	if err := tool.Close(); err != nil {
+	if err := workspace.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil {
-		t.Fatal("Execute() after Close error = nil")
+		t.Fatal("Execute() after Workspace.Close error = nil")
 	}
 }
 
-func TestNewApplyPatchToolRejectsInvalidWorkDir(t *testing.T) {
-	if _, err := NewApplyPatchTool(filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Fatal("NewApplyPatchTool() error = nil")
+func TestApplyPatchToolUsesSharedWorkspaceBoundary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink permissions are not stable in tests")
+	}
+	workDir := t.TempDir()
+	externalDir := t.TempDir()
+	if err := os.Symlink(externalDir, filepath.Join(workDir, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewApplyPatchTool(newWorkspaceForTest(t, workDir))
+	patch := "*** Begin Patch\n*** Add File: linked/blocked.txt\n+blocked\n*** End Patch"
+	if _, err := tool.execute(context.Background(), applyPatchArguments(t, patch)); err == nil || !strings.Contains(err.Error(), "符号链接") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(externalDir, "blocked.txt")); !os.IsNotExist(err) {
+		t.Fatalf("outside target exists: %v", err)
 	}
 }
 
 func newApplyPatchToolForTest(t *testing.T, workDir string) *ApplyPatchTool {
 	t.Helper()
-	tool, err := NewApplyPatchTool(workDir)
-	if err != nil {
-		t.Fatalf("NewApplyPatchTool() error = %v", err)
-	}
-	t.Cleanup(func() { _ = tool.Close() })
-	return tool
+	return NewApplyPatchTool(newWorkspaceForTest(t, workDir))
 }
 
 func applyPatchArguments(t *testing.T, input string) json.RawMessage {
