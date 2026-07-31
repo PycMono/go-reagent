@@ -3,163 +3,182 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-func TestProcessToolDefinitionIsExclusive(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	definition := NewProcessTool(manager).Definition()
+func TestProcessToolDefinitionUsesSevenActionCamelCaseSchema(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	definition := NewProcessTool(supervisor).Definition()
 	if definition.Name != "process" || definition.Description == "" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
 	}
-}
-
-func TestProcessToolPollsBackgroundCommandToCompletion(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("sleep-output", "50", "done"),
-		"background": true,
-	})
-	result := executeProcessAction(t, NewProcessTool(manager), map[string]any{
-		"action":     "poll",
-		"session_id": execResult.SessionID,
-		"wait_ms":    5000,
-	})
-	if result.Status != "completed" || result.Output != "done" || result.ExitCode == nil || *result.ExitCode != 0 {
-		t.Fatalf("result = %#v", result)
+	inputSchema := definition.InputSchema.(map[string]any)
+	properties := inputSchema["properties"].(map[string]any)
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if want := []string{"action", "data", "eof", "limit", "offset", "sessionId", "timeout"}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("properties = %#v, want %#v", keys, want)
+	}
+	actions := properties["action"].(map[string]any)["enum"].([]string)
+	if want := []string{"list", "poll", "log", "write", "kill", "clear", "remove"}; !reflect.DeepEqual(actions, want) {
+		t.Fatalf("actions = %#v, want %#v", actions, want)
+	}
+	timeoutSchema := properties["timeout"].(map[string]any)
+	if timeoutSchema["minimum"] != 0 || timeoutSchema["maximum"] != 30_000 {
+		t.Fatalf("timeout schema = %#v", timeoutSchema)
 	}
 }
 
-func TestProcessToolWritesStdinAndClosesIt(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("copy-stdin"),
-		"background": true,
-	})
-	writeResult := executeProcessAction(t, NewProcessTool(manager), map[string]any{
-		"action":     "write",
-		"session_id": execResult.SessionID,
-		"data":       "hello stdin",
-		"eof":        true,
-	})
-	if writeResult.SessionID != execResult.SessionID {
-		t.Fatalf("write result = %#v", writeResult)
+func TestProcessToolListsPollsAndPagesRetainedLogs(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	session := mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("print", "abcdef")})
+	if _, err := supervisor.Poll(context.Background(), session.id, 5*time.Second); err != nil {
+		t.Fatal(err)
 	}
-	result := executeProcessAction(t, NewProcessTool(manager), map[string]any{
-		"action":     "poll",
-		"session_id": execResult.SessionID,
-		"wait_ms":    5000,
-	})
-	if result.Status != "completed" || result.Output != "hello stdin" {
-		t.Fatalf("result = %#v", result)
+	tool := NewProcessTool(supervisor)
+
+	list := executeProcessOutput(t, tool, map[string]any{"action": "list"})
+	listDetails := list.Details.(ProcessDetails)
+	if listDetails.Action != "list" || len(listDetails.Sessions) != 1 || listDetails.Sessions[0].SessionID != session.id {
+		t.Fatalf("list Details = %#v", listDetails)
+	}
+
+	poll := executeProcessOutput(t, tool, map[string]any{"action": "poll", "sessionId": session.id, "timeout": 0})
+	pollDetails := poll.Details.(ProcessDetails)
+	if pollDetails.Status != "completed" || pollDetails.ExitCode == nil || *pollDetails.ExitCode != 0 {
+		t.Fatalf("poll Details = %#v", pollDetails)
+	}
+
+	log := executeProcessOutput(t, tool, map[string]any{"action": "log", "sessionId": session.id, "offset": 0, "limit": 3})
+	logDetails := log.Details.(ProcessDetails)
+	if got := toolOutputText(t, log); got != "abc" {
+		t.Fatalf("log Content = %q", got)
+	}
+	if logDetails.Offset != 0 || logDetails.NextOffset != 3 || !logDetails.Truncated {
+		t.Fatalf("log Details = %#v", logDetails)
 	}
 }
 
-func TestProcessToolWriteHonorsCancellation(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("sleep", "1000"),
-		"background": true,
+func TestProcessToolWritesAndKillsWhileRetainingSessions(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	tool := NewProcessTool(supervisor)
+	writer := mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("copy-stdin")})
+	write := executeProcessOutput(t, tool, map[string]any{
+		"action":    "write",
+		"sessionId": writer.id,
+		"data":      "hello stdin",
+		"eof":       true,
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := NewProcessTool(manager).execute(ctx, processArguments(t, map[string]any{
-		"action":     "write",
-		"session_id": execResult.SessionID,
-		"data":       strings.Repeat("x", 1024*1024),
-	}))
-	if err == nil || !strings.Contains(err.Error(), "取消") || time.Since(started) > 500*time.Millisecond {
-		t.Fatalf("Execute() error = %v, elapsed = %v", err, time.Since(started))
+	writeDetails := write.Details.(ProcessDetails)
+	if writeDetails.Action != "write" || writeDetails.SessionID != writer.id {
+		t.Fatalf("write Details = %#v", writeDetails)
 	}
-	result, err := manager.Poll(context.Background(), execResult.SessionID, 0)
-	if err != nil || result.Status != "canceled" {
-		t.Fatalf("snapshot = %#v, error = %v", result, err)
+	if _, err := supervisor.Poll(context.Background(), writer.id, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	page, err := supervisor.Log(writer.id, 0, 0)
+	if err != nil || page.Content != "hello stdin" {
+		t.Fatalf("writer log = %#v, error = %v", page, err)
+	}
+
+	running := mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("sleep", "5000")})
+	kill := executeProcessOutput(t, tool, map[string]any{"action": "kill", "sessionId": running.id})
+	killDetails := kill.Details.(ProcessDetails)
+	if killDetails.Status != "killed" {
+		t.Fatalf("kill Details = %#v", killDetails)
+	}
+	if _, err := supervisor.Poll(context.Background(), running.id, 0); err != nil {
+		t.Fatalf("Kill did not retain session: %v", err)
 	}
 }
 
-func TestProcessToolListsAndKillsOwnedSessions(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("sleep", "5000"),
-		"background": true,
-	})
-	output, err := NewProcessTool(manager).execute(context.Background(), processArguments(t, map[string]any{"action": "list"}))
-	if err != nil || !strings.Contains(output, execResult.SessionID) {
-		t.Fatalf("list output = %q, error = %v", output, err)
+func TestProcessToolClearOnlyFinishedAndRemoveTerminatesThenDeletes(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	tool := NewProcessTool(supervisor)
+	finished := mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("print", "done")})
+	if _, err := supervisor.Poll(context.Background(), finished.id, 5*time.Second); err != nil {
+		t.Fatal(err)
 	}
-	result := executeProcessAction(t, NewProcessTool(manager), map[string]any{
-		"action":     "kill",
-		"session_id": execResult.SessionID,
-	})
-	if result.Status != "killed" {
-		t.Fatalf("result = %#v", result)
+	running := mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("sleep", "5000")})
+
+	clearOutput := executeProcessOutput(t, tool, map[string]any{"action": "clear"})
+	clearDetails := clearOutput.Details.(ProcessDetails)
+	if clearDetails.Removed != 1 {
+		t.Fatalf("clear Details = %#v", clearDetails)
+	}
+	if _, err := supervisor.Poll(context.Background(), running.id, 0); err != nil {
+		t.Fatalf("Clear removed running session: %v", err)
+	}
+
+	removeOutput := executeProcessOutput(t, tool, map[string]any{"action": "remove", "sessionId": running.id})
+	removeDetails := removeOutput.Details.(ProcessDetails)
+	if removeDetails.Action != "remove" || removeDetails.SessionID != running.id || removeDetails.Removed != 1 {
+		t.Fatalf("remove Details = %#v", removeDetails)
+	}
+	if _, err := supervisor.Poll(context.Background(), running.id, 0); err == nil {
+		t.Fatal("Remove retained session")
 	}
 }
 
-func TestProcessToolRejectsUnknownSessionAndInvalidActions(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	tool := NewProcessTool(manager)
+func TestProcessToolRejectsLegacyFieldsUnknownActionsAndInvalidActionArguments(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewProcessTool(supervisor))
 	tests := []struct {
 		input map[string]any
 		want  string
 	}{
+		{input: map[string]any{"action": "poll", "session_id": "x"}, want: "session_id"},
+		{input: map[string]any{"action": "poll", "sessionId": "x", "wait_ms": 1}, want: "wait_ms"},
 		{input: map[string]any{"action": "unknown"}, want: "action"},
-		{input: map[string]any{"action": "poll"}, want: "session_id"},
-		{input: map[string]any{"action": "poll", "session_id": "missing"}, want: "不存在"},
-		{input: map[string]any{"action": "poll", "session_id": "missing", "wait_ms": 30001}, want: "wait_ms"},
+		{input: map[string]any{"action": "poll", "sessionId": "x", "timeout": 30_001}, want: "timeout"},
+		{input: map[string]any{"action": "log", "sessionId": "x", "offset": -1}, want: "offset"},
+		{input: map[string]any{"action": "log", "sessionId": "x", "limit": 0}, want: "limit"},
+		{input: map[string]any{"action": "poll"}, want: "sessionId"},
+		{input: map[string]any{"action": "write", "sessionId": "x"}, want: "data"},
 	}
-	for _, tt := range tests {
-		if _, err := tool.execute(context.Background(), processArguments(t, tt.input)); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
+	for index, tt := range tests {
+		result, err := registry.Execute(context.Background(), schema.ToolCall{
+			ID:        "invalid-process",
+			Name:      "process",
+			Arguments: processArguments(t, tt.input),
+		}, nil)
+		if err != nil || !result.IsError || !strings.Contains(toolResultText(t, result), tt.want) {
+			t.Fatalf("case %d Execute() = (%#v, %v), want %q", index, result, err, tt.want)
 		}
 	}
 }
 
-func TestProcessSupervisorCloseKillsRunningSessions(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	execResult := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("sleep", "5000"),
-		"background": true,
+func TestProcessToolNeverInvokesUpdateEmitter(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	var updates atomic.Int32
+	output, err := NewProcessTool(supervisor).Execute(context.Background(), processArguments(t, map[string]any{"action": "list"}), func(schema.ToolUpdate) {
+		updates.Add(1)
 	})
-	session, err := manager.session(execResult.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := time.Now()
-	if err := manager.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(started) > 2*time.Second {
-		t.Fatalf("Close() took %v", time.Since(started))
-	}
-	if result := session.snapshot(); result.Status != "killed" {
-		t.Fatalf("snapshot = %#v", result)
-	}
-	manager.mu.RLock()
-	retainedSessions := len(manager.sessions)
-	manager.mu.RUnlock()
-	if retainedSessions != 0 {
-		t.Fatalf("retained sessions after Close = %d", retainedSessions)
-	}
-	if _, err := NewProcessTool(manager).execute(context.Background(), processArguments(t, map[string]any{"action": "list"})); err == nil || !strings.Contains(err.Error(), "关闭") {
-		t.Fatalf("process Execute() after Close error = %v", err)
+	if err != nil || updates.Load() != 0 || toolOutputText(t, output) == "" {
+		t.Fatalf("Execute() = (%#v, %v), updates = %d", output, err, updates.Load())
 	}
 }
 
-func executeProcessAction(t *testing.T, tool *ProcessTool, input map[string]any) processObservation {
+func executeProcessOutput(t *testing.T, tool *ProcessTool, input map[string]any) schema.ToolOutput {
 	t.Helper()
-	output, err := tool.execute(context.Background(), processArguments(t, input))
+	output, err := tool.Execute(context.Background(), processArguments(t, input), nil)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	var result processObservation
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatalf("decode output %q: %v", output, err)
+	if toolOutputText(t, output) == "" {
+		t.Fatal("Execute() returned empty text content")
 	}
-	return result
+	return output
 }
 
 func processArguments(t *testing.T, input map[string]any) json.RawMessage {
