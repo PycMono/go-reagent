@@ -3,177 +3,248 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-type processObservation struct {
-	SessionID string `json:"session_id"`
-	Status    string `json:"status"`
-	Command   string `json:"command"`
-	WorkDir   string `json:"workdir"`
-	Output    string `json:"output"`
-	ExitCode  *int   `json:"exit_code,omitempty"`
-	Truncated bool   `json:"truncated"`
-}
-
-func TestExecToolDefinitionIsExclusive(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	definition := NewExecTool(manager).Definition()
+func TestExecToolDefinitionUsesFinalCamelCaseSchemaAndDefaults(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	definition := NewExecTool(supervisor).Definition()
 	if definition.Name != "exec" || definition.Description == "" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
 	}
-}
-
-func TestExecToolReturnsOutputAndNonZeroExitCode(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	tool := NewExecTool(manager)
-	result := executeAndDecodeProcessObservation(t, tool, map[string]any{
-		"command":  toolHelperCommand("output-exit"),
-		"yield_ms": 30000,
-	})
-	if result.Status != "completed" || result.ExitCode == nil || *result.ExitCode != 7 {
-		t.Fatalf("result = %#v", result)
+	inputSchema := definition.InputSchema.(map[string]any)
+	properties := inputSchema["properties"].(map[string]any)
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		keys = append(keys, key)
 	}
-	if !strings.Contains(result.Output, "stdout") || !strings.Contains(result.Output, "stderr") {
-		t.Fatalf("output = %q", result.Output)
+	sort.Strings(keys)
+	if want := []string{"background", "command", "env", "timeout", "workdir", "yieldMs"}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("properties = %#v, want %#v", keys, want)
 	}
-}
-
-func TestExecToolPreservesOriginalCommandText(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	command := "  " + toolHelperCommand("print", "preserved") + "  "
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":  command,
-		"yield_ms": 30000,
-	})
-	if result.Command != command || result.Output != "preserved" {
-		t.Fatalf("result = %#v", result)
+	yieldSchema := properties["yieldMs"].(map[string]any)
+	if yieldSchema["minimum"] != 0 || yieldSchema["maximum"] != 30_000 || yieldSchema["default"] != 10_000 {
+		t.Fatalf("yieldMs schema = %#v", yieldSchema)
+	}
+	timeoutSchema := properties["timeout"].(map[string]any)
+	if timeoutSchema["minimum"] != 1 || timeoutSchema["maximum"] != 600 || timeoutSchema["default"] != 120 {
+		t.Fatalf("timeout schema = %#v", timeoutSchema)
 	}
 }
 
-func TestExecToolUsesWorkspaceRelativeWorkDirAndEnvironment(t *testing.T) {
+func TestExecToolCompletesForegroundWithWorkspaceEnvironmentAndDefaults(t *testing.T) {
 	workDir := t.TempDir()
-	t.Setenv("REAGENT_TEST_VALUE", "inherited")
 	if err := os.Mkdir(filepath.Join(workDir, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manager := newProcessSupervisorForTest(t, workDir)
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":  toolHelperCommand("cwd-env"),
-		"workdir":  "nested",
-		"env":      map[string]string{"REAGENT_TEST_VALUE": "configured"},
-		"yield_ms": 30000,
-	})
-	resolvedWorkDir, err := filepath.EvalSymlinks(workDir)
+	supervisor := newProcessSupervisorForTest(t, workDir)
+	command := "  " + toolHelperCommand("cwd-env") + "  "
+	output, err := NewExecTool(supervisor).Execute(context.Background(), execArguments(t, map[string]any{
+		"command": command,
+		"workdir": "nested",
+		"env":     map[string]string{"REAGENT_TEST_VALUE": "configured"},
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := filepath.Join(resolvedWorkDir, "nested") + "|configured"
-	if result.Output != wantPrefix {
-		t.Fatalf("output = %q, want %q", result.Output, wantPrefix)
+	details, ok := output.Details.(ExecDetails)
+	if !ok {
+		t.Fatalf("Details = %#v", output.Details)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCWD := filepath.Join(resolvedRoot, "nested")
+	if details.Status != "completed" || details.Command != command || details.CWD != wantCWD || details.ExitCode == nil || *details.ExitCode != 0 || details.SessionID == "" {
+		t.Fatalf("Details = %#v", details)
+	}
+	if got := toolOutputText(t, output); got != wantCWD+"|configured" {
+		t.Fatalf("Content = %q", got)
 	}
 }
 
-func TestExecToolTimesOutAndTerminatesCommand(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	started := time.Now()
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":    toolHelperCommand("sleep", "5000"),
-		"timeout_ms": 50,
-		"yield_ms":   30000,
+func TestExecToolStreamsForegroundStdoutAndStderrAndMarksNonzeroAsError(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	call := schema.ToolCall{ID: "exec-stream", Name: "exec", Arguments: execArguments(t, map[string]any{
+		"command": toolHelperCommand("output-exit"),
+		"yieldMs": 30_000,
+	})}
+	var events []schema.ToolEvent
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+		events = append(events, event)
 	})
-	if result.Status != "timed_out" || time.Since(started) > 2*time.Second {
-		t.Fatalf("result = %#v, elapsed = %v", result, time.Since(started))
+	if err != nil || !result.IsError || !strings.Contains(toolResultText(t, result), "stdout") || !strings.Contains(toolResultText(t, result), "stderr") {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	details, ok := result.Details.(ExecDetails)
+	if !ok || details.Status != "completed" || details.ExitCode == nil || *details.ExitCode != 7 {
+		t.Fatalf("Details = %#v", result.Details)
+	}
+	if len(events) < 4 || events[0].Phase != schema.ToolEventStart || events[len(events)-1].Phase != schema.ToolEventEnd {
+		t.Fatalf("events = %#v", events)
+	}
+	streams := make(map[string]string)
+	for _, event := range events[1 : len(events)-1] {
+		if event.Phase != schema.ToolEventUpdate || event.Update == nil {
+			t.Fatalf("event = %#v", event)
+		}
+		stream, ok := event.Update.Details.(StreamDetails)
+		if !ok || stream.Bytes != len(toolEventText(t, event.Update.Content)) {
+			t.Fatalf("update = %#v", event.Update)
+		}
+		streams[stream.Stream] += toolEventText(t, event.Update.Content)
+	}
+	if streams["stdout"] != "stdout" || streams["stderr"] != "stderr" {
+		t.Fatalf("streams = %#v", streams)
 	}
 }
 
-func TestExecToolKeepsBoundedTailOutput(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":  toolHelperCommand("large-output", "60000"),
-		"yield_ms": 30000,
+func TestExecToolExplicitBackgroundStartsWithStreamingGateClosed(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	var eventsMu sync.Mutex
+	var events []schema.ToolEvent
+	result, err := registry.Execute(context.Background(), schema.ToolCall{
+		ID:   "exec-background",
+		Name: "exec",
+		Arguments: execArguments(t, map[string]any{
+			"command":    toolHelperCommand("sleep-output", "100", "background-output"),
+			"background": true,
+		}),
+	}, func(_ context.Context, event schema.ToolEvent) {
+		eventsMu.Lock()
+		events = append(events, event)
+		eventsMu.Unlock()
 	})
-	if !result.Truncated || len([]byte(result.Output)) > defaultProcessOutputBytes {
-		t.Fatalf("truncated = %v, output bytes = %d", result.Truncated, len([]byte(result.Output)))
+	if err != nil || result.IsError {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	details := result.Details.(ExecDetails)
+	if details.Status != "running" || details.SessionID == "" {
+		t.Fatalf("Details = %#v", details)
+	}
+	if _, err := supervisor.Poll(context.Background(), details.SessionID, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	if len(events) != 2 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventEnd {
+		t.Fatalf("events after background completion = %#v", events)
 	}
 }
 
-func TestExecToolAutoBackgroundsAfterYield(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":  toolHelperCommand("sleep-output", "200", "done"),
-		"yield_ms": 10,
+func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	var eventsMu sync.Mutex
+	var events []schema.ToolEvent
+	result, err := registry.Execute(context.Background(), schema.ToolCall{
+		ID:   "exec-yield",
+		Name: "exec",
+		Arguments: execArguments(t, map[string]any{
+			"command": toolHelperCommand("paced-output", "500"),
+			"yieldMs": 200,
+		}),
+	}, func(_ context.Context, event schema.ToolEvent) {
+		eventsMu.Lock()
+		events = append(events, event)
+		eventsMu.Unlock()
 	})
-	if result.Status != "running" || result.SessionID == "" {
-		t.Fatalf("result = %#v", result)
+	if err != nil || result.IsError {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	details := result.Details.(ExecDetails)
+	if details.Status != "running" || details.SessionID == "" {
+		t.Fatalf("Details = %#v", details)
+	}
+	if _, err := supervisor.Poll(context.Background(), details.SessionID, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	if len(events) != 3 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventUpdate || events[2].Phase != schema.ToolEventEnd {
+		t.Fatalf("events after yielded completion = %#v", events)
+	}
+	if got := toolEventText(t, events[1].Update.Content); got != "early" {
+		t.Fatalf("foreground update = %q", got)
 	}
 }
 
-func TestExecToolYieldZeroReturnsImmediately(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	started := time.Now()
-	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
-		"command":  toolHelperCommand("sleep", "1000"),
-		"yield_ms": 0,
-	})
-	if result.Status != "running" || time.Since(started) > 500*time.Millisecond {
-		t.Fatalf("result = %#v, elapsed = %v", result, time.Since(started))
+func TestExecToolTimeoutIsOrdinaryErrorAndKillsProcessGroup(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	marker := filepath.Join(t.TempDir(), "timeout-grandchild")
+	result, err := registry.Execute(context.Background(), schema.ToolCall{
+		ID:   "exec-timeout",
+		Name: "exec",
+		Arguments: execArguments(t, map[string]any{
+			"command": toolHelperCommand("spawn-child", marker, "1500"),
+			"timeout": 1,
+			"yieldMs": 30_000,
+		}),
+	}, nil)
+	if err != nil || !result.IsError {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	details, ok := result.Details.(ExecDetails)
+	if !ok || details.Status != "timed_out" {
+		t.Fatalf("Details = %#v", result.Details)
+	}
+	time.Sleep(700 * time.Millisecond)
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("grandchild survived timeout: %v", statErr)
 	}
 }
 
-func TestExecToolRejectsInvalidArgumentsAndWorkDir(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	tool := NewExecTool(manager)
-	tests := []struct {
-		args json.RawMessage
-		want string
-	}{
-		{args: json.RawMessage(`{"command":`), want: "参数解析失败"},
-		{args: json.RawMessage(`{"command":"true","extra":true}`), want: "unknown field"},
-		{args: json.RawMessage(`{"command":" "}`), want: "command 不能为空"},
-		{args: execArguments(t, map[string]any{"command": "true", "workdir": "../outside"}), want: "工作区"},
-		{args: execArguments(t, map[string]any{"command": "true", "env": map[string]string{"PATH": "/tmp"}}), want: "PATH"},
-		{args: execArguments(t, map[string]any{"command": "true", "timeout_ms": 0}), want: "timeout_ms"},
-		{args: execArguments(t, map[string]any{"command": "true", "yield_ms": 30001}), want: "yield_ms"},
+func TestExecToolPropagatesParentCancellationAsControlFlowError(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	result, err := registry.Execute(ctx, schema.ToolCall{
+		ID:        "exec-canceled",
+		Name:      "exec",
+		Arguments: execArguments(t, map[string]any{"command": toolHelperCommand("sleep", "5000"), "yieldMs": 30_000}),
+	}, nil)
+	if !errors.Is(err, context.Canceled) || !result.IsError {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
-	for _, tt := range tests {
-		if _, err := tool.execute(context.Background(), tt.args); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Fatalf("Execute() error = %v, want containing %q", err, tt.want)
+}
+
+func TestExecToolRejectsLegacyFieldsAndInvalidSecondsOrMilliseconds(t *testing.T) {
+	supervisor := newProcessSupervisorForTest(t, t.TempDir())
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	tests := []map[string]any{
+		{"command": "true", "timeout_ms": 1000},
+		{"command": "true", "yield_ms": 1},
+		{"command": "true", "timeout": 0},
+		{"command": "true", "timeout": 601},
+		{"command": "true", "yieldMs": -1},
+		{"command": "true", "yieldMs": 30_001},
+		{"command": " ", "yieldMs": 0},
+	}
+	for index, input := range tests {
+		result, err := registry.Execute(context.Background(), schema.ToolCall{
+			ID:        "invalid-exec",
+			Name:      "exec",
+			Arguments: execArguments(t, input),
+		}, nil)
+		if err != nil || !result.IsError {
+			t.Fatalf("case %d Execute() = (%#v, %v)", index, result, err)
 		}
 	}
-}
-
-func TestExecToolHonorsCanceledContextAndClosedSupervisor(t *testing.T) {
-	manager := newProcessSupervisorForTest(t, t.TempDir())
-	tool := NewExecTool(manager)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := tool.execute(ctx, execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "取消") {
-		t.Fatalf("canceled Execute() error = %v", err)
-	}
-	if err := manager.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tool.execute(context.Background(), execArguments(t, map[string]any{"command": "true"})); err == nil || !strings.Contains(err.Error(), "关闭") {
-		t.Fatalf("closed Execute() error = %v", err)
-	}
-}
-
-func executeAndDecodeProcessObservation(t *testing.T, tool *ExecTool, input map[string]any) processObservation {
-	t.Helper()
-	output, err := tool.execute(context.Background(), execArguments(t, input))
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	var result processObservation
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatalf("decode output %q: %v", output, err)
-	}
-	return result
 }
 
 func execArguments(t *testing.T, input map[string]any) json.RawMessage {
@@ -183,4 +254,9 @@ func execArguments(t *testing.T, input map[string]any) json.RawMessage {
 		t.Fatalf("marshal arguments: %v", err)
 	}
 	return arguments
+}
+
+func toolOutputText(t *testing.T, output schema.ToolOutput) string {
+	t.Helper()
+	return toolEventText(t, output.Content)
 }

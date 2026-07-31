@@ -8,20 +8,41 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
-	defaultExecTimeoutMS = 120_000
-	maxExecTimeoutMS     = 600_000
-	defaultExecYieldMS   = 10_000
-	maxExecYieldMS       = 30_000
+	defaultExecTimeoutSeconds = 120
+	maxExecTimeoutSeconds     = 600
+	defaultExecYieldMS        = 10_000
+	maxExecYieldMS            = 30_000
 )
+
+type StreamDetails struct {
+	Stream string `json:"stream"`
+	Bytes  int    `json:"bytes"`
+}
+
+type ExecDetails struct {
+	Status    string `json:"status"`
+	SessionID string `json:"sessionId,omitempty"`
+	ExitCode  *int   `json:"exitCode,omitempty"`
+	Command   string `json:"command"`
+	CWD       string `json:"cwd"`
+	Truncated bool   `json:"truncated"`
+}
 
 type ExecTool struct {
 	supervisor *ProcessSupervisor
+}
+
+type execStreamGate struct {
+	open atomic.Bool
+	mu   sync.Mutex
 }
 
 var _ Tool = (*ExecTool)(nil)
@@ -37,16 +58,16 @@ func (t *ExecTool) Name() string {
 func (t *ExecTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name:        t.Name(),
-		Description: "在工作区中执行 shell 命令。支持超时、环境变量、前台等待和后台 session；命令拥有宿主进程权限，cwd 不是安全沙箱。",
+		Description: "在工作区中执行 shell 命令。前台输出按 stdout/stderr 流式返回，命令可在 yield 后转入后台；命令拥有宿主进程权限，cwd 不是安全沙箱。",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"command":    map[string]any{"type": "string", "description": "要执行的 shell 命令"},
 				"workdir":    map[string]any{"type": "string", "description": "可选的工作区相对目录"},
-				"timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": maxExecTimeoutMS},
-				"yield_ms":   map[string]any{"type": "integer", "minimum": 0, "maximum": maxExecYieldMS},
-				"background": map[string]any{"type": "boolean"},
 				"env":        map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+				"yieldMs":    map[string]any{"type": "integer", "minimum": 0, "maximum": maxExecYieldMS, "default": defaultExecYieldMS},
+				"background": map[string]any{"type": "boolean", "default": false},
+				"timeout":    map[string]any{"type": "integer", "minimum": 1, "maximum": maxExecTimeoutSeconds, "default": defaultExecTimeoutSeconds},
 			},
 			"required":             []string{"command"},
 			"additionalProperties": false,
@@ -54,72 +75,136 @@ func (t *ExecTool) Definition() schema.ToolDefinition {
 	}
 }
 
-func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
-	output, err := t.execute(ctx, args)
-	return textToolOutput(output), err
-}
-
-func (t *ExecTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, emit UpdateEmitter) (schema.ToolOutput, error) {
 	if t == nil || t.supervisor == nil {
-		return "", errors.New("exec 未初始化")
+		return schema.ToolOutput{}, errors.New("exec 未初始化")
 	}
 	if ctx == nil {
-		return "", errors.New("context 不能为空")
+		return schema.ToolOutput{}, errors.New("context 不能为空")
 	}
 	input, err := decodeExecArgs(args)
 	if err != nil {
-		return "", err
+		return schema.ToolOutput{}, err
 	}
 	if strings.TrimSpace(input.Command) == "" {
-		return "", errors.New("command 不能为空")
+		return schema.ToolOutput{}, errors.New("command 不能为空")
 	}
-	timeoutMS := defaultExecTimeoutMS
-	if input.TimeoutMS != nil {
-		timeoutMS = *input.TimeoutMS
+	timeoutSeconds := defaultExecTimeoutSeconds
+	if input.Timeout != nil {
+		timeoutSeconds = *input.Timeout
 	}
-	if timeoutMS < 1 || timeoutMS > maxExecTimeoutMS {
-		return "", fmt.Errorf("timeout_ms 必须在 1..%d", maxExecTimeoutMS)
+	if timeoutSeconds < 1 || timeoutSeconds > maxExecTimeoutSeconds {
+		return schema.ToolOutput{}, fmt.Errorf("timeout 必须在 1..%d 秒", maxExecTimeoutSeconds)
 	}
 	yieldMS := defaultExecYieldMS
 	if input.YieldMS != nil {
 		yieldMS = *input.YieldMS
 	}
 	if yieldMS < 0 || yieldMS > maxExecYieldMS {
-		return "", fmt.Errorf("yield_ms 必须在 0..%d", maxExecYieldMS)
+		return schema.ToolOutput{}, fmt.Errorf("yieldMs 必须在 0..%d 毫秒", maxExecYieldMS)
+	}
+
+	gate := &execStreamGate{}
+	gate.open.Store(!input.Background)
+	onOutput := func(stream string, chunk []byte) {
+		gate.emit(emit, stream, chunk)
 	}
 	session, err := t.supervisor.Start(ctx, ProcessStart{
-		Command: input.Command,
-		WorkDir: input.WorkDir,
-		Env:     input.Env,
-		Timeout: time.Duration(timeoutMS) * time.Millisecond,
+		Command:  input.Command,
+		WorkDir:  input.WorkDir,
+		Env:      input.Env,
+		Timeout:  time.Duration(timeoutSeconds) * time.Second,
+		OnOutput: onOutput,
 	})
 	if err != nil {
-		return "", err
+		gate.close()
+		return schema.ToolOutput{}, err
 	}
 	if input.Background {
-		return marshalProcessSnapshot(session.snapshot())
+		return execOutput(session.snapshot()), nil
 	}
+
 	timer := time.NewTimer(time.Duration(yieldMS) * time.Millisecond)
 	defer timer.Stop()
 	select {
 	case <-session.done:
-		return marshalProcessSnapshot(session.snapshot())
+		gate.close()
+		return finishedExecOutput(ctx, session.snapshot())
 	case <-timer.C:
-		return marshalProcessSnapshot(session.snapshot())
+		gate.close()
+		snapshot := session.snapshot()
+		if snapshot.Status != "running" {
+			return finishedExecOutput(ctx, snapshot)
+		}
+		return execOutput(snapshot), nil
 	case <-ctx.Done():
+		gate.close()
 		_ = session.terminate("canceled")
 		<-session.done
-		return "", fmt.Errorf("命令执行已取消: %w", ctx.Err())
+		return execOutput(session.snapshot()), fmt.Errorf("命令执行已取消: %w", ctx.Err())
 	}
+}
+
+func (g *execStreamGate) emit(emit UpdateEmitter, stream string, chunk []byte) {
+	if emit == nil || !g.open.Load() {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.open.Load() {
+		return
+	}
+	emit(schema.ToolUpdate{
+		Content: []schema.ContentBlock{schema.TextBlock(string(chunk))},
+		Details: StreamDetails{Stream: stream, Bytes: len(chunk)},
+	})
+}
+
+func (g *execStreamGate) close() {
+	g.open.Store(false)
+	g.mu.Lock()
+	g.mu.Unlock()
+}
+
+func execOutput(snapshot ProcessSnapshot) schema.ToolOutput {
+	output := textToolOutput(snapshot.Output)
+	output.Details = ExecDetails{
+		Status:    snapshot.Status,
+		SessionID: snapshot.SessionID,
+		ExitCode:  snapshot.ExitCode,
+		Command:   snapshot.Command,
+		CWD:       snapshot.CWD,
+		Truncated: snapshot.Truncated,
+	}
+	return output
+}
+
+func finishedExecOutput(ctx context.Context, snapshot ProcessSnapshot) (schema.ToolOutput, error) {
+	output := execOutput(snapshot)
+	if err := ctx.Err(); err != nil {
+		return output, fmt.Errorf("命令执行已取消: %w", err)
+	}
+	switch snapshot.Status {
+	case "timed_out":
+		return output, errors.New("命令执行超时")
+	case "canceled":
+		return output, errors.New("命令执行已取消")
+	case "failed":
+		return output, errors.New("命令执行失败")
+	}
+	if snapshot.ExitCode != nil && *snapshot.ExitCode != 0 {
+		return output, fmt.Errorf("命令退出码为 %d", *snapshot.ExitCode)
+	}
+	return output, nil
 }
 
 type execArgs struct {
 	Command    string            `json:"command"`
 	WorkDir    string            `json:"workdir,omitempty"`
-	TimeoutMS  *int              `json:"timeout_ms,omitempty"`
-	YieldMS    *int              `json:"yield_ms,omitempty"`
-	Background bool              `json:"background,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
+	YieldMS    *int              `json:"yieldMs,omitempty"`
+	Background bool              `json:"background,omitempty"`
+	Timeout    *int              `json:"timeout,omitempty"`
 }
 
 func decodeExecArgs(args json.RawMessage) (execArgs, error) {
@@ -137,32 +222,4 @@ func decodeExecArgs(args json.RawMessage) (execArgs, error) {
 		return execArgs{}, errors.New("参数包含多余 JSON 内容")
 	}
 	return input, nil
-}
-
-func marshalProcessSnapshot(snapshot ProcessSnapshot) (string, error) {
-	output, err := json.Marshal(legacyProcessSnapshot(snapshot))
-	if err != nil {
-		return "", fmt.Errorf("序列化 process 结果失败: %w", err)
-	}
-	return string(output), nil
-}
-
-func legacyProcessSnapshot(snapshot ProcessSnapshot) any {
-	return struct {
-		SessionID string `json:"session_id"`
-		Status    string `json:"status"`
-		Command   string `json:"command"`
-		WorkDir   string `json:"workdir"`
-		Output    string `json:"output"`
-		ExitCode  *int   `json:"exit_code,omitempty"`
-		Truncated bool   `json:"truncated"`
-	}{
-		SessionID: snapshot.SessionID,
-		Status:    snapshot.Status,
-		Command:   snapshot.Command,
-		WorkDir:   snapshot.CWD,
-		Output:    snapshot.Output,
-		ExitCode:  snapshot.ExitCode,
-		Truncated: snapshot.Truncated,
-	}
 }

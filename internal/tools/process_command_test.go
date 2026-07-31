@@ -82,11 +82,15 @@ func TestToolCommandHelper(t *testing.T) {
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 
 	case "spawn-child":
-		if len(arguments) != 2 {
+		if len(arguments) < 2 || len(arguments) > 3 {
 			os.Exit(2)
 		}
 		marker := arguments[1]
-		child := exec.Command(os.Args[0], "-test.run=^TestToolCommandHelper$", "--", "delayed-write", "300", marker)
+		delay := "300"
+		if len(arguments) == 3 {
+			delay = arguments[2]
+		}
+		child := exec.Command(os.Args[0], "-test.run=^TestToolCommandHelper$", "--", "delayed-write", delay, marker)
 		if err := child.Start(); err != nil {
 			os.Exit(2)
 		}
@@ -110,6 +114,18 @@ func TestToolCommandHelper(t *testing.T) {
 		if err := os.WriteFile(arguments[2], []byte("survived"), 0o600); err != nil {
 			os.Exit(2)
 		}
+
+	case "paced-output":
+		if len(arguments) != 2 {
+			os.Exit(2)
+		}
+		milliseconds, err := strconv.Atoi(arguments[1])
+		if err != nil {
+			os.Exit(2)
+		}
+		_, _ = fmt.Fprint(os.Stdout, "early")
+		time.Sleep(time.Duration(milliseconds) * time.Millisecond)
+		_, _ = fmt.Fprint(os.Stderr, "late")
 
 	default:
 		os.Exit(2)
