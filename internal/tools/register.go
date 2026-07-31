@@ -1,66 +1,48 @@
 package tools
 
-import (
-	"fmt"
+import "go.uber.org/fx"
 
-	"github.com/PycMono/go-reagent/internal/config"
-	"go.uber.org/fx"
-)
-
-// Register provides the complete workspace tool runtime.
+// Register provides shared tool resources, grouped tools/middleware, and the Registry.
 var Register = fx.Options(
-	fx.Provide(NewWorkspace, newRuntimeRegistry),
+	fx.Provide(
+		NewWorkspace,
+		NewProcessSupervisor,
+		fx.Annotate(NewReadTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(NewEditTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(NewWriteTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(NewApplyPatchTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(NewExecTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(NewProcessTool, fx.As(new(Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(newRecoveryMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		fx.Annotate(newContextMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		fx.Annotate(newSchemaValidationMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		fx.Annotate(newLoggingMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		fx.Annotate(newOutputLimitMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		fx.Annotate(newEventForwardingMiddlewareRegistration, fx.ResultTags(`group:"tool_middlewares"`)),
+		NewRegistry,
+	),
 )
 
-// NewRuntimeRegistry creates and registers every workspace tool, then binds
-// their resources to the Fx lifecycle.
-func NewRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir) (Registry, error) {
-	workspace, err := NewWorkspace(lifecycle, workDir)
-	if err != nil {
-		return nil, err
-	}
-	return newRuntimeRegistry(lifecycle, workspace)
+func newRecoveryMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "recovery", Order: 10, Middleware: recoveryMiddleware()}
 }
 
-func newRuntimeRegistry(lifecycle fx.Lifecycle, workspace *Workspace) (Registry, error) {
-	readTool, err := NewReadTool(workspace)
-	if err != nil {
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化 read 工具失败: %w", err)
-	}
+func newContextMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "context", Order: 20, Middleware: contextMiddleware()}
+}
 
-	editTool := NewEditTool(workspace)
+func newSchemaValidationMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "schema_validation", Order: 30, Middleware: schemaValidationMiddleware()}
+}
 
-	writeTool, err := NewWriteTool(workspace)
-	if err != nil {
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化 write 工具失败: %w", err)
-	}
+func newLoggingMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "logging", Order: 40, Middleware: loggingMiddleware()}
+}
 
-	applyPatchTool := NewApplyPatchTool(workspace)
+func newOutputLimitMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "output_limit", Order: 50, Middleware: outputLimitMiddleware()}
+}
 
-	processSupervisor, err := NewProcessSupervisor(lifecycle, workspace)
-	if err != nil {
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化 exec/process 工具失败: %w", err)
-	}
-
-	runtimeTools := []Tool{
-		readTool,
-		editTool,
-		writeTool,
-		applyPatchTool,
-		NewExecTool(processSupervisor),
-		NewProcessTool(processSupervisor),
-	}
-	registry, err := NewRegistry(RegistryParams{
-		Tools:       runtimeTools,
-		Middlewares: defaultMiddlewareRegistrations(),
-	})
-	if err != nil {
-		_ = processSupervisor.Close()
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化工具 Registry 失败: %w", err)
-	}
-	return registry, nil
+func newEventForwardingMiddlewareRegistration() MiddlewareRegistration {
+	return MiddlewareRegistration{Name: "event_forwarding", Order: 60, Middleware: eventForwardingMiddleware()}
 }

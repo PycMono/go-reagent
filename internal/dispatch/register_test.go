@@ -1,26 +1,23 @@
 package dispatch
 
 import (
-	"context"
 	"testing"
 
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-func TestNewReporterAllowsDisabledWeCom(t *testing.T) {
-	reporter, err := NewReporter(&config.Config{})
+func TestNewReporterRegistrationsAllowsDisabledWeCom(t *testing.T) {
+	registrations, err := NewReporterRegistrations(&config.Config{})
 	if err != nil {
-		t.Fatalf("NewReporter() error = %v", err)
+		t.Fatalf("NewReporterRegistrations() error = %v", err)
 	}
-	if reporter == nil {
-		t.Fatal("NewReporter() = nil")
+	if len(registrations) != 0 {
+		t.Fatalf("registrations = %#v, want none", registrations)
 	}
-	reporter.Report(context.Background(), schema.NewThinkingEvent())
 }
 
-func TestNewReporterRejectsNilConfig(t *testing.T) {
-	if _, err := NewReporter(nil); err == nil {
-		t.Fatal("NewReporter(nil) error = nil")
+func TestNewReporterRegistrationsRejectsNilConfig(t *testing.T) {
+	if _, err := NewReporterRegistrations(nil); err == nil {
+		t.Fatal("NewReporterRegistrations(nil) error = nil")
 	}
 }

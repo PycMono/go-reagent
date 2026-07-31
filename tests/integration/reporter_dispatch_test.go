@@ -8,6 +8,7 @@ import (
 
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/dispatch"
+	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -19,14 +20,15 @@ func TestNewReporterSendsWeComEventWhenConfigured(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter, err := dispatch.NewReporter(&agentconfig.Config{
+	registrations, err := dispatch.NewReporterRegistrations(&agentconfig.Config{
 		Bot: agentconfig.BotConfig{
 			WeCom: agentconfig.WeComConfig{WebhookURL: server.URL},
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewReporter() error = %v", err)
+		t.Fatalf("NewReporterRegistrations() error = %v", err)
 	}
+	reporter := engine.NewMultiReporter(registrations)
 	reporter.Report(context.Background(), schema.NewToolStartEvent(schema.ToolCall{Name: "read_file"}))
 
 	select {

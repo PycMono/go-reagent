@@ -7,26 +7,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/config"
 )
 
-type agentFunc func(context.Context, string, engine.Reporter) error
+type runtimeFunc func(context.Context, string) error
 
-func (f agentFunc) Run(ctx context.Context, prompt string, reporter engine.Reporter) error {
-	return f(ctx, prompt, reporter)
-}
+func (f runtimeFunc) Run(ctx context.Context, prompt string) error { return f(ctx, prompt) }
 
-func TestAgentRunnerPassesPromptAndReporterToAgent(t *testing.T) {
-	reporter := engine.NewTerminalReporter()
+func TestAgentRunnerPassesPromptToRuntime(t *testing.T) {
 	called := make(chan struct{}, 1)
-	agent := agentFunc(func(_ context.Context, prompt string, gotReporter engine.Reporter) error {
-		if prompt != "test prompt" || gotReporter != reporter {
-			t.Errorf("Run(prompt, reporter) = (%q, %T)", prompt, gotReporter)
+	runtime := runtimeFunc(func(_ context.Context, prompt string) error {
+		if prompt != "test prompt" {
+			t.Errorf("Run(prompt) = %q", prompt)
 		}
 		called <- struct{}{}
 		return nil
 	})
-	runner := NewAgentRunner(agent, reporter, Prompt("test prompt"))
+	runner := NewAgentRunner(runtime, config.Prompt("test prompt"))
 	completed := make(chan error, 1)
 
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
@@ -35,7 +32,7 @@ func TestAgentRunnerPassesPromptAndReporterToAgent(t *testing.T) {
 	select {
 	case <-called:
 	case <-time.After(time.Second):
-		t.Fatal("Agent.Run was not called")
+		t.Fatal("AgentRuntime.Run was not called")
 	}
 	select {
 	case err := <-completed:
@@ -47,15 +44,10 @@ func TestAgentRunnerPassesPromptAndReporterToAgent(t *testing.T) {
 	}
 }
 
-func TestAgentRunnerReportsAgentError(t *testing.T) {
-	want := errors.New("agent failed")
-	runner := NewAgentRunner(
-		agentFunc(func(context.Context, string, engine.Reporter) error { return want }),
-		engine.NewTerminalReporter(),
-		Prompt("test"),
-	)
+func TestAgentRunnerReportsRuntimeError(t *testing.T) {
+	want := errors.New("runtime failed")
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error { return want }), config.Prompt("test"))
 	completed := make(chan error, 1)
-
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -72,15 +64,11 @@ func TestAgentRunnerReportsAgentError(t *testing.T) {
 func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int32
-	runner := NewAgentRunner(
-		agentFunc(func(context.Context, string, engine.Reporter) error {
-			calls.Add(1)
-			<-release
-			return nil
-		}),
-		engine.NewTerminalReporter(),
-		Prompt("test"),
-	)
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error {
+		calls.Add(1)
+		<-release
+		return nil
+	}), config.Prompt("test"))
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("first Start() error = %v", err)
 	}
@@ -92,21 +80,17 @@ func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 		t.Fatalf("Stop() error = %v", err)
 	}
 	if got := calls.Load(); got != 1 {
-		t.Fatalf("Agent.Run calls = %d, want 1", got)
+		t.Fatalf("AgentRuntime.Run calls = %d, want 1", got)
 	}
 }
 
-func TestAgentRunnerStopCancelsAndWaitsForAgent(t *testing.T) {
+func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 	canceled := make(chan struct{})
-	runner := NewAgentRunner(
-		agentFunc(func(ctx context.Context, _ string, _ engine.Reporter) error {
-			<-ctx.Done()
-			close(canceled)
-			return ctx.Err()
-		}),
-		engine.NewTerminalReporter(),
-		Prompt("test"),
-	)
+	runner := NewAgentRunner(runtimeFunc(func(ctx context.Context, _ string) error {
+		<-ctx.Done()
+		close(canceled)
+		return ctx.Err()
+	}), config.Prompt("test"))
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -116,20 +100,16 @@ func TestAgentRunnerStopCancelsAndWaitsForAgent(t *testing.T) {
 	select {
 	case <-canceled:
 	default:
-		t.Fatal("Stop returned before Agent observed cancellation")
+		t.Fatal("Stop returned before runtime observed cancellation")
 	}
 }
 
 func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	release := make(chan struct{})
-	runner := NewAgentRunner(
-		agentFunc(func(context.Context, string, engine.Reporter) error {
-			<-release
-			return nil
-		}),
-		engine.NewTerminalReporter(),
-		Prompt("test"),
-	)
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error {
+		<-release
+		return nil
+	}), config.Prompt("test"))
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}

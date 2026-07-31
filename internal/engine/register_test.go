@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/PycMono/go-reagent/internal/config"
@@ -16,10 +17,7 @@ import (
 type registerProvider struct{}
 
 func (*registerProvider) Generate(context.Context, []schema.Message, []schema.ToolDefinition) (*schema.Message, error) {
-	return &schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: []schema.ContentBlock{schema.TextBlock("done")},
-	}, nil
+	return &schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("done")}}, nil
 }
 
 type registerRegistry struct{}
@@ -30,49 +28,63 @@ func (*registerRegistry) Execute(context.Context, schema.ToolCall, tools.ToolEve
 	return schema.ToolResult{}, nil
 }
 
-func TestNewAgentEngineUsesInjectedContextComponents(t *testing.T) {
-	workDir := t.TempDir()
-	composer := ctxpkg.NewPromptComposer(workDir)
-	skillLoader := ctxpkg.NewSkillLoader(workDir)
-
-	agentEngine := NewAgentEngine(
-		&registerProvider{},
-		&registerRegistry{},
-		composer,
-		skillLoader,
-		workDir,
-		false,
+func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
+	var (
+		runtime   AgentRuntime
+		scheduler *ToolScheduler
+		loop      *AgentLoop
 	)
-
-	if agentEngine.composer != composer || agentEngine.skillLoader != skillLoader {
-		t.Fatalf("AgentEngine context components were not injected")
-	}
-}
-
-func TestRegisterProvidesAgent(t *testing.T) {
-	var agent Agent
 	app := fxtest.New(t,
 		fx.Provide(func() provider.LLMProvider { return &registerProvider{} }),
 		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
 		fx.Supply(config.WorkDir(t.TempDir())),
 		ctxpkg.Register,
 		Register,
-		fx.Populate(&agent),
+		fx.Populate(&runtime, &scheduler, &loop),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
-	if agent == nil {
-		t.Fatal("Register did not provide Agent")
+	if runtime == nil || scheduler == nil || loop == nil {
+		t.Fatalf("runtime stack = runtime:%T scheduler:%#v loop:%#v", runtime, scheduler, loop)
 	}
-	agentEngine, ok := agent.(*AgentEngine)
-	if !ok {
-		t.Fatalf("Agent type = %T, want *AgentEngine", agent)
+	if scheduler.maxParallel != defaultMaxParallelTools || !loop.enableThinking {
+		t.Fatalf("runtime defaults = parallel:%d thinking:%v", scheduler.maxParallel, loop.enableThinking)
 	}
-	if agentEngine.WorkDir == "" || agentEngine.composer == nil || agentEngine.skillLoader == nil {
-		t.Fatalf("AgentEngine workspace context = %#v", agentEngine)
+}
+
+type namedRegisterReporter struct {
+	name string
+	got  *[]string
+}
+
+func (r *namedRegisterReporter) Report(context.Context, schema.AgentEvent) {
+	*r.got = append(*r.got, r.name)
+}
+
+func TestRegisterSortsReversedReporterGroupByOrderThenName(t *testing.T) {
+	var got []string
+	registration := func(name string) ReporterRegistration {
+		return ReporterRegistration{Name: name, Order: 50, Reporter: &namedRegisterReporter{name: name, got: &got}}
 	}
-	if !agentEngine.EnableThinking || agentEngine.MaxParallelTools != defaultMaxParallelTools {
-		t.Fatalf("AgentEngine defaults = thinking:%v parallel:%d", agentEngine.EnableThinking, agentEngine.MaxParallelTools)
+	var reporter Reporter
+	app := fxtest.New(t,
+		fx.Provide(func() provider.LLMProvider { return &registerProvider{} }),
+		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
+		fx.Supply(config.WorkDir(t.TempDir())),
+		ctxpkg.Register,
+		Register,
+		fx.Provide(
+			fx.Annotate(func() ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),
+			fx.Annotate(func() ReporterRegistration { return registration("alpha") }, fx.ResultTags(`group:"reporters"`)),
+		),
+		fx.Populate(&reporter),
+	)
+	app.RequireStart()
+	defer app.RequireStop()
+
+	reporter.Report(context.Background(), schema.NewThinkingEvent())
+	if !slices.Equal(got, []string{"alpha", "zeta"}) {
+		t.Fatalf("reporter sequence = %v, want alpha,zeta", got)
 	}
 }
