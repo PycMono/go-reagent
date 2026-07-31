@@ -289,6 +289,20 @@ func TestReadToolRejectsNonFilesAndMissingPaths(t *testing.T) {
 	}
 }
 
+func TestReadToolRejectsFIFOWithoutBlocking(t *testing.T) {
+	workDir := t.TempDir()
+	makeFIFO(t, filepath.Join(workDir, "stream"))
+	tool := newReadToolForTest(t, workDir)
+
+	err := mustReturnBefore(t, func() error {
+		_, err := tool.execute(context.Background(), readFileArguments(t, "stream"))
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "普通文件") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
 func TestReadToolLimitsFinalOutputTo50KiB(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "large.txt"), []byte(strings.Repeat("中文内容\n", 7000)))
