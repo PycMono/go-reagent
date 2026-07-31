@@ -43,13 +43,7 @@ func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspac
 		return nil, fmt.Errorf("初始化 write 工具失败: %w", err)
 	}
 
-	applyPatchTool, err := NewApplyPatchTool(string(workDir))
-	if err != nil {
-		_ = closers.Close()
-		_ = workspace.Close()
-		return nil, fmt.Errorf("初始化 apply_patch 工具失败: %w", err)
-	}
-	closers = append(closers, applyPatchTool)
+	applyPatchTool := NewApplyPatchTool(workspace)
 
 	processManager, err := NewProcessManager(string(workDir))
 	if err != nil {
