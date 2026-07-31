@@ -18,9 +18,10 @@ const defaultMaxParallelTools = 4
 
 // AgentEngine 是微型 OS 的核心驱动
 type AgentEngine struct {
-	provider provider.LLMProvider
-	registry tools.Registry
-	composer *ctxpkg.PromptComposer
+	provider    provider.LLMProvider
+	registry    tools.Registry
+	composer    *ctxpkg.PromptComposer
+	skillLoader *ctxpkg.SkillLoader
 
 	// WorkDir (工作区): 借鉴 OpenClaw 的理念，Agent 必须有一个明确的物理边界
 	WorkDir string
@@ -42,6 +43,7 @@ func NewAgentEngine(
 		provider:         p,
 		registry:         r,
 		composer:         ctxpkg.NewPromptComposer(workDir),
+		skillLoader:      ctxpkg.NewSkillLoader(workDir),
 		WorkDir:          workDir,
 		EnableThinking:   enableThinking,
 		MaxParallelTools: defaultMaxParallelTools,
@@ -59,6 +61,9 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 	if ctx == nil {
 		return errors.New("engine: context is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("Agent 运行已取消: %w", err)
+	}
 
 	logsdk.Info(ctx, "[Engine] 引擎启动，锁定工作区",
 		logsdk.Any("component", "engine"),
@@ -69,7 +74,28 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 		logsdk.Any("thinking_enabled", e.EnableThinking),
 	)
 
-	systemMessage := e.composer.Build()
+	availableTools := e.registry.GetAvailableTools()
+	snapshot, err := e.skillLoader.Discover(ctxpkg.DefaultSkillEnvironment())
+	if err != nil {
+		return fmt.Errorf("发现 Agent Skills 失败: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("Agent 运行已取消: %w", err)
+	}
+	logSkillDiagnostics(ctx, snapshot.Diagnostics())
+	if len(snapshot.Skills()) > 0 && !hasToolDefinition(availableTools, "read_file") {
+		return errors.New("发现可用 Agent Skills，但 Registry 未挂载 read_file")
+	}
+	systemMessage, promptReport := e.composer.Build(snapshot)
+	if promptReport.Truncated {
+		logsdk.Warn(ctx, "[Engine] Agent Skill Prompt 已截断",
+			logsdk.Any("component", "engine"),
+			logsdk.Any("code", "skill_prompt_truncated"),
+			logsdk.Any("included_skills", promptReport.IncludedSkills),
+			logsdk.Any("omitted_skills", promptReport.OmittedSkills),
+			logsdk.Any("shortened_descriptions", promptReport.ShortenedDescriptions),
+		)
+	}
 	contextHistory := []schema.Message{
 		systemMessage,
 		{
@@ -90,9 +116,6 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 			logsdk.Any("component", "engine"),
 			logsdk.Any("turn", turnCount),
 		)
-
-		// 获取当前挂载的所有工具定义
-		availableTools := e.registry.GetAvailableTools()
 
 		// ====================================================================
 		// Phase 1: 慢思考阶段 (Thinking) - 剥夺工具，强制规划
@@ -122,6 +145,10 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 			}
 
 			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkResp.Content)
+			contextHistory = append(contextHistory, *thinkResp, schema.Message{
+				Role:    schema.RoleUser,
+				Content: "请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。",
+			})
 		}
 
 		// ====================================================================
@@ -200,6 +227,35 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 	}
 
 	return nil
+}
+
+func hasToolDefinition(definitions []schema.ToolDefinition, name string) bool {
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func logSkillDiagnostics(ctx context.Context, diagnostics []ctxpkg.SkillDiagnostic) {
+	for _, diagnostic := range diagnostics {
+		fields := []logsdk.Fields{
+			logsdk.Any("component", "engine"),
+			logsdk.Any("code", diagnostic.Code),
+			logsdk.Any("path", diagnostic.Path),
+			logsdk.Any("severity", diagnostic.Severity),
+			logsdk.Any("detail", diagnostic.Message),
+		}
+		switch diagnostic.Severity {
+		case ctxpkg.DiagnosticSeverityError:
+			logsdk.Error(ctx, "[Engine] Agent Skill 诊断", fields...)
+		case ctxpkg.DiagnosticSeverityWarning:
+			logsdk.Warn(ctx, "[Engine] Agent Skill 诊断", fields...)
+		default:
+			logsdk.Info(ctx, "[Engine] Agent Skill 诊断", fields...)
+		}
+	}
 }
 
 func (e *AgentEngine) actionExecutionMode(

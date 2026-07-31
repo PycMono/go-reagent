@@ -97,7 +97,7 @@ func TestAgentEngineReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		},
 	}
 	reporter := &recordingReporter{}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", true)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
 
 	if err := agentEngine.Run(context.Background(), "read a", reporter); err != nil {
 		t.Fatalf("Run() error = %v", err)

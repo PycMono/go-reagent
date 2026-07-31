@@ -16,6 +16,7 @@ import (
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/logtest"
 	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 type fakeProvider struct {
@@ -126,7 +127,7 @@ func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
 		{Name: "bash", Description: "execute a command", InputSchema: map[string]any{"type": "object"}},
 	}}
-	engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 	if err := engine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -158,7 +159,7 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(skillDir, "SKILL.md"),
-		[]byte("---\nname: engine-skill\ndescription: engine-trigger\n---\nengine-body"),
+		[]byte("---\nname: engine-skill\ndescription: engine-trigger-v1\n---\nengine-body-secret-v1"),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -168,7 +169,8 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: "done one"},
 		{Role: schema.RoleAssistant, Content: "done two"},
 	}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
+	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "read_file", ParallelSafe: true}}}
+	agentEngine := engine.NewAgentEngine(provider, registry, workDir, false)
 	if err := agentEngine.Run(context.Background(), "hello one", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -177,13 +179,26 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 	if len(request) != 2 || request[0].Role != schema.RoleSystem || request[1].Content != "hello one" {
 		t.Fatalf("initial context = %#v", request)
 	}
-	for _, want := range []string{"engine-agent-guide-v1", "engine-skill", "engine-body"} {
+	for _, want := range []string{
+		"engine-agent-guide-v1", "engine-skill", "engine-trigger-v1",
+		".claw/skills/engine/SKILL.md", "sha256:", "<available_skills>",
+	} {
 		if !strings.Contains(request[0].Content, want) {
 			t.Fatalf("system prompt missing %q: %q", want, request[0].Content)
 		}
 	}
+	if strings.Contains(request[0].Content, "engine-body-secret-v1") {
+		t.Fatalf("system prompt leaked Skill Body: %q", request[0].Content)
+	}
 
 	if err := os.WriteFile(agentsPath, []byte("engine-agent-guide-v2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: engine-skill\ndescription: engine-trigger-v2\n---\nengine-body-secret-v2"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := agentEngine.Run(context.Background(), "hello two", nil); err != nil {
@@ -198,6 +213,61 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 		strings.Contains(secondRequest[0].Content, "engine-agent-guide-v1") {
 		t.Fatalf("second system prompt did not refresh AGENTS.md: %q", secondRequest[0].Content)
 	}
+	if !strings.Contains(secondRequest[0].Content, "engine-trigger-v2") ||
+		strings.Contains(secondRequest[0].Content, "engine-trigger-v1") ||
+		strings.Contains(secondRequest[0].Content, "engine-body-secret-v1") ||
+		strings.Contains(secondRequest[0].Content, "engine-body-secret-v2") {
+		t.Fatalf("second system prompt did not refresh catalog safely: %q", secondRequest[0].Content)
+	}
+}
+
+func TestAgentEngineRequiresReadFileWhenSkillsAreAvailable(t *testing.T) {
+	workDir := t.TempDir()
+	skillDir := filepath.Join(workDir, "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: review\ndescription: Review changes\n---\nBody"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "unused"}}}
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
+
+	err := agentEngine.Run(context.Background(), "review", nil)
+	if err == nil || !strings.Contains(err.Error(), "read_file") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(provider.requests) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(provider.requests))
+	}
+}
+
+func TestAgentEngineLogsInvalidSkillDiagnostics(t *testing.T) {
+	recorder := &logtest.Recorder{}
+	logsdk.SetLogger(recorder)
+	t.Cleanup(func() {
+		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
+	})
+	workDir := t.TempDir()
+	skillDir := filepath.Join(workDir, "skills", "broken")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# missing frontmatter"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
+
+	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	event, ok := recorder.Find("warn", "[Engine] Agent Skill 诊断")
+	if !ok || event.Fields["code"] != "skill_frontmatter_missing" ||
+		strings.Contains(fmt.Sprint(event.Fields), "missing frontmatter") {
+		t.Fatalf("diagnostic event = %#v, found = %v", event, ok)
+	}
 }
 
 func TestAgentEngineEmitsStructuredLifecycleLogs(t *testing.T) {
@@ -208,13 +278,14 @@ func TestAgentEngineEmitsStructuredLifecycleLogs(t *testing.T) {
 	})
 
 	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "done"}}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+	workDir := t.TempDir()
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
 	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
 	started, ok := recorder.Find("info", "[Engine] 引擎启动，锁定工作区")
-	if !ok || started.Fields["component"] != "engine" || started.Fields["work_dir"] != "/workspace" {
+	if !ok || started.Fields["component"] != "engine" || started.Fields["work_dir"] != workDir {
 		t.Fatalf("start event = %#v, found = %v", started, ok)
 	}
 	thinkingMode, ok := recorder.Find("info", "[Engine] 慢思考模式 (Thinking Phase)")
@@ -246,7 +317,7 @@ func TestAgentEngineEmitsStructuredThinkingPhaseLog(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: "plan"},
 		{Role: schema.RoleAssistant, Content: "done"},
 	}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
+	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
 	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -278,7 +349,7 @@ func TestAgentEngineEmitsStructuredToolLogs(t *testing.T) {
 		"success": {Output: "ok"},
 		"error":   {Output: "boom", IsError: true},
 	}}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 	if err := agentEngine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -328,7 +399,7 @@ func TestAgentEngineEmitsReferenceStyleParallelToolLogs(t *testing.T) {
 			"read-2": {Output: "b"},
 		},
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 	if err := agentEngine.Run(context.Background(), "read both", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -363,7 +434,7 @@ func TestAgentEngineAppendsToolObservationAndContinues(t *testing.T) {
 	registry := &fakeRegistry{results: map[string]schema.ToolResult{
 		"echo": {ToolCallID: "call-1", Output: "hello"},
 	}}
-	engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 	if err := engine.Run(context.Background(), "run echo", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -410,7 +481,7 @@ func TestAgentEngineExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.
 		finished: make(chan schema.ToolCall, len(toolCalls)),
 		gates:    gates,
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 	done := make(chan error, 1)
 	go func() {
@@ -479,7 +550,7 @@ func TestAgentEngineBoundsParallelTools(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: "done"},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 2
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read all", registry.gates)
@@ -532,7 +603,7 @@ func TestAgentEngineUsesExclusiveToolsAsBarriers(t *testing.T) {
 		Output:     `tool "missing" is not registered`,
 		IsError:    true,
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "run ordered batch", registry.gates)
 	first := requireStartedCall(t, registry.started)
@@ -605,7 +676,7 @@ func TestAgentEngineCompletesParallelSiblingsAfterToolError(t *testing.T) {
 	registry := newControlledRegistry(toolCalls, definitions)
 	registry.results["call-1"] = schema.ToolResult{ToolCallID: "call-1", Output: "read failed", IsError: true}
 	registry.results["call-2"] = schema.ToolResult{ToolCallID: "call-2", Output: "read ok"}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read both", registry.gates)
 	requireStartedCall(t, registry.started)
@@ -640,7 +711,7 @@ func TestAgentEngineUsesSerialFallbackForNonpositiveParallelLimit(t *testing.T) 
 		{Role: schema.RoleAssistant, Content: "done"},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 0
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read serially", registry.gates)
@@ -778,7 +849,7 @@ func TestAgentEngineRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 				{Role: schema.RoleAssistant, ToolCalls: tt.toolCalls},
 			}}
 			registry := &fakeRegistry{results: map[string]schema.ToolResult{}}
-			engine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+			engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "run echo", nil)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
@@ -793,7 +864,7 @@ func TestAgentEngineRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 
 func TestAgentEngineRejectsNilProviderResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "empty response") {
@@ -803,7 +874,7 @@ func TestAgentEngineRejectsNilProviderResponse(t *testing.T) {
 
 func TestAgentEngineWrapsProviderError(t *testing.T) {
 	provider := &fakeProvider{err: errors.New("provider unavailable")}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider unavailable") {
@@ -818,7 +889,7 @@ func TestAgentEngineDoesNotCallProviderAfterCancellation(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, Content: "must not run"},
 	}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(ctx, "hello", nil)
 	if !errors.Is(err, context.Canceled) {
@@ -855,7 +926,7 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 			}
 		},
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, "/workspace", false)
+	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 1
 
 	err := agentEngine.Run(ctx, "run both", nil)
@@ -867,7 +938,7 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 	}
 }
 
-func TestAgentEngineThinkingPhaseHidesToolsWithoutPollutingActionContext(t *testing.T) {
+func TestAgentEngineCarriesThinkingIntoActionContext(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, Content: "先规划，再行动。"},
 		{Role: schema.RoleAssistant, Content: "任务完成"},
@@ -875,7 +946,7 @@ func TestAgentEngineThinkingPhaseHidesToolsWithoutPollutingActionContext(t *test
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
 		{Name: "bash", Description: "execute command"},
 	}}
-	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
+	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
 
 	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -890,14 +961,84 @@ func TestAgentEngineThinkingPhaseHidesToolsWithoutPollutingActionContext(t *test
 		t.Fatalf("action tools = %#v, want bash", provider.availableTools[1])
 	}
 	actionContext := provider.requests[1]
-	if len(actionContext) != 2 {
-		t.Fatalf("action context = %#v, want only system and user messages", actionContext)
+	if len(actionContext) != 4 || actionContext[2].Role != schema.RoleAssistant ||
+		actionContext[2].Content != "先规划，再行动。" ||
+		actionContext[3].Role != schema.RoleUser || !strings.Contains(actionContext[3].Content, "进入 Action") {
+		t.Fatalf("action context = %#v", actionContext)
 	}
+}
+
+func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
+	workDir := t.TempDir()
+	skillDir := filepath.Join(workDir, "skills", "git-workflow")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const skillLocation = "skills/git-workflow/SKILL.md"
+	const skillBody = "progressive-body-secret"
+	if err := os.WriteFile(filepath.Join(workDir, filepath.FromSlash(skillLocation)),
+		[]byte("---\nname: git-workflow\ndescription: Handle Git workflows\n---\n"+skillBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readTool, err := tools.NewReadFileTool(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = readTool.Close() })
+	registry := tools.NewRegistry()
+	if err := registry.Register(readTool); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{responses: []*schema.Message{
+		{Role: schema.RoleAssistant, Content: "选择 git-workflow，先读取技能。"},
+		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
+			ID: "read-page-1", Name: "read_file",
+			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","limit":4}`),
+		}}},
+		{Role: schema.RoleAssistant, Content: "发现 continuation marker，继续读取。"},
+		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
+			ID: "read-page-2", Name: "read_file",
+			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","offset":5}`),
+		}}},
+		{Role: schema.RoleAssistant, Content: "技能已完整读取，可以执行。"},
+		{Role: schema.RoleAssistant, Content: "done"},
+	}}
+	agentEngine := engine.NewAgentEngine(provider, registry, workDir, true)
+
+	if err := agentEngine.Run(context.Background(), "提交代码", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(provider.requests) != 6 {
+		t.Fatalf("provider calls = %d, want 6", len(provider.requests))
+	}
+	for _, request := range provider.requests {
+		if strings.Contains(request[0].Content, skillBody) {
+			t.Fatalf("System Prompt leaked Skill Body: %q", request[0].Content)
+		}
+	}
+	firstObservation := findMessageByToolCallID(provider.requests[2], "read-page-1")
+	if firstObservation == nil || !strings.Contains(firstObservation.Content, "Use offset=5") ||
+		strings.Contains(firstObservation.Content, skillBody) {
+		t.Fatalf("first observation = %#v", firstObservation)
+	}
+	secondObservation := findMessageByToolCallID(provider.requests[4], "read-page-2")
+	if secondObservation == nil || secondObservation.Content != skillBody {
+		t.Fatalf("second observation = %#v", secondObservation)
+	}
+}
+
+func findMessageByToolCallID(messages []schema.Message, toolCallID string) *schema.Message {
+	for index := range messages {
+		if messages[index].ToolCallID == toolCallID {
+			return &messages[index]
+		}
+	}
+	return nil
 }
 
 func TestAgentEngineRejectsNilThinkingResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
+	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "empty response") {
@@ -915,7 +1056,7 @@ func TestAgentEngineRejectsToolCallsDuringThinking(t *testing.T) {
 		},
 	}}
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "bash"}}}
-	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
+	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "tool calls") {
@@ -952,7 +1093,7 @@ func TestAgentEngineRejectsInvalidThinkingMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
-			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", true)
+			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
 
 			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), tt.want) {
@@ -983,7 +1124,7 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
-			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, "/workspace", false)
+			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Action") || !strings.Contains(err.Error(), tt.want) {
@@ -1011,7 +1152,7 @@ func TestAgentEngineRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 			"bash": {ToolCallID: "call-1", Output: "main.go"},
 		},
 	}
-	engine := engine.NewAgentEngine(provider, registry, "/workspace", true)
+	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
 
 	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1030,8 +1171,16 @@ func TestAgentEngineRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 		t.Fatalf("second thinking observation = %#v", lastBeforeThinking)
 	}
 	secondActionContext := provider.requests[3]
-	lastBeforeAction := secondActionContext[len(secondActionContext)-1]
-	if lastBeforeAction.ToolCallID != "call-1" || lastBeforeAction.Content != "main.go" {
-		t.Fatalf("second action observation = %#v", lastBeforeAction)
+	observation := findMessageByToolCallID(secondActionContext, "call-1")
+	if observation == nil || observation.Content != "main.go" {
+		t.Fatalf("second action observation = %#v", observation)
+	}
+	if got := secondActionContext[len(secondActionContext)-2]; got.Role != schema.RoleAssistant ||
+		got.Content != "已有观察结果，接下来总结。" {
+		t.Fatalf("second action thinking = %#v", got)
+	}
+	if got := secondActionContext[len(secondActionContext)-1]; got.Role != schema.RoleUser ||
+		!strings.Contains(got.Content, "进入 Action") {
+		t.Fatalf("second action transition = %#v", got)
 	}
 }
