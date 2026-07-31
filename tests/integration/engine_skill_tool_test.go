@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
+	"go.uber.org/fx/fxtest"
 )
 
 type scriptedProvider struct {
@@ -45,11 +47,17 @@ func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 		[]byte("---\nname: git-workflow\ndescription: Handle Git workflows\n---\n"+skillBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	readTool, err := tools.NewReadFileTool(workDir)
+	lifecycle := fxtest.NewLifecycle(t)
+	workspace, err := tools.NewWorkspace(lifecycle, config.WorkDir(workDir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = readTool.Close() })
+	lifecycle.RequireStart()
+	t.Cleanup(lifecycle.RequireStop)
+	readTool, err := tools.NewReadTool(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registry, err := tools.NewRegistry(tools.RegistryParams{Tools: []tools.Tool{readTool}})
 	if err != nil {
 		t.Fatal(err)
@@ -57,12 +65,12 @@ func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 	provider := &scriptedProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, Content: blocks("选择 git-workflow，先读取技能。")},
 		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
-			ID: "read-page-1", Name: "read_file",
+			ID: "read-page-1", Name: "read",
 			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","limit":4}`),
 		}}},
 		{Role: schema.RoleAssistant, Content: blocks("发现 continuation marker，继续读取。")},
 		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
-			ID: "read-page-2", Name: "read_file",
+			ID: "read-page-2", Name: "read",
 			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","offset":5}`),
 		}}},
 		{Role: schema.RoleAssistant, Content: blocks("技能已完整读取，可以执行。")},

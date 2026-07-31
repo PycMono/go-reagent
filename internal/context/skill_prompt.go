@@ -16,8 +16,8 @@ const (
 const skillPromptInstructions = `
 # 可用专业技能 (Agent Skills)
 以下技能为特定任务提供专业执行指南。
-当任务与某项 <description> 匹配时，必须先使用 read_file 读取该技能的 <location>。
-如果 read_file 返回 "Use offset=N to continue"，必须继续读取，直到完整取得 SKILL.md 后再执行。
+当任务与某项 <description> 匹配时，必须先使用 read 读取该技能的 <location>。
+如果 read 返回 "Use offset=N to continue"，必须继续读取，直到完整取得 SKILL.md 后再执行。
 不要猜测未读取的技能内容，不要读取明显无关的技能。
 如果 <version> 与之前看到的版本不同，必须重新读取该技能。
 相对路径引用以 SKILL.md 所在目录为基准解析。

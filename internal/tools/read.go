@@ -8,9 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/internal/schema"
@@ -21,57 +18,37 @@ const (
 	defaultReadFileMaxBytes = 50 * 1024
 )
 
-// ReadFileTool 读取 os.Root 能力边界内的普通文本文件。
-type ReadFileTool struct {
-	root *os.Root
+type ReadDetails struct {
+	Path       string `json:"path"`
+	Lines      int    `json:"lines"`
+	Bytes      int    `json:"bytes"`
+	Truncated  bool   `json:"truncated"`
+	NextOffset int    `json:"nextOffset,omitempty"`
 }
 
-var _ Tool = (*ReadFileTool)(nil)
+// ReadTool reads regular UTF-8 text files from the shared workspace.
+type ReadTool struct{ workspace *Workspace }
 
-// NewReadFileTool 为 workDir 创建一个不能逃逸的文件读取工具。
-func NewReadFileTool(workDir string) (*ReadFileTool, error) {
-	workDir = strings.TrimSpace(workDir)
-	if workDir == "" {
-		return nil, errors.New("workDir 不能为空")
+var _ Tool = (*ReadTool)(nil)
+
+func NewReadTool(workspace *Workspace) (*ReadTool, error) {
+	if workspace == nil {
+		return nil, errors.New("workspace 不能为空")
 	}
-	absoluteWorkDir, err := filepath.Abs(workDir)
-	if err != nil {
-		return nil, fmt.Errorf("解析工作区失败: %w", err)
-	}
-	root, err := os.OpenRoot(absoluteWorkDir)
-	if err != nil {
-		return nil, fmt.Errorf("打开工作区失败: %w", err)
-	}
-	return &ReadFileTool{root: root}, nil
+	return &ReadTool{workspace: workspace}, nil
 }
 
-func (t *ReadFileTool) Name() string {
-	return "read_file"
-}
-
-func (t *ReadFileTool) Definition() schema.ToolDefinition {
+func (t *ReadTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
-		Name:         t.Name(),
+		Name:         "read",
 		Description:  "按行读取工作区内指定相对路径的 UTF-8 文本文件。单页最多 2000 行且最终输出不超过 50 KiB；出现 Use offset=N to continue 时请用 offset 继续读取。",
 		ParallelSafe: true,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "相对于工作区的文件路径，例如 cmd/reagent/main.go",
-				},
-				"offset": map[string]any{
-					"type":        "integer",
-					"minimum":     1,
-					"description": "可选，1-based 起始行，默认 1",
-				},
-				"limit": map[string]any{
-					"type":        "integer",
-					"minimum":     1,
-					"maximum":     defaultReadFileMaxLines,
-					"description": "可选，最多返回行数，默认且最大 2000",
-				},
+				"path":   map[string]any{"type": "string", "description": "相对于工作区的文件路径，例如 cmd/reagent/main.go"},
+				"offset": map[string]any{"type": "integer", "minimum": 1, "description": "可选，1-based 起始行，默认 1"},
+				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": defaultReadFileMaxLines, "description": "可选，最多返回行数，默认且最大 2000"},
 			},
 			"required":             []string{"path"},
 			"additionalProperties": false,
@@ -79,85 +56,81 @@ func (t *ReadFileTool) Definition() schema.ToolDefinition {
 	}
 }
 
-// Close 释放 ReadFileTool 持有的工作区 Root。
-func (t *ReadFileTool) Close() error {
-	if t == nil || t.root == nil {
-		return nil
+func (t *ReadTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+	output, details, err := t.executeWithDetails(ctx, args)
+	if err != nil {
+		return schema.ToolOutput{}, err
 	}
-	return t.root.Close()
+	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
 }
 
-func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
-	output, err := t.execute(ctx, args)
-	return textToolOutput(output), err
+func (t *ReadTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
+	output, _, err := t.executeWithDetails(ctx, args)
+	return output, err
 }
 
-func (t *ReadFileTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if t == nil || t.root == nil {
-		return "", errors.New("read_file 未初始化")
+func (t *ReadTool) executeWithDetails(ctx context.Context, args json.RawMessage) (string, ReadDetails, error) {
+	if t == nil || t.workspace == nil {
+		return "", ReadDetails{}, errors.New("read 未初始化")
 	}
 	if ctx == nil {
-		return "", errors.New("context 不能为空")
+		return "", ReadDetails{}, errors.New("context 不能为空")
 	}
-
 	input, err := decodeReadFileArgs(args)
 	if err != nil {
-		return "", err
+		return "", ReadDetails{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("读取已取消: %w", err)
+		return "", ReadDetails{}, fmt.Errorf("读取已取消: %w", err)
 	}
-
-	path := strings.TrimSpace(input.Path)
-	if path == "" {
-		return "", errors.New("path 不能为空")
+	path, err := cleanRelativePath(input.Path, true)
+	if err != nil {
+		return "", ReadDetails{}, err
 	}
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
-		return "", errors.New("path 必须是相对于工作区的相对路径")
-	}
-	offset := 1
+	offset, limit := 1, defaultReadFileMaxLines
 	if input.Offset != nil {
 		offset = *input.Offset
 	}
 	if offset < 1 {
-		return "", errors.New("offset 必须大于等于 1")
+		return "", ReadDetails{}, errors.New("offset 必须大于等于 1")
 	}
-	limit := defaultReadFileMaxLines
 	if input.Limit != nil {
 		limit = *input.Limit
 	}
 	if limit < 1 || limit > defaultReadFileMaxLines {
-		return "", fmt.Errorf("limit 必须在 1 到 %d 之间", defaultReadFileMaxLines)
+		return "", ReadDetails{}, fmt.Errorf("limit 必须在 1 到 %d 之间", defaultReadFileMaxLines)
 	}
-
-	file, err := t.root.Open(path)
+	file, err := t.workspace.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("打开文件失败: %w", err)
+		return "", ReadDetails{}, fmt.Errorf("打开文件失败: %w", err)
 	}
 	defer file.Close()
-
 	info, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("检查文件失败: %w", err)
+		return "", ReadDetails{}, fmt.Errorf("检查文件失败: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("只允许读取普通文件")
+		return "", ReadDetails{}, errors.New("只允许读取普通文件")
 	}
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("读取已取消: %w", err)
-	}
-
 	reader := bufio.NewReader(file)
 	for line := 1; line < offset; line++ {
 		exists, err := discardReadFileLine(ctx, reader)
 		if err != nil {
-			return "", err
+			return "", ReadDetails{}, err
 		}
 		if !exists {
-			return "", nil
+			return "", ReadDetails{Path: path}, nil
 		}
 	}
-	return readFilePage(ctx, reader, offset, limit)
+	output, lines, contentBytes, truncated, nextOffset, err := readFilePage(ctx, reader, offset, limit)
+	if err != nil {
+		return "", ReadDetails{}, err
+	}
+	details := ReadDetails{Path: path, Lines: lines, Bytes: contentBytes, Truncated: truncated}
+	if truncated {
+		details.NextOffset = nextOffset
+	}
+	return output, details, nil
 }
 
 type readFileArgs struct {
@@ -169,7 +142,6 @@ type readFileArgs struct {
 func decodeReadFileArgs(args json.RawMessage) (readFileArgs, error) {
 	decoder := json.NewDecoder(bytes.NewReader(args))
 	decoder.DisallowUnknownFields()
-
 	var input readFileArgs
 	if err := decoder.Decode(&input); err != nil {
 		return readFileArgs{}, fmt.Errorf("参数解析失败: %w", err)
@@ -184,15 +156,12 @@ func decodeReadFileArgs(args json.RawMessage) (readFileArgs, error) {
 	return input, nil
 }
 
-func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit int) (string, error) {
-	lines := make([][]byte, 0, limit)
-	contentBytes := 0
-	hasMore := false
-
+func readFilePage(ctx context.Context, reader *bufio.Reader, offset, limit int) (string, int, int, bool, int, error) {
+	lines, contentBytes, hasMore := make([][]byte, 0, limit), 0, false
 	for len(lines) < limit {
 		line, exists, tooLong, err := readFileLine(ctx, reader, defaultReadFileMaxBytes)
 		if err != nil {
-			return "", err
+			return "", 0, 0, false, 0, err
 		}
 		if !exists {
 			break
@@ -200,39 +169,34 @@ func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit i
 		if tooLong || contentBytes+len(line) > defaultReadFileMaxBytes {
 			hasMore = true
 			if len(lines) == 0 {
-				return "", errors.New("单行超过 read_file 单页限制")
+				return "", 0, 0, false, 0, errors.New("单行超过 read 单页限制")
 			}
 			break
 		}
-		lines = append(lines, line)
-		contentBytes += len(line)
+		lines, contentBytes = append(lines, line), contentBytes+len(line)
 	}
-
 	if !hasMore && len(lines) == limit {
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("读取已取消: %w", err)
+			return "", 0, 0, false, 0, fmt.Errorf("读取已取消: %w", err)
 		}
 		_, err := reader.Peek(1)
 		switch {
 		case err == nil:
 			hasMore = true
 		case errors.Is(err, io.EOF):
-			hasMore = false
 		default:
-			return "", fmt.Errorf("探测后续文件内容失败: %w", err)
+			return "", 0, 0, false, 0, fmt.Errorf("探测后续文件内容失败: %w", err)
 		}
 	}
-
 	if len(lines) == 0 {
-		return "", nil
+		return "", 0, 0, false, 0, nil
 	}
 	if !hasMore {
 		if err := validateReadFileLines(lines); err != nil {
-			return "", err
+			return "", 0, 0, false, 0, err
 		}
-		return string(joinReadFileLines(lines)), nil
+		return string(joinReadFileLines(lines)), len(lines), contentBytes, false, 0, nil
 	}
-
 	for len(lines) > 0 {
 		content := joinReadFileLines(lines)
 		end := offset + len(lines) - 1
@@ -240,13 +204,13 @@ func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit i
 		separator := readFileMarkerSeparator(content)
 		if len(content)+len(separator)+len(marker) <= defaultReadFileMaxBytes {
 			if err := validateReadFileLines(lines); err != nil {
-				return "", err
+				return "", 0, 0, false, 0, err
 			}
-			return string(content) + separator + marker, nil
+			return string(content) + separator + marker, len(lines), len(content), true, end + 1, nil
 		}
 		lines = lines[:len(lines)-1]
 	}
-	return "", errors.New("单行超过 read_file 单页限制")
+	return "", 0, 0, false, 0, errors.New("单行超过 read 单页限制")
 }
 
 func validateReadFileLines(lines [][]byte) error {
@@ -326,7 +290,7 @@ func joinReadFileLines(lines [][]byte) []byte {
 	return content
 }
 
-func readFileContinuationMarker(start int, end int, next int) string {
+func readFileContinuationMarker(start, end, next int) string {
 	return fmt.Sprintf("[Showing lines %d-%d. Use offset=%d to continue.]", start, end, next)
 }
 
