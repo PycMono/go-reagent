@@ -19,7 +19,7 @@ func TestNewRegistryRegistersToolsAndClosesThemOnStop(t *testing.T) {
 	lifecycle.RequireStart()
 
 	definitions := registry.GetAvailableTools()
-	wantNames := []string{"apply_patch", "edit_file", "exec", "process", "read", "write"}
+	wantNames := []string{"apply_patch", "edit", "exec", "process", "read", "write"}
 	if len(definitions) != len(wantNames) {
 		t.Fatalf("definitions = %#v", definitions)
 	}
