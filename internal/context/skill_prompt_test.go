@@ -1,0 +1,99 @@
+package context
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
+	snapshot := newSkillSnapshot([]SkillSummary{
+		{
+			Name:        "zeta",
+			Description: `Use <code> & "tests" with 'care'`,
+			Location:    "skills/zeta/SKILL.md",
+			Version:     "sha256:fedcba9876543210",
+		},
+		{
+			Name:        "alpha",
+			Description: "Alpha skill",
+			Location:    "skills/alpha/SKILL.md",
+			Version:     "sha256:0123456789abcdef",
+		},
+	}, nil)
+
+	prompt, report := renderSkillPrompt(snapshot)
+	for _, want := range []string{
+		"<available_skills>", "<name>alpha</name>", "<name>zeta</name>",
+		`Use &lt;code&gt; &amp; &quot;tests&quot; with &apos;care&apos;`,
+		"<location>skills/zeta/SKILL.md</location>",
+		"<version>sha256:fedcba9876543210</version>",
+		"必须先使用 read_file", "Use offset=N to continue", "SKILL.md 所在目录",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q: %q", want, prompt)
+		}
+	}
+	if strings.Index(prompt, "<name>alpha</name>") >= strings.Index(prompt, "<name>zeta</name>") {
+		t.Fatalf("skills not sorted: %q", prompt)
+	}
+	if report.IncludedSkills != 2 || report.OmittedSkills != 0 || report.Truncated {
+		t.Fatalf("report = %#v", report)
+	}
+}
+
+func TestRenderSkillPromptOmitsEmptyCatalog(t *testing.T) {
+	for _, snapshot := range []*SkillSnapshot{nil, newSkillSnapshot(nil, nil)} {
+		prompt, report := renderSkillPrompt(snapshot)
+		if prompt != "" || report != (SkillPromptReport{}) {
+			t.Fatalf("renderSkillPrompt() = %q, %#v", prompt, report)
+		}
+	}
+}
+
+func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
+	skills := make([]SkillSummary, 0, maxSkillsInPrompt+10)
+	for index := 0; index < maxSkillsInPrompt+10; index++ {
+		skills = append(skills, SkillSummary{
+			Name:        fmt.Sprintf("skill-%03d", index),
+			Description: strings.Repeat("说明", 512),
+			Location:    fmt.Sprintf("skills/skill-%03d/SKILL.md", index),
+			Version:     "sha256:0123456789abcdef",
+		})
+	}
+
+	prompt, report := renderSkillPrompt(newSkillSnapshot(skills, nil))
+	if got := utf8.RuneCountInString(prompt); got > maxSkillsPromptChars {
+		t.Fatalf("prompt runes = %d, want <= %d", got, maxSkillsPromptChars)
+	}
+	if report.IncludedSkills > maxSkillsInPrompt || report.OmittedSkills == 0 || !report.Truncated {
+		t.Fatalf("report = %#v", report)
+	}
+	if !utf8.ValidString(prompt) || !strings.Contains(prompt, "省略") {
+		t.Fatalf("invalid budgeted prompt ending: %q", prompt[len(prompt)-200:])
+	}
+}
+
+func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *testing.T) {
+	skills := make([]SkillSummary, 0, 10)
+	for index := 0; index < 10; index++ {
+		skills = append(skills, SkillSummary{
+			Name:        fmt.Sprintf("skill-%02d", index),
+			Description: strings.Repeat("very-long-description-", 100),
+			Location:    fmt.Sprintf("skills/skill-%02d/SKILL.md", index),
+			Version:     "sha256:0123456789abcdef",
+		})
+	}
+
+	prompt, report := renderSkillPrompt(newSkillSnapshot(skills, nil))
+	if report.IncludedSkills != 10 || report.OmittedSkills != 0 {
+		t.Fatalf("report = %#v", report)
+	}
+	if !strings.Contains(prompt, "skills/skill-09/SKILL.md") {
+		t.Fatalf("later identity was displaced by descriptions: %q", prompt)
+	}
+	if report.ShortenedDescriptions == 0 || !report.Truncated {
+		t.Fatalf("descriptions were not shortened: %#v", report)
+	}
+}

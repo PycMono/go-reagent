@@ -21,20 +21,16 @@ const corePrompt = `# 核心身份
 
 // PromptComposer builds one System Prompt from the current workspace state.
 type PromptComposer struct {
-	workDir     string
-	skillLoader *SkillLoader
+	workDir string
 }
 
 // NewPromptComposer creates a workspace-scoped Prompt Composer.
 func NewPromptComposer(workDir string) *PromptComposer {
-	return &PromptComposer{
-		workDir:     workDir,
-		skillLoader: NewSkillLoader(workDir),
-	}
+	return &PromptComposer{workDir: workDir}
 }
 
-// Build composes the core instructions, AGENTS.md, and valid Agent Skills.
-func (c *PromptComposer) Build() schema.Message {
+// Build composes the core instructions, AGENTS.md, and the supplied Skill catalog.
+func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPromptReport) {
 	var builder strings.Builder
 	builder.WriteString(corePrompt)
 
@@ -49,12 +45,13 @@ func (c *PromptComposer) Build() schema.Message {
 		}
 	}
 
-	if skills := c.skillLoader.LoadAll(); skills != "" {
-		builder.WriteString(skills)
+	skillPrompt, report := renderSkillPrompt(snapshot)
+	if skillPrompt != "" {
+		builder.WriteString(skillPrompt)
 	}
 
 	return schema.Message{
 		Role:    schema.RoleSystem,
 		Content: builder.String(),
-	}
+	}, report
 }
