@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -63,7 +64,7 @@ func (p *ClaudeProvider) Generate(
 	for _, block := range response.Content {
 		switch block.Type {
 		case "text":
-			result.Content += block.Text
+			result.Content = append(result.Content, schema.TextBlock(block.Text))
 		case "tool_use":
 			result.ToolCalls = append(result.ToolCalls, schema.ToolCall{
 				ID:        block.ID,
@@ -85,23 +86,31 @@ func toClaudeMessages(messages []schema.Message) (
 	var system []anthropic.TextBlockParam
 
 	for _, message := range messages {
+		text, err := schema.TextContent(message.Content)
+		if err != nil {
+			return nil, nil, fmt.Errorf("message content: %w", err)
+		}
 		switch message.Role {
 		case schema.RoleSystem:
-			system = append(system, anthropic.TextBlockParam{Text: message.Content})
+			system = append(system, anthropic.TextBlockParam{Text: text})
 		case schema.RoleUser:
-			if message.ToolCallID != "" {
-				result = append(result, anthropic.NewUserMessage(
-					anthropic.NewToolResultBlock(message.ToolCallID, message.Content, false),
-				))
-			} else {
-				result = append(result, anthropic.NewUserMessage(
-					anthropic.NewTextBlock(message.Content),
-				))
+			result = append(result, anthropic.NewUserMessage(
+				anthropic.NewTextBlock(text),
+			))
+		case schema.RoleTool:
+			if message.ToolCallID == "" {
+				return nil, nil, errors.New("tool message requires tool_call_id")
 			}
+			result = append(result, anthropic.NewUserMessage(
+				anthropic.NewToolResultBlock(message.ToolCallID, text, message.IsError),
+			))
 		case schema.RoleAssistant:
+			if text == "" && len(message.ToolCalls) == 0 {
+				return nil, nil, errors.New("assistant message contains no content or tool calls")
+			}
 			var blocks []anthropic.ContentBlockParamUnion
-			if message.Content != "" {
-				blocks = append(blocks, anthropic.NewTextBlock(message.Content))
+			if text != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(text))
 			}
 			for _, toolCall := range message.ToolCalls {
 				var input any
@@ -109,9 +118,6 @@ func toClaudeMessages(messages []schema.Message) (
 					return nil, nil, fmt.Errorf("tool call %q arguments: %w", toolCall.ID, err)
 				}
 				blocks = append(blocks, anthropic.NewToolUseBlock(toolCall.ID, input, toolCall.Name))
-			}
-			if len(blocks) == 0 {
-				return nil, nil, fmt.Errorf("assistant message contains no content or tool calls")
 			}
 			result = append(result, anthropic.NewAssistantMessage(blocks...))
 		default:

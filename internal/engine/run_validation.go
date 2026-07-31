@@ -20,7 +20,11 @@ func validateThinkingResponse(response *schema.Message) error {
 	if len(response.ToolCalls) != 0 {
 		return errors.New("provider returned tool calls while tools were disabled")
 	}
-	if strings.TrimSpace(response.Content) == "" {
+	content, err := schema.TextContent(response.Content)
+	if err != nil {
+		return fmt.Errorf("response content: %w", err)
+	}
+	if strings.TrimSpace(content) == "" {
 		return errors.New("response must contain a non-empty textual plan")
 	}
 	return nil

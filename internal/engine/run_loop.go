@@ -60,7 +60,7 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 		systemMessage,
 		{
 			Role:    schema.RoleUser,
-			Content: userPrompt,
+			Content: []schema.ContentBlock{schema.TextBlock(userPrompt)},
 		},
 	}
 
@@ -104,10 +104,14 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 				return fmt.Errorf("Thinking 阶段生成失败: %w", err)
 			}
 
-			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkResp.Content)
+			thinkingText, err := schema.TextContent(thinkResp.Content)
+			if err != nil {
+				return fmt.Errorf("Thinking 阶段生成失败: response content: %w", err)
+			}
+			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkingText)
 			contextHistory = append(contextHistory, *thinkResp, schema.Message{
 				Role:    schema.RoleUser,
-				Content: "请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。",
+				Content: []schema.ContentBlock{schema.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
 			})
 		}
 
@@ -136,8 +140,12 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 
 		contextHistory = append(contextHistory, *actionResp)
 
-		if actionResp.Content != "" && reporter != nil {
-			reporter.OnMessage(ctx, actionResp.Content)
+		actionText, err := schema.TextContent(actionResp.Content)
+		if err != nil {
+			return fmt.Errorf("Action 阶段生成失败: response content: %w", err)
+		}
+		if actionText != "" && reporter != nil {
+			reporter.OnMessage(ctx, actionText)
 		}
 
 		if len(actionResp.ToolCalls) == 0 {

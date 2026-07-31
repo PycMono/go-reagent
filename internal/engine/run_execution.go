@@ -166,23 +166,29 @@ func (e *AgentEngine) executeToolCall(
 		reporter.OnToolCall(ctx, call.Name, string(call.Arguments))
 	}
 	result := e.registry.Execute(ctx, call)
+	resultText, err := schema.TextContent(result.Content)
+	if err != nil {
+		resultText = fmt.Sprintf("tool result content error: %v", err)
+	}
 	if reporter != nil {
-		reporter.OnToolResult(ctx, call.Name, result.Output, result.IsError)
+		reporter.OnToolResult(ctx, call.Name, resultText, result.IsError)
 	}
 	if result.IsError {
 		logsdk.Error(ctx,
 			fmt.Sprintf("  -> [Go-%d] ❌ 工具执行失败", index),
-			append(commonFields, logsdk.Any("result", result.Output))...,
+			append(commonFields, logsdk.Any("result", resultText))...,
 		)
 	} else {
 		logsdk.Info(ctx,
 			fmt.Sprintf("  -> [Go-%d] ✅ 工具执行成功", index),
-			append(commonFields, logsdk.Any("result_bytes", len(result.Output)))...,
+			append(commonFields, logsdk.Any("result_bytes", len(resultText)))...,
 		)
 	}
 	return schema.Message{
-		Role:       schema.RoleUser,
-		Content:    result.Output,
+		Role:       schema.RoleTool,
+		Content:    result.Content,
 		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		IsError:    result.IsError,
 	}
 }
