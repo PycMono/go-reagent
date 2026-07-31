@@ -55,7 +55,7 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 			Content: blocks("starting tool"),
 			ToolCalls: []schema.ToolCall{{
 				ID:        "call-1",
-				Name:      "read_file",
+				Name:      "read",
 				Arguments: json.RawMessage(`{"path":"a.txt"}`),
 			}},
 		},
@@ -63,9 +63,9 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{{Name: "read_file"}},
+		definitions: []schema.ToolDefinition{{Name: "read"}},
 		results: map[string]schema.ToolResult{
-			"read_file": toolResult(schema.ToolCall{ID: "call-1", Name: "read_file"}, "file A", false),
+			"read": toolResult(schema.ToolCall{ID: "call-1", Name: "read"}, "file A", false),
 		},
 	}
 	reporter := &recordingReporter{}
@@ -75,7 +75,7 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	call := schema.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	result := toolResult(call, "file A", false)
 	want := []schema.AgentEvent{
 		schema.NewThinkingEvent(),

@@ -50,7 +50,7 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
 	ctx := context.Background()
-	call := schema.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	reporter.Report(ctx, schema.NewThinkingEvent())
 	reporter.Report(ctx, schema.NewToolUpdateEvent(call, schema.ToolUpdate{Content: []schema.ContentBlock{schema.TextBlock("chunk")}}))
 	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
@@ -67,8 +67,8 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 		t.Fatalf("request count = %d, want 3", len(requests))
 	}
 	wantContents := []string{
-		"🛠️ **正在执行工具**：`read_file`\n参数：`{\"path\":\"a.txt\"}`",
-		"⚠️ **执行报错** (read_file)：\npermission denied",
+		"🛠️ **正在执行工具**：`read`\n参数：`{\"path\":\"a.txt\"}`",
+		"⚠️ **执行报错** (read)：\npermission denied",
 		"done",
 	}
 	for index, want := range wantContents {
@@ -127,7 +127,7 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
-	call := schema.ToolCall{ID: "call-1", Name: "read_file"}
+	call := schema.ToolCall{ID: "call-1", Name: "read"}
 	reporter.Report(context.Background(), schema.NewToolEndEvent(call, schema.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
@@ -140,7 +140,7 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	}))
 
 	errorRequest := <-requests
-	if got := errorRequest.Markdown.Content; got != "⚠️ **执行报错** (read_file)：\npermission denied" {
+	if got := errorRequest.Markdown.Content; got != "⚠️ **执行报错** (read)：\npermission denied" {
 		t.Fatalf("error content = %q", got)
 	}
 	longRequest := <-requests
