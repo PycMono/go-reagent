@@ -9,6 +9,7 @@ import (
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
+// TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder 验证系统提示词按核心指令、项目指南和 Skill 目录的顺序组合，且不会泄露 Skill Body。
 func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("Use project conventions."), 0o600); err != nil {
@@ -50,6 +51,7 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	}
 }
 
+// TestPromptComposerDoesNotRequireUnavailableTools 验证核心提示词不会要求模型调用未提供的工具。
 func TestPromptComposerDoesNotRequireUnavailableTools(t *testing.T) {
 	message, _ := NewPromptComposer(t.TempDir()).Build(nil)
 	for _, unavailable := range []string{"write_file", "test -f", "ls 或", "调用 bash"} {
@@ -59,6 +61,7 @@ func TestPromptComposerDoesNotRequireUnavailableTools(t *testing.T) {
 	}
 }
 
+// TestPromptComposerOmitsAbsentWorkspaceSections 验证缺少 AGENTS.md 和 Skill 时只生成核心提示词。
 func TestPromptComposerOmitsAbsentWorkspaceSections(t *testing.T) {
 	message, report := NewPromptComposer(t.TempDir()).Build(newSkillSnapshot(nil, nil))
 	if message.Role != schema.RoleSystem || !strings.Contains(message.Content, "# 核心身份") {
@@ -74,6 +77,7 @@ func TestPromptComposerOmitsAbsentWorkspaceSections(t *testing.T) {
 	}
 }
 
+// TestPromptComposerReadsAgentsFileOnEveryBuild 验证每次构建都会重新读取 AGENTS.md，而不是复用旧内容。
 func TestPromptComposerReadsAgentsFileOnEveryBuild(t *testing.T) {
 	workDir := t.TempDir()
 	path := filepath.Join(workDir, "AGENTS.md")
@@ -96,6 +100,7 @@ func TestPromptComposerReadsAgentsFileOnEveryBuild(t *testing.T) {
 	}
 }
 
+// TestPromptComposerRejectsAgentsSymlinks 验证组合器不会读取指向工作区内外文件的 AGENTS.md 软链接。
 func TestPromptComposerRejectsAgentsSymlinks(t *testing.T) {
 	t.Run("outside workspace", func(t *testing.T) {
 		outsidePath := filepath.Join(t.TempDir(), "outside-agents.md")

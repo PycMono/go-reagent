@@ -2,6 +2,7 @@ package context
 
 import "testing"
 
+// TestSkillSnapshotReturnsCopies 验证快照在构造和读取时都会复制切片，避免外部修改内部状态。
 func TestSkillSnapshotReturnsCopies(t *testing.T) {
 	originalSkills := []SkillSummary{{
 		Name:        "review",
@@ -33,6 +34,7 @@ func TestSkillSnapshotReturnsCopies(t *testing.T) {
 	}
 }
 
+// TestNilSkillSnapshotAccessorsReturnNil 验证空快照接收者的访问方法安全返回 nil。
 func TestNilSkillSnapshotAccessorsReturnNil(t *testing.T) {
 	var snapshot *SkillSnapshot
 	if snapshot.Skills() != nil || snapshot.Diagnostics() != nil {

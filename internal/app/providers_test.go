@@ -92,8 +92,14 @@ func TestNewRegistryRegistersToolsAndClosesThemOnStop(t *testing.T) {
 	lifecycle.RequireStart()
 
 	definitions := registry.GetAvailableTools()
-	if len(definitions) != 2 || definitions[0].Name != "edit_file" || definitions[1].Name != "read_file" {
+	wantNames := []string{"apply_patch", "edit_file", "exec", "process", "read_file", "write_file"}
+	if len(definitions) != len(wantNames) {
 		t.Fatalf("definitions = %#v", definitions)
+	}
+	for index, want := range wantNames {
+		if definitions[index].Name != want {
+			t.Fatalf("definitions[%d].Name = %q, want %q", index, definitions[index].Name, want)
+		}
 	}
 	lifecycle.RequireStop()
 
@@ -104,6 +110,22 @@ func TestNewRegistryRegistersToolsAndClosesThemOnStop(t *testing.T) {
 	})
 	if !result.IsError {
 		t.Fatalf("result after Stop = %#v, want closed-resource error", result)
+	}
+	execResult := registry.Execute(context.Background(), schema.ToolCall{
+		ID:        "exec-after-stop",
+		Name:      "exec",
+		Arguments: []byte(`{"command":"true"}`),
+	})
+	if !execResult.IsError {
+		t.Fatalf("exec result after Stop = %#v, want closed-resource error", execResult)
+	}
+	processResult := registry.Execute(context.Background(), schema.ToolCall{
+		ID:        "process-after-stop",
+		Name:      "process",
+		Arguments: []byte(`{"action":"list"}`),
+	})
+	if !processResult.IsError {
+		t.Fatalf("process result after Stop = %#v, want closed-resource error", processResult)
 	}
 }
 
@@ -149,7 +171,7 @@ func TestNewPromptUsesEnvironmentOverrideAndDefault(t *testing.T) {
 	}
 
 	t.Setenv("AGENT_PROMPT", "")
-	if got := string(NewPrompt()); !strings.Contains(got, "a.txt") || !strings.Contains(got, "同一个 Action") {
+	if got := string(NewPrompt()); !strings.Contains(got, "ping.go") || !strings.Contains(got, "git 提交") {
 		t.Fatalf("default prompt = %q", got)
 	}
 }

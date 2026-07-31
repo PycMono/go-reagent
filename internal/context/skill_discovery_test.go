@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestSkillLoaderDiscoversSourcesWithPrecedence 验证多个来源的同名 Skill 按预定优先级选取，并记录被覆盖项。
 func TestSkillLoaderDiscoversSourcesWithPrecedence(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, ".claw/skills/review/SKILL.md", "review", "legacy", "legacy-body-secret")
@@ -37,6 +38,7 @@ func TestSkillLoaderDiscoversSourcesWithPrecedence(t *testing.T) {
 	requireDiagnosticCodes(t, snapshot.Diagnostics(), "skill_shadowed")
 }
 
+// TestSkillLoaderExcludesSameSourceDuplicateNames 验证同一来源存在重复名称时禁用该名称及低优先级补位项。
 func TestSkillLoaderExcludesSameSourceDuplicateNames(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/one/SKILL.md", "duplicate", "first", "first body")
@@ -53,6 +55,7 @@ func TestSkillLoaderExcludesSameSourceDuplicateNames(t *testing.T) {
 	requireDiagnosticCodes(t, snapshot.Diagnostics(), "skill_duplicate_name", "skill_shadowed")
 }
 
+// TestSkillLoaderReportsShadowedDuplicatesInLowerPrioritySource 验证低优先级来源的重复项会同时报告重名和被覆盖诊断。
 func TestSkillLoaderReportsShadowedDuplicatesInLowerPrioritySource(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/review/SKILL.md", "review", "winner", "winner body")
@@ -69,6 +72,7 @@ func TestSkillLoaderReportsShadowedDuplicatesInLowerPrioritySource(t *testing.T)
 	requireDiagnosticCodes(t, snapshot.Diagnostics(), "skill_duplicate_name", "skill_shadowed")
 }
 
+// TestSkillLoaderSortsSkillsAndVersionsContent 验证 Skill 按名称稳定排序，且内容变化会更新摘要版本。
 func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/zeta/SKILL.md", "zeta", "last", "zeta body")
@@ -101,6 +105,7 @@ func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 	}
 }
 
+// TestSkillLoaderReturnsEmptySnapshotWithoutSkills 验证没有 Skill 目录时返回非空但内容为空的快照。
 func TestSkillLoaderReturnsEmptySnapshotWithoutSkills(t *testing.T) {
 	snapshot, err := NewSkillLoader(t.TempDir()).Discover(testSkillEnvironment())
 	if err != nil {
@@ -111,6 +116,7 @@ func TestSkillLoaderReturnsEmptySnapshotWithoutSkills(t *testing.T) {
 	}
 }
 
+// TestSkillLoaderReportsInvalidSkillsWithoutFailingSiblings 验证无效 Skill 只产生诊断，不影响同目录中的有效 Skill。
 func TestSkillLoaderReportsInvalidSkillsWithoutFailingSiblings(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/valid/SKILL.md", "valid", "valid skill", "valid body")
@@ -130,6 +136,7 @@ func TestSkillLoaderReportsInvalidSkillsWithoutFailingSiblings(t *testing.T) {
 		"skill_frontmatter_invalid", "skill_binary_content", "skill_not_utf8", "skill_file_too_large")
 }
 
+// TestSkillLoaderRejectsSymlinkEntries 验证发现流程跳过指向工作区内外文件的 SKILL.md 软链接。
 func TestSkillLoaderRejectsSymlinkEntries(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/shared/SKILL.md", "shared", "shared", "shared body")
@@ -163,6 +170,7 @@ func TestSkillLoaderRejectsSymlinkEntries(t *testing.T) {
 	}
 }
 
+// TestSkillLoaderFiltersIneligibleSkills 验证操作系统、二进制、环境变量和模型调用开关会过滤不合格 Skill。
 func TestSkillLoaderFiltersIneligibleSkills(t *testing.T) {
 	workDir := t.TempDir()
 	writeRawWorkspaceSkill(t, workDir, "skills/os/SKILL.md", `---
@@ -220,6 +228,7 @@ disabled-body-secret`)
 	}
 }
 
+// TestSkillLoaderMapsWindowsToWin32AndAcceptsRequirements 验证 Windows 名称兼容转换及完整环境条件匹配。
 func TestSkillLoaderMapsWindowsToWin32AndAcceptsRequirements(t *testing.T) {
 	workDir := t.TempDir()
 	writeRawWorkspaceSkill(t, workDir, "skills/windows/SKILL.md", `---
@@ -248,6 +257,7 @@ Body`)
 	}
 }
 
+// TestSkillLoaderReturnsErrorForMissingWorkspace 验证工作区不存在时发现流程返回错误。
 func TestSkillLoaderReturnsErrorForMissingWorkspace(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	if _, err := NewSkillLoader(missing).Discover(testSkillEnvironment()); err == nil {
@@ -255,17 +265,20 @@ func TestSkillLoaderReturnsErrorForMissingWorkspace(t *testing.T) {
 	}
 }
 
+// writeWorkspaceSkill 根据结构化字段生成测试用 SKILL.md 并写入指定工作区路径。
 func writeWorkspaceSkill(t *testing.T, workDir, relativePath, name, description, body string) {
 	t.Helper()
 	writeRawWorkspaceSkill(t, workDir, relativePath,
 		fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n%s", name, description, body))
 }
 
+// writeRawWorkspaceSkill 将原始字符串内容作为测试用 SKILL.md 写入工作区。
 func writeRawWorkspaceSkill(t *testing.T, workDir, relativePath, content string) {
 	t.Helper()
 	writeRawWorkspaceBytes(t, workDir, relativePath, []byte(content))
 }
 
+// writeRawWorkspaceBytes 创建父目录并写入原始字节，供无效编码和超大文件测试使用。
 func writeRawWorkspaceBytes(t *testing.T, workDir, relativePath string, content []byte) {
 	t.Helper()
 	path := filepath.Join(workDir, filepath.FromSlash(relativePath))
@@ -277,6 +290,7 @@ func writeRawWorkspaceBytes(t *testing.T, workDir, relativePath string, content 
 	}
 }
 
+// testSkillEnvironment 返回允许所有命令和环境变量的固定 Linux 测试环境。
 func testSkillEnvironment() SkillEnvironment {
 	return SkillEnvironment{
 		GOOS:      "linux",
@@ -285,6 +299,7 @@ func testSkillEnvironment() SkillEnvironment {
 	}
 }
 
+// requireDiagnosticCodes 断言诊断列表包含测试期望的全部错误代码。
 func requireDiagnosticCodes(t *testing.T, diagnostics []SkillDiagnostic, codes ...string) {
 	t.Helper()
 	available := make(map[string]bool, len(diagnostics))

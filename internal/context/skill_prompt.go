@@ -42,6 +42,8 @@ var xmlTextReplacer = strings.NewReplacer(
 	"'", "&apos;",
 )
 
+// renderSkillPrompt 将 Skill 快照渲染成注入系统提示词的 XML 目录，
+// 在技能数量和字符预算内优先保留身份信息，再按剩余空间补充描述。
 func renderSkillPrompt(snapshot *SkillSnapshot) (string, SkillPromptReport) {
 	skills := snapshot.Skills()
 	if len(skills) == 0 {
@@ -93,6 +95,8 @@ func renderSkillPrompt(snapshot *SkillSnapshot) (string, SkillPromptReport) {
 	return prompt, report
 }
 
+// selectSkillIdentities 按顺序选择能够完整放入数量及字符预算的 Skill 身份信息，
+// 身份信息包括名称、位置和版本，不为描述占用空间。
 func selectSkillIdentities(skills []SkillSummary) []SkillSummary {
 	maximum := len(skills)
 	if maximum > maxSkillsInPrompt {
@@ -111,6 +115,7 @@ func selectSkillIdentities(skills []SkillSummary) []SkillSummary {
 	return selected
 }
 
+// longestDescriptionPrefix 使用二分查找计算描述在剩余字符预算内可保留的最长前缀长度。
 func longestDescriptionPrefix(skill SkillSummary, runes []rune, available int) int {
 	low, high := 0, len(runes)
 	for low < high {
@@ -124,12 +129,15 @@ func longestDescriptionPrefix(skill SkillSummary, runes []rune, available int) i
 	return low
 }
 
+// descriptionRuneDelta 计算某段描述经过 XML 清理和转义后实际增加的字符数量。
 func descriptionRuneDelta(skill SkillSummary, description string) int {
 	empty := utf8.RuneCountInString(renderSkillEntry(skill, ""))
 	filled := utf8.RuneCountInString(renderSkillEntry(skill, description))
 	return filled - empty
 }
 
+// renderSkillCatalog 将选中的 Skill 和对应描述拼接成完整 XML 目录，
+// 并在存在未收录 Skill 时附加省略数量提示。
 func renderSkillCatalog(skills []SkillSummary, descriptions []string, omitted int) string {
 	var builder strings.Builder
 	builder.WriteString(skillPromptInstructions)
@@ -147,6 +155,7 @@ func renderSkillCatalog(skills []SkillSummary, descriptions []string, omitted in
 	return builder.String()
 }
 
+// renderSkillEntry 将单个 Skill 摘要清理并转义为安全的 XML <skill> 节点。
 func renderSkillEntry(skill SkillSummary, description string) string {
 	return fmt.Sprintf(
 		"  <skill>\n    <name>%s</name>\n    <description>%s</description>\n    <location>%s</location>\n    <version>%s</version>\n  </skill>\n",

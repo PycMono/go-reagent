@@ -24,12 +24,14 @@ type PromptComposer struct {
 	workDir string
 }
 
-// NewPromptComposer creates a workspace-scoped Prompt Composer.
+// NewPromptComposer 创建一个绑定指定工作区的 Prompt 组合器，
+// 后续构建系统提示词时会从该工作区读取项目说明和 Skill 信息。
 func NewPromptComposer(workDir string) *PromptComposer {
 	return &PromptComposer{workDir: workDir}
 }
 
-// Build composes the core instructions, AGENTS.md, and the supplied Skill catalog.
+// Build 将内置核心指令、工作区 AGENTS.md 和传入的 Skill 目录组合成系统消息，
+// 同时返回 Skill Prompt 的收录、截断和省略统计。
 func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPromptReport) {
 	var builder strings.Builder
 	builder.WriteString(corePrompt)

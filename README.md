@@ -2,7 +2,7 @@
 
 `go-reagent` 是一个用 Go 编写的企业级 Agent Harness 内核，用于统一承载大模型推理、工具调用与 Agent 生命周期。
 
-项目目前处于最小核心搭建阶段：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry，以及受限的 `read_file` 和 `edit_file` 工具已经就位。
+项目目前处于核心能力搭建阶段：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry，以及 `read_file`、`write_file`、`edit_file`、`apply_patch`、`exec` 和 `process` 本地编码工具闭环已经就位。
 
 ## 核心流程
 
@@ -41,9 +41,9 @@ go-reagent/
 ├── config.example.json          # 不含真实密钥的平台配置模板
 ├── config.json                  # 本地平台配置（已被 Git 忽略）
 ├── cmd/
-│   └── reagent/
-│       ├── main.go              # 初始化日志并运行 Fx App
-│       └── main_test.go         # 应用日志测试
+│   ├── main.go                  # 初始化日志并运行 Fx App
+│   ├── main_test.go             # 应用日志测试
+│   └── ping/main.go             # 独立 HTTP ping 示例
 ├── internal/
 │   ├── app/                 # Uber Fx 组合根与一次性进程生命周期
 │   │   ├── module.go        # 完整 Fx Option 依赖图
@@ -58,7 +58,8 @@ go-reagent/
 │   │   ├── wecom.go         # 企业微信群机器人 Reporter
 │   │   └── wecom_test.go    # Webhook 协议、长度与并发测试
 │   ├── engine/              # 核心引擎层
-│   │   ├── loop.go          # AgentEngine、ReAct Main Loop 与有界工具调度
+│   │   ├── engine.go        # AgentEngine 状态与构造
+│   │   ├── run_*.go         # ReAct Main Loop、校验、执行与诊断
 │   │   ├── reporter.go      # Agent 生命周期 Reporter 与广播实现
 │   │   ├── terminal_reporter.go # 终端输出 Reporter
 │   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
@@ -75,7 +76,10 @@ go-reagent/
 │       ├── read_file.go      # WorkDir 内受限文本文件读取工具
 │       ├── read_file_test.go # 路径与输出预算安全测试
 │       ├── edit_file.go      # WorkDir 内受限的多级唯一匹配编辑工具
-│       └── edit_file_test.go # 匹配、路径、文本与权限安全测试
+│       ├── write_file.go     # 创建或完整覆盖 UTF-8 文本文件
+│       ├── apply_patch*.go   # 结构化多文件补丁解析与应用
+│       ├── exec.go           # 有界输出的 shell 命令执行工具
+│       └── process*.go       # 后台进程会话与进程组管理
 ├── go.mod
 └── README.md
 ```
@@ -83,7 +87,7 @@ go-reagent/
 `internal/app` 是唯一的 Fx 组合根，负责依赖注入；核心包不依赖 Fx：
 
 ```text
-cmd/reagent ──► app ──► config / dispatch / engine / provider / tools
+cmd ──► app ──► config / dispatch / engine / provider / tools
 
 engine ──► provider ──► schema
    └─────► tools ─────► schema
@@ -95,7 +99,7 @@ engine ──► provider ──► schema
 - `tools` 通过 `BaseTool`、`MutableRegistry` 和 `Registry` 分离工具注册、发现与执行权限。
 - `engine` 持有工作区路径并负责编排上下文、模型推理与工具执行，不关心具体厂商和工具实现。
 - `app` 使用 Fx 注入 Config、WorkDir、Provider、Registry、Reporter、Engine 和 AgentRunner，并管理资源关闭顺序。
-- `cmd/reagent` 只初始化项目日志并运行 Fx App，不承载依赖组装和业务逻辑。
+- `cmd` 只初始化项目日志并运行 Fx App，不承载依赖组装和业务逻辑。
 
 ## 环境要求
 
@@ -137,7 +141,7 @@ chmod 600 config.json
 然后启动：
 
 ```bash
-go run ./cmd/reagent
+go run ./cmd
 ```
 
 切换到其他已配置平台时只需修改 `currentPlatform`：
@@ -163,18 +167,18 @@ go run ./cmd/reagent
 | `CONFIG_PATH` | `config.json` | 指定其他平台配置文件 |
 | `CONFIGOR_ENV` | `development`（测试时为 `test`） | 加载环境叠加文件，如 `config.production.json` |
 | `CONFIGOR_CURRENTPLATFORM` | 配置文件中的值 | 覆盖当前平台选择 |
-| `AGENT_PROMPT` | 并行读取并总结 `a.txt`、`b.txt`、`c.txt` | 覆盖启动测试任务 |
+| `AGENT_PROMPT` | 新建 `ping.go` 并完成 Git 提交 | 覆盖启动测试任务 |
 
 例如使用另一份配置：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.json go run ./cmd/reagent
+CONFIG_PATH=/secure/reagent/config.json go run ./cmd
 ```
 
 例如加载 YAML 基础配置及其 `production` 叠加文件：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd/reagent
+CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd
 ```
 
 Configor 会先加载基础文件，再加载同目录下的环境文件，例如 `config.production.yaml`。如果基础文件和环境文件都不存在，则尝试同扩展名的 example 文件，例如 `config.example.yaml`。字段也可以通过 `CONFIGOR_` 前缀的环境变量覆盖；数组内字段按结构路径命名，例如 `CONFIGOR_PLATFORMS_0_APIKEY`。
@@ -213,10 +217,9 @@ Config -> WorkDir -> LLMProvider -> Registry -> Reporter -> AgentEngine -> Agent
 
 AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻塞启动钩子。任务完成后主动关闭 Fx：
 成功退出码为 0，Agent 错误退出码为 1。收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待 Agent，
-随后按 Fx 逆序生命周期关闭文件工具，避免运行中的 Tool 使用已释放资源。
+随后按 Fx 逆序生命周期关闭文件工具和后台进程管理器，避免运行中的 Tool 使用已释放资源。
 
-当前入口开启慢思考模式，挂载真实 `read_file` 和 `edit_file` 工具，默认要求模型同时读取并总结
-当前工作区的 `a.txt`、`b.txt` 和 `c.txt`。
+当前入口开启慢思考模式，挂载六个真实本地工具，默认要求模型新建 `ping.go`、验证代码并完成 Git 提交。
 
 ### 日志输出
 
@@ -234,7 +237,7 @@ AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻
 ### 工具并发调度
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
-- 当前只有只读的 `read_file` 标记为并发安全；`edit_file` 保持独占执行。
+- 当前只有只读的 `read_file` 标记为并发安全；其余文件修改和进程工具保持独占执行。
 - 连续的安全工具组成一个波次，默认最多同时执行 4 个；`MaxParallelTools <= 0` 时退化为串行。
 - 独占工具会等待前一安全波完成，并阻止后一波提前启动。
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
@@ -246,7 +249,7 @@ AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻
 - 使用 Go 1.26 `os.Root` 阻止绝对路径、`..` 穿越和外部符号链接逃逸。
 - 允许指向 WorkDir 内部文件的符号链接。
 - 只读取普通 UTF-8 文本文件，拒绝目录、设备和疑似二进制内容。
-- 最多返回前 8000 字节，并在合法 UTF-8 边界截断。
+- 单页最多返回 2000 行且最终输出不超过 50 KiB；响应提供 `offset` 续读标记。
 
 ### edit_file 安全边界
 
@@ -256,6 +259,21 @@ AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻
 - 替换只改变命中的原始字节区间，并保留其他内容、原换行风格和文件权限。
 - `new_text` 可以显式传入空字符串以删除片段，但字段不能缺失。
 - 工具未标记为并发安全，调度器会把每次编辑作为独占屏障执行。
+
+### write_file 与 apply_patch
+
+- `write_file` 创建或完整覆盖 WorkDir 内的 UTF-8 文本文件，并自动创建父目录；相同内容不会重复写入。
+- `apply_patch` 接受 OpenClaw 风格的 `*** Begin Patch` 结构化补丁，支持 Add、Update、Delete 和 Move。
+- 补丁先在内存中完成全部路径、冲突和上下文预检，再写入磁盘，避免语法错误造成部分修改。
+- 两个工具都拒绝绝对路径、`..` 逃逸、外部符号链接、NUL 和非 UTF-8 文本。
+
+### exec 与 process
+
+- `exec` 在 WorkDir 或其相对子目录中运行 shell 命令，支持环境覆盖、超时、前台等待和自动后台化。
+- `process` 对后台 session 执行 `list`、`poll`、`write` 和 `kill`，Registry 关闭时终止仍在运行的进程组。
+- 每个 session 只保留最后 50 KiB 合并输出，避免长命令无限占用内存。
+- `workdir` 边界只限制命令起始目录，不是系统调用沙箱；命令仍拥有 go-reagent 宿主进程权限。
+- 人工审批、命令 allowlist、PTY 和容器/Seatbelt 沙箱尚未实现，不应把 `exec` 暴露给不受信任的调用方。
 
 运行全部测试：
 
@@ -276,7 +294,8 @@ go test ./...
 - 基于 `go-logger-sdk` 的 JSON 运行日志，以及 Bootstrap、Engine 和 Registry 的结构化上下文字段。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
-- 受 WorkDir 能力边界保护的真实 `read_file` 和 `edit_file` 工具。
+- 受 WorkDir 能力边界保护的 `read_file`、`write_file`、`edit_file` 和 `apply_patch` 文件工具。
+- 支持超时、后台化、有界输出和进程组终止的 `exec` 与 `process` 工具。
 - 持有 `WorkDir` 的 `AgentEngine` 生命周期驱动。
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
@@ -296,7 +315,7 @@ go test ./...
 - [x] 定义工具发现和执行 Registry 接口。
 - [x] 实现并测试最小 AgentEngine ReAct Main Loop。
 - [x] 增加可开关的慢思考与行动双阶段循环。
-- [x] 实现内存版 Tool Registry 和基础 `read_file`、`edit_file` 工具。
+- [x] 实现内存版 Tool Registry 和本地编码工具闭环。
 - [x] 实现配置驱动的 OpenAI/Anthropic 兼容 Provider。
 - [x] 使用 Uber Fx 组装真实 Config、Provider、Registry、Reporter、Engine 和 Runner。
 - [x] 增加按工具安全等级分波的有界并发调度器。
