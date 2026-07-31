@@ -38,7 +38,7 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	for _, want := range []string{
 		"go-reagent", "Thinking", "修改文件前", "始终使用中文回复",
 		"Use project conventions.", "Review changes", ".claw/skills/review/SKILL.md",
-		"sha256:0123456789abcdef", "必须先使用 read_file",
+		"sha256:0123456789abcdef", "必须先使用 read",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("prompt missing %q: %q", want, content)

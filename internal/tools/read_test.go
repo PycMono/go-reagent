@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-func TestReadFileToolDefinitionDescribesPagination(t *testing.T) {
-	tool := newReadFileToolForTest(t, t.TempDir())
+func TestReadToolDefinitionDescribesPagination(t *testing.T) {
+	tool := newReadToolForTest(t, t.TempDir())
 	definition := tool.Definition()
-	if definition.Name != "read_file" || definition.Description == "" || !definition.ParallelSafe {
+	if definition.Name != "read" || definition.Description == "" || !definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
 	}
 	schemaObject, ok := definition.InputSchema.(map[string]any)
@@ -39,14 +41,40 @@ func TestReadFileToolDefinitionDescribesPagination(t *testing.T) {
 	}
 }
 
-func TestReadFileToolReadsWorkspaceFiles(t *testing.T) {
+func TestReadToolReturnsStructuredPageDetails(t *testing.T) {
+	workDir := t.TempDir()
+	writeTestFile(t, filepath.Join(workDir, "lines.txt"), []byte("one\ntwo\nthree\n"))
+	tool := newReadToolForTest(t, workDir)
+	limit := 2
+
+	output, err := tool.Execute(context.Background(), readFilePageArguments(t, "lines.txt", nil, &limit), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := schema.TextContent(output.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "one\ntwo\n\n[Showing lines 1-2. Use offset=3 to continue.]" {
+		t.Fatalf("content = %q", content)
+	}
+	details, ok := output.Details.(ReadDetails)
+	if !ok {
+		t.Fatalf("Details = %#v", output.Details)
+	}
+	if want := (ReadDetails{Path: "lines.txt", Lines: 2, Bytes: len("one\ntwo\n"), Truncated: true, NextOffset: 3}); details != want {
+		t.Fatalf("Details = %#v, want %#v", details, want)
+	}
+}
+
+func TestReadToolReadsWorkspaceFiles(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "hello.txt"), []byte("hello"))
 	if err := os.Mkdir(filepath.Join(workDir, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(workDir, "nested", "message.txt"), []byte("nested content\n"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	for _, tt := range []struct{ path, want string }{
 		{path: "hello.txt", want: "hello"},
@@ -61,10 +89,10 @@ func TestReadFileToolReadsWorkspaceFiles(t *testing.T) {
 	}
 }
 
-func TestReadFileToolPaginatesByLine(t *testing.T) {
+func TestReadToolPaginatesByLine(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "lines.txt"), []byte("one\ntwo\nthree\nfour\n"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	offset, limit := 2, 2
 
 	got, err := tool.execute(context.Background(), readFilePageArguments(t, "lines.txt", &offset, &limit))
@@ -83,14 +111,14 @@ func TestReadFileToolPaginatesByLine(t *testing.T) {
 	}
 }
 
-func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
+func TestReadToolDefaultsTo2000Lines(t *testing.T) {
 	workDir := t.TempDir()
 	var content strings.Builder
 	for line := 1; line <= 2001; line++ {
 		fmt.Fprintf(&content, "line-%04d\n", line)
 	}
 	writeTestFile(t, filepath.Join(workDir, "many-lines.txt"), []byte(content.String()))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	first, err := tool.execute(context.Background(), readFileArguments(t, "many-lines.txt"))
 	if err != nil {
@@ -107,7 +135,7 @@ func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
 	}
 }
 
-func TestReadFileToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
+func TestReadToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
 	workDir := t.TempDir()
 	var original strings.Builder
 	for line := 1; line <= 1800; line++ {
@@ -117,7 +145,7 @@ func TestReadFileToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
 		}
 	}
 	writeTestFile(t, filepath.Join(workDir, "reconstruct.txt"), []byte(original.String()))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	var rebuilt strings.Builder
 	nextOffset := 1
@@ -160,11 +188,11 @@ func TestReadFileToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
 	}
 }
 
-func TestReadFileToolHandlesEmptyAndPastEOF(t *testing.T) {
+func TestReadToolHandlesEmptyAndPastEOF(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "empty.txt"), nil)
 	writeTestFile(t, filepath.Join(workDir, "one.txt"), []byte("one\n"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	for _, tt := range []struct {
 		path   string
@@ -181,10 +209,10 @@ func TestReadFileToolHandlesEmptyAndPastEOF(t *testing.T) {
 	}
 }
 
-func TestReadFileToolRejectsInvalidArguments(t *testing.T) {
+func TestReadToolRejectsInvalidArguments(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "hello.txt"), []byte("hello"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	absoluteArgs := readFileArguments(t, filepath.Join(workDir, "hello.txt"))
 
 	tests := []struct {
@@ -213,13 +241,13 @@ func TestReadFileToolRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
+func TestReadToolEnforcesWorkspaceBoundary(t *testing.T) {
 	workDir := t.TempDir()
 	outsideDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "inside.txt"), []byte("inside"))
 	outsidePath := filepath.Join(outsideDir, "outside.txt")
 	writeTestFile(t, outsidePath, []byte("outside"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	relativeOutside, err := filepath.Rel(workDir, outsidePath)
 	if err != nil {
 		t.Fatal(err)
@@ -248,12 +276,12 @@ func TestReadFileToolEnforcesWorkspaceBoundary(t *testing.T) {
 	})
 }
 
-func TestReadFileToolRejectsNonFilesAndMissingPaths(t *testing.T) {
+func TestReadToolRejectsNonFilesAndMissingPaths(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(workDir, "directory"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	for _, path := range []string{"directory", "missing.txt"} {
 		if _, err := tool.execute(context.Background(), readFileArguments(t, path)); err == nil {
 			t.Fatalf("Execute(%q) error = nil", path)
@@ -261,10 +289,10 @@ func TestReadFileToolRejectsNonFilesAndMissingPaths(t *testing.T) {
 	}
 }
 
-func TestReadFileToolLimitsFinalOutputTo50KiB(t *testing.T) {
+func TestReadToolLimitsFinalOutputTo50KiB(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "large.txt"), []byte(strings.Repeat("中文内容\n", 7000)))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	got, err := tool.execute(context.Background(), readFileArguments(t, "large.txt"))
 	if err != nil {
@@ -278,21 +306,21 @@ func TestReadFileToolLimitsFinalOutputTo50KiB(t *testing.T) {
 	}
 }
 
-func TestReadFileToolRejectsRequestedLineTooLargeForPage(t *testing.T) {
+func TestReadToolRejectsRequestedLineTooLargeForPage(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "long-line.txt"), []byte(strings.Repeat("a", defaultReadFileMaxBytes)+"\nnext\n"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	_, err := tool.execute(context.Background(), readFileArguments(t, "long-line.txt"))
-	if err == nil || !strings.Contains(err.Error(), "单行超过 read_file 单页限制") {
+	if err == nil || !strings.Contains(err.Error(), "单行超过 read 单页限制") {
 		t.Fatalf("Execute() error = %v", err)
 	}
 }
 
-func TestReadFileToolSkipsLargeLinesWithoutReturningThem(t *testing.T) {
+func TestReadToolSkipsLargeLinesWithoutReturningThem(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "skip.txt"), []byte(strings.Repeat("x", 100*1024)+"\ntarget\n"))
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	offset := 2
 
 	got, err := tool.execute(context.Background(), readFilePageArguments(t, "skip.txt", &offset, nil))
@@ -301,12 +329,12 @@ func TestReadFileToolSkipsLargeLinesWithoutReturningThem(t *testing.T) {
 	}
 }
 
-func TestReadFileToolValidatesOnlyRequestedPage(t *testing.T) {
+func TestReadToolValidatesOnlyRequestedPage(t *testing.T) {
 	workDir := t.TempDir()
 	content := append([]byte("valid\n"), 0xff, '\n')
 	writeTestFile(t, filepath.Join(workDir, "invalid-later.txt"), content)
 	writeTestFile(t, filepath.Join(workDir, "nul.txt"), []byte{'a', 0, 'b', '\n'})
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 	limit := 1
 
 	first, err := tool.execute(context.Background(), readFilePageArguments(t, "invalid-later.txt", nil, &limit))
@@ -324,14 +352,14 @@ func TestReadFileToolValidatesOnlyRequestedPage(t *testing.T) {
 	}
 }
 
-func TestReadFileToolDefersValidationForLineMovedToNextPage(t *testing.T) {
+func TestReadToolDefersValidationForLineMovedToNextPage(t *testing.T) {
 	workDir := t.TempDir()
 	firstLine := []byte(strings.Repeat("a", defaultReadFileMaxBytes-100) + "\n")
 	secondLine := append([]byte(strings.Repeat("b", 80)), 0xff, '\n')
 	thirdLine := []byte(strings.Repeat("c", 100) + "\n")
 	content := append(append(append([]byte(nil), firstLine...), secondLine...), thirdLine...)
 	writeTestFile(t, filepath.Join(workDir, "marker-budget.txt"), content)
-	tool := newReadFileToolForTest(t, workDir)
+	tool := newReadToolForTest(t, workDir)
 
 	first, err := tool.execute(context.Background(), readFileArguments(t, "marker-budget.txt"))
 	if err != nil {
@@ -347,10 +375,11 @@ func TestReadFileToolDefersValidationForLineMovedToNextPage(t *testing.T) {
 	}
 }
 
-func TestReadFileToolHonorsCancellationAndClose(t *testing.T) {
+func TestReadToolHonorsCancellationAndWorkspaceClose(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "hello.txt"), []byte("hello"))
-	tool, err := NewReadFileTool(workDir)
+	workspace := newWorkspaceForTest(t, workDir)
+	tool, err := NewReadTool(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,27 +389,26 @@ func TestReadFileToolHonorsCancellationAndClose(t *testing.T) {
 	if _, err := tool.execute(ctx, readFileArguments(t, "hello.txt")); err == nil {
 		t.Fatal("canceled Execute() error = nil")
 	}
-	if err := tool.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
+	if err := workspace.Close(); err != nil {
+		t.Fatalf("Workspace.Close() error = %v", err)
 	}
 	if _, err := tool.execute(context.Background(), readFileArguments(t, "hello.txt")); err == nil {
 		t.Fatal("Execute() after Close error = nil")
 	}
 }
 
-func TestNewReadFileToolRejectsInvalidWorkDir(t *testing.T) {
-	if _, err := NewReadFileTool(filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Fatal("NewReadFileTool() error = nil")
+func TestNewReadToolRejectsNilWorkspace(t *testing.T) {
+	if _, err := NewReadTool(nil); err == nil {
+		t.Fatal("NewReadTool(nil) error = nil")
 	}
 }
 
-func newReadFileToolForTest(t *testing.T, workDir string) *ReadFileTool {
+func newReadToolForTest(t *testing.T, workDir string) *ReadTool {
 	t.Helper()
-	tool, err := NewReadFileTool(workDir)
+	tool, err := NewReadTool(newWorkspaceForTest(t, workDir))
 	if err != nil {
-		t.Fatalf("NewReadFileTool() error = %v", err)
+		t.Fatalf("NewReadTool() error = %v", err)
 	}
-	t.Cleanup(func() { _ = tool.Close() })
 	return tool
 }
 

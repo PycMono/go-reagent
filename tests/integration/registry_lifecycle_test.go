@@ -19,7 +19,7 @@ func TestNewRegistryRegistersToolsAndClosesThemOnStop(t *testing.T) {
 	lifecycle.RequireStart()
 
 	definitions := registry.GetAvailableTools()
-	wantNames := []string{"apply_patch", "edit_file", "exec", "process", "read_file", "write_file"}
+	wantNames := []string{"apply_patch", "edit_file", "exec", "process", "read", "write"}
 	if len(definitions) != len(wantNames) {
 		t.Fatalf("definitions = %#v", definitions)
 	}
@@ -31,7 +31,7 @@ func TestNewRegistryRegistersToolsAndClosesThemOnStop(t *testing.T) {
 	lifecycle.RequireStop()
 
 	for _, call := range []schema.ToolCall{
-		{ID: "read-after-stop", Name: "read_file", Arguments: []byte(`{"path":"a.txt"}`)},
+		{ID: "read-after-stop", Name: "read", Arguments: []byte(`{"path":"a.txt"}`)},
 		{ID: "exec-after-stop", Name: "exec", Arguments: []byte(`{"command":"true"}`)},
 		{ID: "process-after-stop", Name: "process", Arguments: []byte(`{"action":"list"}`)},
 	} {

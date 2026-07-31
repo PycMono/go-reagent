@@ -13,36 +13,46 @@ import (
 
 // Register provides the complete workspace tool runtime.
 var Register = fx.Options(
-	fx.Provide(NewRuntimeRegistry),
+	fx.Provide(NewWorkspace, newRuntimeRegistry),
 )
 
 // NewRuntimeRegistry creates and registers every workspace tool, then binds
 // their resources to the Fx lifecycle.
 func NewRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir) (Registry, error) {
-	var closers toolClosers
-	readFileTool, err := NewReadFileTool(string(workDir))
+	workspace, err := NewWorkspace(lifecycle, workDir)
 	if err != nil {
-		return nil, fmt.Errorf("初始化 read_file 工具失败: %w", err)
+		return nil, err
 	}
-	closers = append(closers, readFileTool)
+	return newRuntimeRegistry(lifecycle, workDir, workspace)
+}
+
+func newRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir, workspace *Workspace) (Registry, error) {
+	var closers toolClosers
+	readTool, err := NewReadTool(workspace)
+	if err != nil {
+		_ = workspace.Close()
+		return nil, fmt.Errorf("初始化 read 工具失败: %w", err)
+	}
 
 	editFileTool, err := NewEditFileTool(string(workDir))
 	if err != nil {
 		_ = closers.Close()
+		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化 edit_file 工具失败: %w", err)
 	}
 	closers = append(closers, editFileTool)
 
-	writeFileTool, err := NewWriteFileTool(string(workDir))
+	writeTool, err := NewWriteTool(workspace)
 	if err != nil {
 		_ = closers.Close()
-		return nil, fmt.Errorf("初始化 write_file 工具失败: %w", err)
+		_ = workspace.Close()
+		return nil, fmt.Errorf("初始化 write 工具失败: %w", err)
 	}
-	closers = append(closers, writeFileTool)
 
 	applyPatchTool, err := NewApplyPatchTool(string(workDir))
 	if err != nil {
 		_ = closers.Close()
+		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化 apply_patch 工具失败: %w", err)
 	}
 	closers = append(closers, applyPatchTool)
@@ -50,14 +60,15 @@ func NewRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir) (Registr
 	processManager, err := NewProcessManager(string(workDir))
 	if err != nil {
 		_ = closers.Close()
+		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化 exec/process 工具失败: %w", err)
 	}
 	closers = append(closers, processManager)
 
 	runtimeTools := []Tool{
-		readFileTool,
+		readTool,
 		editFileTool,
-		writeFileTool,
+		writeTool,
 		applyPatchTool,
 		NewExecTool(processManager),
 		NewProcessTool(processManager),
@@ -68,6 +79,7 @@ func NewRuntimeRegistry(lifecycle fx.Lifecycle, workDir config.WorkDir) (Registr
 	})
 	if err != nil {
 		_ = closers.Close()
+		_ = workspace.Close()
 		return nil, fmt.Errorf("初始化工具 Registry 失败: %w", err)
 	}
 

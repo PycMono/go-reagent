@@ -43,8 +43,8 @@ func (e *AgentEngine) Run(ctx context.Context, userPrompt string, reporter Repor
 		return fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
-	if len(snapshot.Skills()) > 0 && !hasToolDefinition(availableTools, "read_file") {
-		return errors.New("发现可用 Agent Skills，但 Registry 未挂载 read_file")
+	if len(snapshot.Skills()) > 0 && !hasToolDefinition(availableTools, "read") {
+		return errors.New("发现可用 Agent Skills，但 Registry 未挂载 read")
 	}
 	systemMessage, promptReport := e.composer.Build(snapshot)
 	if promptReport.Truncated {

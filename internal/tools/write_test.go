@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-func TestWriteFileToolDefinitionIsExclusive(t *testing.T) {
-	tool := newWriteFileToolForTest(t, t.TempDir())
+func TestWriteToolDefinitionIsExclusive(t *testing.T) {
+	tool := newWriteToolForTest(t, t.TempDir())
 	definition := tool.Definition()
-	if definition.Name != "write_file" || definition.Description == "" || definition.ParallelSafe {
+	if definition.Name != "write" || definition.Description == "" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
 	}
 	schemaObject, ok := definition.InputSchema.(map[string]any)
@@ -21,9 +21,9 @@ func TestWriteFileToolDefinitionIsExclusive(t *testing.T) {
 	}
 }
 
-func TestWriteFileToolCreatesParentsAndOverwritesText(t *testing.T) {
+func TestWriteToolCreatesParentsAndOverwritesText(t *testing.T) {
 	workDir := t.TempDir()
-	tool := newWriteFileToolForTest(t, workDir)
+	tool := newWriteToolForTest(t, workDir)
 
 	if _, err := tool.execute(context.Background(), writeFileArguments(t, "nested/ping.go", "package main\n")); err != nil {
 		t.Fatalf("create Execute() error = %v", err)
@@ -40,7 +40,39 @@ func TestWriteFileToolCreatesParentsAndOverwritesText(t *testing.T) {
 	}
 }
 
-func TestWriteFileToolIdenticalContentIsNoOp(t *testing.T) {
+func TestWriteToolReturnsDetailsAndPreservesExistingMode(t *testing.T) {
+	workDir := t.TempDir()
+	path := filepath.Join(workDir, "mode.txt")
+	writeTestFile(t, path, []byte("before"))
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	tool := newWriteToolForTest(t, workDir)
+
+	output, err := tool.Execute(context.Background(), writeFileArguments(t, "mode.txt", "after"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, ok := output.Details.(WriteDetails)
+	if !ok || details != (WriteDetails{Path: "mode.txt", Bytes: len("after"), Changed: true}) {
+		t.Fatalf("Details = %#v", output.Details)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %v, error = %v", info.Mode(), err)
+	}
+
+	output, err = tool.Execute(context.Background(), writeFileArguments(t, "mode.txt", "after"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, ok = output.Details.(WriteDetails)
+	if !ok || details != (WriteDetails{Path: "mode.txt", Bytes: len("after"), Changed: false}) {
+		t.Fatalf("Details = %#v", output.Details)
+	}
+}
+
+func TestWriteToolIdenticalContentIsNoOp(t *testing.T) {
 	workDir := t.TempDir()
 	path := filepath.Join(workDir, "same.txt")
 	writeTestFile(t, path, []byte("same"))
@@ -48,7 +80,7 @@ func TestWriteFileToolIdenticalContentIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := newWriteFileToolForTest(t, workDir)
+	tool := newWriteToolForTest(t, workDir)
 
 	output, err := tool.execute(context.Background(), writeFileArguments(t, "same.txt", "same"))
 	if err != nil || !strings.Contains(output, "未变化") {
@@ -63,8 +95,8 @@ func TestWriteFileToolIdenticalContentIsNoOp(t *testing.T) {
 	}
 }
 
-func TestWriteFileToolRejectsInvalidArgumentsAndText(t *testing.T) {
-	tool := newWriteFileToolForTest(t, t.TempDir())
+func TestWriteToolRejectsInvalidArgumentsAndText(t *testing.T) {
+	tool := newWriteToolForTest(t, t.TempDir())
 	tests := []struct {
 		name string
 		args json.RawMessage
@@ -88,12 +120,12 @@ func TestWriteFileToolRejectsInvalidArgumentsAndText(t *testing.T) {
 	}
 }
 
-func TestWriteFileToolEnforcesWorkspaceBoundaryAndRegularFiles(t *testing.T) {
+func TestWriteToolEnforcesWorkspaceBoundaryAndRegularFiles(t *testing.T) {
 	workDir := t.TempDir()
 	outsideDir := t.TempDir()
 	outsidePath := filepath.Join(outsideDir, "outside.txt")
 	writeTestFile(t, outsidePath, []byte("outside"))
-	tool := newWriteFileToolForTest(t, workDir)
+	tool := newWriteToolForTest(t, workDir)
 
 	relativeOutside, err := filepath.Rel(workDir, outsidePath)
 	if err != nil {
@@ -119,9 +151,10 @@ func TestWriteFileToolEnforcesWorkspaceBoundaryAndRegularFiles(t *testing.T) {
 	}
 }
 
-func TestWriteFileToolHonorsCancellationAndClose(t *testing.T) {
+func TestWriteToolHonorsCancellationAndWorkspaceClose(t *testing.T) {
 	workDir := t.TempDir()
-	tool, err := NewWriteFileTool(workDir)
+	workspace := newWorkspaceForTest(t, workDir)
+	tool, err := NewWriteTool(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +166,7 @@ func TestWriteFileToolHonorsCancellationAndClose(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workDir, "a.txt")); !os.IsNotExist(err) {
 		t.Fatalf("canceled write created file: %v", err)
 	}
-	if err := tool.Close(); err != nil {
+	if err := workspace.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tool.execute(context.Background(), writeFileArguments(t, "a.txt", "a")); err == nil {
@@ -141,19 +174,18 @@ func TestWriteFileToolHonorsCancellationAndClose(t *testing.T) {
 	}
 }
 
-func TestNewWriteFileToolRejectsInvalidWorkDir(t *testing.T) {
-	if _, err := NewWriteFileTool(filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Fatal("NewWriteFileTool() error = nil")
+func TestNewWriteToolRejectsNilWorkspace(t *testing.T) {
+	if _, err := NewWriteTool(nil); err == nil {
+		t.Fatal("NewWriteTool(nil) error = nil")
 	}
 }
 
-func newWriteFileToolForTest(t *testing.T, workDir string) *WriteFileTool {
+func newWriteToolForTest(t *testing.T, workDir string) *WriteTool {
 	t.Helper()
-	tool, err := NewWriteFileTool(workDir)
+	tool, err := NewWriteTool(newWorkspaceForTest(t, workDir))
 	if err != nil {
-		t.Fatalf("NewWriteFileTool() error = %v", err)
+		t.Fatalf("NewWriteTool() error = %v", err)
 	}
-	t.Cleanup(func() { _ = tool.Close() })
 	return tool
 }
 

@@ -215,7 +215,7 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: blocks("done one")},
 		{Role: schema.RoleAssistant, Content: blocks("done two")},
 	}}
-	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "read_file", ParallelSafe: true}}}
+	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}}
 	agentEngine := newAgentEngineForTest(provider, registry, workDir, false)
 	if err := agentEngine.Run(context.Background(), "hello one", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -267,7 +267,7 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 	}
 }
 
-func TestAgentEngineRequiresReadFileWhenSkillsAreAvailable(t *testing.T) {
+func TestAgentEngineRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	workDir := t.TempDir()
 	skillDir := filepath.Join(workDir, "skills", "review")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -281,7 +281,7 @@ func TestAgentEngineRequiresReadFileWhenSkillsAreAvailable(t *testing.T) {
 	agentEngine := newAgentEngineForTest(provider, &fakeRegistry{}, workDir, false)
 
 	err := agentEngine.Run(context.Background(), "review", nil)
-	if err == nil || !strings.Contains(err.Error(), "read_file") {
+	if err == nil || !strings.Contains(err.Error(), "Registry 未挂载 read") || strings.Contains(err.Error(), "read_file") {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 0 {

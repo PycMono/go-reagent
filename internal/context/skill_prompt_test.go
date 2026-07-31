@@ -31,7 +31,7 @@ func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
 		`Use &lt;code&gt; &amp; &quot;tests&quot; with &apos;care&apos;`,
 		"<location>skills/zeta/SKILL.md</location>",
 		"<version>sha256:fedcba9876543210</version>",
-		"必须先使用 read_file", "Use offset=N to continue", "SKILL.md 所在目录",
+		"必须先使用 read", "Use offset=N to continue", "SKILL.md 所在目录",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %q", want, prompt)
