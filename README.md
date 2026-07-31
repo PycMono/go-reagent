@@ -51,7 +51,8 @@ go-reagent/
 │   │   ├── runner.go        # AgentRunner 和 Fx 启停钩子
 │   │   └── *_test.go        # 构造链、资源关闭、退出码与依赖图测试
 │   ├── config/              # 启动配置层
-│   │   ├── config.go        # 严格加载、校验与选择当前平台
+│   │   ├── config.go        # 配置结构、加载与当前平台选择
+│   │   ├── validate.go      # 配置规范化与数据校验
 │   │   └── config_test.go   # 配置解析与错误处理测试
 │   ├── dispatch/            # 外部消息渠道输出适配层
 │   │   ├── wecom.go         # 企业微信群机器人 Reporter
@@ -61,8 +62,6 @@ go-reagent/
 │   │   ├── reporter.go      # Agent 生命周期 Reporter 与广播实现
 │   │   ├── terminal_reporter.go # 终端输出 Reporter
 │   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
-│   ├── logtest/             # 日志测试支持
-│   │   └── recorder.go      # 并发安全的 logsdk.Logger 记录器
 │   ├── provider/            # 模型适配层
 │   │   ├── interface.go     # LLM Provider 接口
 │   │   ├── factory.go       # 根据协议创建 Provider

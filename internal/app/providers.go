@@ -136,12 +136,7 @@ func NewPrompt() Prompt {
 	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
 		return Prompt(prompt)
 	}
-	return Prompt(`我当前目录下有 a.txt、b.txt、c.txt 三个文件。
-为了节省时间，请你在同一个 Action 中同时调用三次 read_file，分别读取这三个文件，
-并将它们的内容综合起来，告诉我它们分别记录了什么领域的信息。
-Thinking 阶段只能制定计划，不能假装已经读取文件或编造文件内容。
-获得三个文件的真实内容后，下一轮 Action 的对外回复必须完整列出 a.txt、b.txt、c.txt 的内容和领域总结；
-即使 Thinking 已经完成分析，也不能只回复确认、致谢或其他简短客套话。`)
+	return Prompt(`我需要在当前目录下新建一个 ping.go，提供一个简单的 http ping 接口。 写完之后，帮我把代码用 git 提交一下。`)
 }
 
 func configurationPath() string {

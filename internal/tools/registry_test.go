@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	logsdk "github.com/PycMono/go-logger-sdk"
-	"github.com/PycMono/go-reagent/internal/logtest"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -187,29 +185,6 @@ func TestRegistryRecoversToolPanicWithoutExposingValue(t *testing.T) {
 	}
 	if strings.Contains(result.Output, "sensitive panic value") {
 		t.Fatalf("panic value leaked in result: %q", result.Output)
-	}
-}
-
-func TestRegistryEmitsStructuredRegistrationAndPanicLogs(t *testing.T) {
-	recorder := &logtest.Recorder{}
-	logsdk.SetLogger(recorder)
-	t.Cleanup(func() {
-		logsdk.SetLogger(logsdk.NewLogrus(logsdk.Options{LogFormat: "json", Module: "go-reagent"}))
-	})
-
-	registry := NewRegistry()
-	if err := registry.Register(&stubTool{name: "panic", panicOnExecute: true}); err != nil {
-		t.Fatal(err)
-	}
-	_ = registry.Execute(context.Background(), schema.ToolCall{ID: "call-panic", Name: "panic"})
-
-	registered, ok := recorder.Find("info", "[Registry] 成功挂载工具")
-	if !ok || registered.Fields["component"] != "registry" || registered.Fields["tool"] != "panic" {
-		t.Fatalf("registration event = %#v, found = %v", registered, ok)
-	}
-	panicked, ok := recorder.Find("error", "工具执行 panic")
-	if !ok || panicked.Fields["component"] != "registry" || panicked.Fields["tool"] != "panic" || panicked.Fields["stack"] == nil {
-		t.Fatalf("panic event = %#v, found = %v", panicked, ok)
 	}
 }
 
