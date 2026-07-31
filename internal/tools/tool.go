@@ -47,5 +47,8 @@ type RegistryParams struct {
 }
 
 func textToolOutput(text string) schema.ToolOutput {
+	if text == "" {
+		return schema.ToolOutput{}
+	}
 	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(text)}}
 }
