@@ -163,7 +163,7 @@ func (e *AgentEngine) executeToolCall(
 		append(commonFields, logsdk.Any("arguments", call.Arguments))...,
 	)
 	if reporter != nil {
-		reporter.OnToolCall(ctx, call.Name, string(call.Arguments))
+		reporter.Report(ctx, schema.NewToolStartEvent(call))
 	}
 	result := e.registry.Execute(ctx, call)
 	resultText, err := schema.TextContent(result.Content)
@@ -171,7 +171,7 @@ func (e *AgentEngine) executeToolCall(
 		resultText = fmt.Sprintf("tool result content error: %v", err)
 	}
 	if reporter != nil {
-		reporter.OnToolResult(ctx, call.Name, resultText, result.IsError)
+		reporter.Report(ctx, schema.NewToolEndEvent(call, result))
 	}
 	if result.IsError {
 		logsdk.Error(ctx,

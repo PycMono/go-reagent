@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const terminalArgumentLimit = 150
@@ -28,36 +30,47 @@ func newTerminalReporter(writer io.Writer) Reporter {
 	return &terminalReporter{writer: writer}
 }
 
-func (r *terminalReporter) OnThinking(context.Context) {
-	r.write("\n[🤔 思考中] 模型正在推理...\n")
-}
-
-func (r *terminalReporter) OnToolCall(_ context.Context, toolName string, arguments string) {
-	r.write(fmt.Sprintf(
-		"[🛠️ 调用工具] %s\n   参数: %s\n",
-		toolName,
-		terminalDisplayArguments(arguments),
-	))
-}
-
-func (r *terminalReporter) OnToolResult(_ context.Context, toolName string, result string, isError bool) {
-	if !isError {
-		r.write(fmt.Sprintf("[✅ 执行成功] %s\n", toolName))
-		return
+func (r *terminalReporter) Report(_ context.Context, event schema.AgentEvent) {
+	switch event.Type {
+	case schema.AgentEventThinking:
+		r.write("\n[🤔 思考中] 模型正在推理...\n")
+	case schema.AgentEventToolStart:
+		if event.Tool == nil {
+			return
+		}
+		r.write(fmt.Sprintf(
+			"[🛠️ 调用工具] %s\n   参数: %s\n",
+			event.Tool.Call.Name,
+			terminalDisplayArguments(string(event.Tool.Call.Arguments)),
+		))
+	case schema.AgentEventToolUpdate:
+		if event.Tool == nil || event.Tool.Call.Name != "exec" || event.Tool.Update == nil {
+			return
+		}
+		if content := terminalEventText(event.Tool.Update.Content); content != "" {
+			r.write(content)
+		}
+	case schema.AgentEventToolEnd:
+		if event.Tool == nil || event.Tool.Result == nil {
+			return
+		}
+		if !event.Tool.Result.IsError {
+			r.write(fmt.Sprintf("[✅ 执行成功] %s\n", event.Tool.Call.Name))
+			return
+		}
+		message := fmt.Sprintf("[❌ 执行失败] %s\n", event.Tool.Call.Name)
+		if content := terminalEventText(event.Tool.Result.Content); content != "" {
+			message += fmt.Sprintf("   错误: %s\n", content)
+		}
+		r.write(message)
+	case schema.AgentEventMessage:
+		if event.Message == nil {
+			return
+		}
+		if content := terminalEventText(event.Message.Content); content != "" {
+			r.write(fmt.Sprintf("\n🤖 Agent 回复:\n%s\n\n", content))
+		}
 	}
-
-	message := fmt.Sprintf("[❌ 执行失败] %s\n", toolName)
-	if result != "" {
-		message += fmt.Sprintf("   错误: %s\n", result)
-	}
-	r.write(message)
-}
-
-func (r *terminalReporter) OnMessage(_ context.Context, content string) {
-	if content == "" {
-		return
-	}
-	r.write(fmt.Sprintf("\n🤖 Agent 回复:\n%s\n\n", content))
 }
 
 func (r *terminalReporter) write(message string) {
@@ -73,4 +86,12 @@ func terminalDisplayArguments(arguments string) string {
 		return display
 	}
 	return string(runes[:terminalArgumentLimit]) + "... (已截断)"
+}
+
+func terminalEventText(content []schema.ContentBlock) string {
+	text, err := schema.TextContent(content)
+	if err != nil {
+		return ""
+	}
+	return text
 }

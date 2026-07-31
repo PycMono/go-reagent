@@ -15,6 +15,7 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
@@ -41,24 +42,24 @@ func NewWeComReporter(webhookURL string, client *http.Client) (*WeComReporter, e
 	return &WeComReporter{webhookURL: webhookURL, client: client}, nil
 }
 
-func (r *WeComReporter) OnThinking(ctx context.Context) {
-	r.send(ctx, "🤔 模型正在慢思考 (Thinking)...")
-}
-
-func (r *WeComReporter) OnToolCall(ctx context.Context, toolName string, args string) {
-	r.send(ctx, fmt.Sprintf("🛠️ **正在执行工具**：`%s`\n参数：`%s`", toolName, args))
-}
-
-func (r *WeComReporter) OnToolResult(ctx context.Context, toolName string, result string, isError bool) {
-	if isError {
-		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", toolName, result))
-		return
+func (r *WeComReporter) Report(ctx context.Context, event schema.AgentEvent) {
+	switch event.Type {
+	case schema.AgentEventToolStart:
+		if event.Tool == nil {
+			return
+		}
+		r.send(ctx, fmt.Sprintf("🛠️ **正在执行工具**：`%s`\n参数：`%s`", event.Tool.Call.Name, event.Tool.Call.Arguments))
+	case schema.AgentEventToolEnd:
+		if event.Tool == nil || event.Tool.Result == nil || !event.Tool.Result.IsError {
+			return
+		}
+		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", event.Tool.Call.Name, eventText(event.Tool.Result.Content)))
+	case schema.AgentEventMessage:
+		if event.Message == nil {
+			return
+		}
+		r.send(ctx, eventText(event.Message.Content))
 	}
-	r.send(ctx, fmt.Sprintf("✅ **执行成功** (%s)", toolName))
-}
-
-func (r *WeComReporter) OnMessage(ctx context.Context, content string) {
-	r.send(ctx, content)
 }
 
 func (r *WeComReporter) send(ctx context.Context, content string) {
@@ -124,6 +125,14 @@ func truncateUTF8(content string, maxBytes int) string {
 		limit--
 	}
 	return content[:limit] + truncationMarker
+}
+
+func eventText(content []schema.ContentBlock) string {
+	text, err := schema.TextContent(content)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 var _ engine.Reporter = (*WeComReporter)(nil)

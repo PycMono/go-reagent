@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/internal/dispatch"
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type webhookRequest struct {
@@ -20,7 +21,7 @@ type webhookRequest struct {
 	} `json:"markdown"`
 }
 
-func TestWeComReporterSendsOneMarkdownRequestPerLifecycleEvent(t *testing.T) {
+func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		requests []webhookRequest
@@ -48,20 +49,25 @@ func TestWeComReporterSendsOneMarkdownRequestPerLifecycleEvent(t *testing.T) {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
 	ctx := context.Background()
-	reporter.OnThinking(ctx)
-	reporter.OnToolCall(ctx, "read_file", `{"path":"a.txt"}`)
-	reporter.OnToolResult(ctx, "read_file", "file A", false)
-	reporter.OnMessage(ctx, "done")
+	call := schema.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	reporter.Report(ctx, schema.NewThinkingEvent())
+	reporter.Report(ctx, schema.NewToolUpdateEvent(call, schema.ToolUpdate{Content: []schema.ContentBlock{schema.TextBlock("chunk")}}))
+	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
+	reporter.Report(ctx, schema.NewToolStartEvent(call))
+	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []schema.ContentBlock{schema.TextBlock("permission denied")}, IsError: true}))
+	reporter.Report(ctx, schema.NewMessageEvent(schema.Message{
+		Role:    schema.RoleAssistant,
+		Content: []schema.ContentBlock{schema.TextBlock("done")},
+	}))
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 4 {
-		t.Fatalf("request count = %d, want 4", len(requests))
+	if len(requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(requests))
 	}
 	wantContents := []string{
-		"🤔 模型正在慢思考 (Thinking)...",
 		"🛠️ **正在执行工具**：`read_file`\n参数：`{\"path\":\"a.txt\"}`",
-		"✅ **执行成功** (read_file)",
+		"⚠️ **执行报错** (read_file)：\npermission denied",
 		"done",
 	}
 	for index, want := range wantContents {
@@ -87,8 +93,17 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
-	reporter.OnToolResult(context.Background(), "read_file", "permission denied", true)
-	reporter.OnMessage(context.Background(), strings.Repeat("企", 2000))
+	call := schema.ToolCall{ID: "call-1", Name: "read_file"}
+	reporter.Report(context.Background(), schema.NewToolEndEvent(call, schema.ToolResult{
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+		IsError:    true,
+	}))
+	reporter.Report(context.Background(), schema.NewMessageEvent(schema.Message{
+		Role:    schema.RoleAssistant,
+		Content: []schema.ContentBlock{schema.TextBlock(strings.Repeat("企", 2000))},
+	}))
 
 	errorRequest := <-requests
 	if got := errorRequest.Markdown.Content; got != "⚠️ **执行报错** (read_file)：\npermission denied" {
