@@ -271,6 +271,29 @@ func TestReadFileToolValidatesOnlyRequestedPage(t *testing.T) {
 	}
 }
 
+func TestReadFileToolDefersValidationForLineMovedToNextPage(t *testing.T) {
+	workDir := t.TempDir()
+	firstLine := []byte(strings.Repeat("a", defaultReadFileMaxBytes-100) + "\n")
+	secondLine := append([]byte(strings.Repeat("b", 80)), 0xff, '\n')
+	thirdLine := []byte(strings.Repeat("c", 100) + "\n")
+	content := append(append(append([]byte(nil), firstLine...), secondLine...), thirdLine...)
+	writeTestFile(t, filepath.Join(workDir, "marker-budget.txt"), content)
+	tool := newReadFileToolForTest(t, workDir)
+
+	first, err := tool.Execute(context.Background(), readFileArguments(t, "marker-budget.txt"))
+	if err != nil {
+		t.Fatalf("first page error = %v", err)
+	}
+	if !strings.HasSuffix(first, "[Showing lines 1-1. Use offset=2 to continue.]") ||
+		!strings.HasPrefix(first, string(firstLine)) {
+		t.Fatalf("first page boundaries are wrong: bytes=%d", len(first))
+	}
+	offset := 2
+	if _, err := tool.Execute(context.Background(), readFilePageArguments(t, "marker-budget.txt", &offset, nil)); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("second page error = %v", err)
+	}
+}
+
 func TestReadFileToolHonorsCancellationAndClose(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "hello.txt"), []byte("hello"))
