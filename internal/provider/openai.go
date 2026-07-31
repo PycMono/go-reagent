@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/openai/openai-go/v3"
@@ -64,8 +65,10 @@ func (p *OpenAIProvider) Generate(
 
 	message := response.Choices[0].Message
 	result := &schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: message.Content,
+		Role: schema.RoleAssistant,
+	}
+	if message.Content != "" {
+		result.Content = []schema.ContentBlock{schema.TextBlock(message.Content)}
 	}
 	for _, toolCall := range message.ToolCalls {
 		if toolCall.Type != "function" {
@@ -84,20 +87,28 @@ func (p *OpenAIProvider) Generate(
 func toOpenAIMessages(messages []schema.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	result := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, message := range messages {
+		text, err := schema.TextContent(message.Content)
+		if err != nil {
+			return nil, fmt.Errorf("message content: %w", err)
+		}
 		switch message.Role {
 		case schema.RoleSystem:
-			result = append(result, openai.SystemMessage(message.Content))
+			result = append(result, openai.SystemMessage(text))
 		case schema.RoleUser:
-			if message.ToolCallID != "" {
-				result = append(result, openai.ToolMessage(message.Content, message.ToolCallID))
-			} else {
-				result = append(result, openai.UserMessage(message.Content))
+			result = append(result, openai.UserMessage(text))
+		case schema.RoleTool:
+			if message.ToolCallID == "" {
+				return nil, errors.New("tool message requires tool_call_id")
 			}
+			result = append(result, openai.ToolMessage(text, message.ToolCallID))
 		case schema.RoleAssistant:
+			if text == "" && len(message.ToolCalls) == 0 {
+				return nil, errors.New("assistant message contains no content or tool calls")
+			}
 			assistant := openai.ChatCompletionAssistantMessageParam{}
-			if message.Content != "" {
+			if text != "" {
 				assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-					OfString: openai.String(message.Content),
+					OfString: openai.String(text),
 				}
 			}
 			for _, toolCall := range message.ToolCalls {

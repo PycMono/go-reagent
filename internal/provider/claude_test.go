@@ -45,15 +45,15 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 
 	p := newClaudeProvider("test-key", server.URL+"/", "test-model", "test")
 	messages := []schema.Message{
-		{Role: schema.RoleSystem, Content: "system prompt"},
-		{Role: schema.RoleUser, Content: "weather"},
+		{Role: schema.RoleSystem, Content: []schema.ContentBlock{schema.TextBlock("system prompt")}},
+		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("weather")}},
 		{
 			Role: schema.RoleAssistant,
 			ToolCalls: []schema.ToolCall{
 				{ID: "call-old", Name: "get_weather", Arguments: json.RawMessage(`{"city":"上海"}`)},
 			},
 		},
-		{Role: schema.RoleUser, Content: "sunny", ToolCallID: "call-old"},
+		{Role: schema.RoleTool, Content: []schema.ContentBlock{schema.TextBlock("sunny")}, ToolCallID: "call-old"},
 	}
 	definitions := []schema.ToolDefinition{
 		{
@@ -73,7 +73,7 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if result.Content != "checking" || len(result.ToolCalls) != 1 {
+	if text, err := schema.TextContent(result.Content); err != nil || text != "checking" || len(result.ToolCalls) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 	call := result.ToolCalls[0]
@@ -116,11 +116,52 @@ func TestClaudeProviderOmitsToolsDuringThinking(t *testing.T) {
 	defer server.Close()
 
 	p := newClaudeProvider("test-key", server.URL+"/", "test-model", "test")
-	_, err := p.Generate(context.Background(), []schema.Message{{Role: schema.RoleUser, Content: "plan"}}, nil)
+	_, err := p.Generate(context.Background(), []schema.Message{{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("plan")}}}, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if _, exists := (<-requestBody)["tools"]; exists {
 		t.Fatal("thinking request unexpectedly contains tools")
+	}
+}
+
+func TestClaudeMessagesMapNativeToolResults(t *testing.T) {
+	message := schema.Message{
+		Role:       schema.RoleTool,
+		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+		ToolCallID: "call-1",
+		ToolName:   "read",
+		IsError:    true,
+	}
+
+	messages, _, err := toClaudeMessages([]schema.Message{message})
+	if err != nil {
+		t.Fatalf("toClaudeMessages() error = %v", err)
+	}
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	content := decoded[0]["content"].([]any)
+	block := content[0].(map[string]any)
+	if block["type"] != "tool_result" || block["tool_use_id"] != "call-1" || block["is_error"] != true {
+		t.Fatalf("tool result block = %#v", block)
+	}
+	if _, exists := block["details"]; exists {
+		t.Fatalf("tool result serialized Details: %#v", block)
+	}
+}
+
+func TestClaudeMessagesRejectToolResultWithoutCallID(t *testing.T) {
+	_, _, err := toClaudeMessages([]schema.Message{{
+		Role:    schema.RoleTool,
+		Content: []schema.ContentBlock{schema.TextBlock("permission denied")},
+	}})
+	if err == nil {
+		t.Fatal("toClaudeMessages() error = nil")
 	}
 }

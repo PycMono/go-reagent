@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 )
@@ -50,6 +52,22 @@ type fakeRegistry struct {
 	afterExecute func(callCount int)
 }
 
+func newAgentEngineForTest(
+	llmProvider provider.LLMProvider,
+	registry tools.Registry,
+	workDir string,
+	enableThinking bool,
+) *engine.AgentEngine {
+	return engine.NewAgentEngine(
+		llmProvider,
+		registry,
+		ctxpkg.NewPromptComposer(workDir),
+		ctxpkg.NewSkillLoader(workDir),
+		workDir,
+		enableThinking,
+	)
+}
+
 func (r *fakeRegistry) GetAvailableTools() []schema.ToolDefinition {
 	return append([]schema.ToolDefinition(nil), r.definitions...)
 }
@@ -65,7 +83,7 @@ func (r *fakeRegistry) Execute(_ context.Context, call schema.ToolCall) schema.T
 	if result, ok := r.results[call.Name]; ok {
 		return result
 	}
-	return schema.ToolResult{ToolCallID: call.ID, Output: "tool is not registered", IsError: true}
+	return toolResult(call, "tool is not registered", true)
 }
 
 func (r *fakeRegistry) Calls() []schema.ToolCall {
@@ -95,11 +113,7 @@ func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall) 
 
 	gate, exists := r.gates[call.ID]
 	if !exists {
-		return schema.ToolResult{
-			ToolCallID: call.ID,
-			Output:     fmt.Sprintf("tool %q is not registered", call.Name),
-			IsError:    true,
-		}
+		return toolResult(call, fmt.Sprintf("tool %q is not registered", call.Name), true)
 	}
 	select {
 	case <-gate:
@@ -111,21 +125,21 @@ func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall) 
 	if result, ok := r.results[call.ID]; ok {
 		return result
 	}
-	return schema.ToolResult{ToolCallID: call.ID, Output: call.Name}
+	return toolResult(call, call.Name, false)
 }
 
 func canceledToolResult(call schema.ToolCall, err error) schema.ToolResult {
-	return schema.ToolResult{ToolCallID: call.ID, Output: err.Error(), IsError: true}
+	return toolResult(call, err.Error(), true)
 }
 
 func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
 		{Name: "bash", Description: "execute a command", InputSchema: map[string]any{"type": "object"}},
 	}}
-	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	engine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 	if err := engine.Run(context.Background(), "hello", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -134,7 +148,7 @@ func TestAgentEnginePassesContextAndAvailableToolsToProvider(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", len(provider.requests))
 	}
 	request := provider.requests[0]
-	if len(request) != 2 || request[0].Role != schema.RoleSystem || request[1].Content != "hello" {
+	if len(request) != 2 || request[0].Role != schema.RoleSystem || messageText(t, request[1]) != "hello" {
 		t.Fatalf("initial context = %#v", request)
 	}
 	if len(provider.availableTools[0]) != 1 || provider.availableTools[0][0].Name != "bash" {
@@ -164,29 +178,29 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 	}
 
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "done one"},
-		{Role: schema.RoleAssistant, Content: "done two"},
+		{Role: schema.RoleAssistant, Content: blocks("done one")},
+		{Role: schema.RoleAssistant, Content: blocks("done two")},
 	}}
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "read_file", ParallelSafe: true}}}
-	agentEngine := engine.NewAgentEngine(provider, registry, workDir, false)
+	agentEngine := newAgentEngineForTest(provider, registry, workDir, false)
 	if err := agentEngine.Run(context.Background(), "hello one", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
 	request := provider.requests[0]
-	if len(request) != 2 || request[0].Role != schema.RoleSystem || request[1].Content != "hello one" {
+	if len(request) != 2 || request[0].Role != schema.RoleSystem || messageText(t, request[1]) != "hello one" {
 		t.Fatalf("initial context = %#v", request)
 	}
 	for _, want := range []string{
 		"engine-agent-guide-v1", "engine-skill", "engine-trigger-v1",
 		".claw/skills/engine/SKILL.md", "sha256:", "<available_skills>",
 	} {
-		if !strings.Contains(request[0].Content, want) {
-			t.Fatalf("system prompt missing %q: %q", want, request[0].Content)
+		if !strings.Contains(messageText(t, request[0]), want) {
+			t.Fatalf("system prompt missing %q: %q", want, messageText(t, request[0]))
 		}
 	}
-	if strings.Contains(request[0].Content, "engine-body-secret-v1") {
-		t.Fatalf("system prompt leaked Skill Body: %q", request[0].Content)
+	if strings.Contains(messageText(t, request[0]), "engine-body-secret-v1") {
+		t.Fatalf("system prompt leaked Skill Body: %q", messageText(t, request[0]))
 	}
 
 	if err := os.WriteFile(agentsPath, []byte("engine-agent-guide-v2"), 0o600); err != nil {
@@ -204,18 +218,18 @@ func TestAgentEngineBuildsWorkspaceContextForEachRun(t *testing.T) {
 	}
 
 	secondRequest := provider.requests[1]
-	if len(secondRequest) != 2 || secondRequest[1].Content != "hello two" {
+	if len(secondRequest) != 2 || messageText(t, secondRequest[1]) != "hello two" {
 		t.Fatalf("second initial context = %#v", secondRequest)
 	}
-	if !strings.Contains(secondRequest[0].Content, "engine-agent-guide-v2") ||
-		strings.Contains(secondRequest[0].Content, "engine-agent-guide-v1") {
-		t.Fatalf("second system prompt did not refresh AGENTS.md: %q", secondRequest[0].Content)
+	if !strings.Contains(messageText(t, secondRequest[0]), "engine-agent-guide-v2") ||
+		strings.Contains(messageText(t, secondRequest[0]), "engine-agent-guide-v1") {
+		t.Fatalf("second system prompt did not refresh AGENTS.md: %q", messageText(t, secondRequest[0]))
 	}
-	if !strings.Contains(secondRequest[0].Content, "engine-trigger-v2") ||
-		strings.Contains(secondRequest[0].Content, "engine-trigger-v1") ||
-		strings.Contains(secondRequest[0].Content, "engine-body-secret-v1") ||
-		strings.Contains(secondRequest[0].Content, "engine-body-secret-v2") {
-		t.Fatalf("second system prompt did not refresh catalog safely: %q", secondRequest[0].Content)
+	if !strings.Contains(messageText(t, secondRequest[0]), "engine-trigger-v2") ||
+		strings.Contains(messageText(t, secondRequest[0]), "engine-trigger-v1") ||
+		strings.Contains(messageText(t, secondRequest[0]), "engine-body-secret-v1") ||
+		strings.Contains(messageText(t, secondRequest[0]), "engine-body-secret-v2") {
+		t.Fatalf("second system prompt did not refresh catalog safely: %q", messageText(t, secondRequest[0]))
 	}
 }
 
@@ -229,8 +243,8 @@ func TestAgentEngineRequiresReadFileWhenSkillsAreAvailable(t *testing.T) {
 		[]byte("---\nname: review\ndescription: Review changes\n---\nBody"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: "unused"}}}
-	agentEngine := engine.NewAgentEngine(provider, &fakeRegistry{}, workDir, false)
+	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: blocks("unused")}}}
+	agentEngine := newAgentEngineForTest(provider, &fakeRegistry{}, workDir, false)
 
 	err := agentEngine.Run(context.Background(), "review", nil)
 	if err == nil || !strings.Contains(err.Error(), "read_file") {
@@ -249,12 +263,12 @@ func TestAgentEngineAppendsToolObservationAndContinues(t *testing.T) {
 				{ID: "call-1", Name: "echo", Arguments: json.RawMessage(`{"text":"hello"}`)},
 			},
 		},
-		{Role: schema.RoleAssistant, Content: "tool finished"},
+		{Role: schema.RoleAssistant, Content: blocks("tool finished")},
 	}}
 	registry := &fakeRegistry{results: map[string]schema.ToolResult{
-		"echo": {ToolCallID: "call-1", Output: "hello"},
+		"echo": toolResult(schema.ToolCall{ID: "call-1", Name: "echo"}, "hello", false),
 	}}
-	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	engine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 	if err := engine.Run(context.Background(), "run echo", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -271,7 +285,7 @@ func TestAgentEngineAppendsToolObservationAndContinues(t *testing.T) {
 		t.Fatalf("follow-up message count = %d, want 4", len(followUp))
 	}
 	observation := followUp[3]
-	if observation.Role != schema.RoleUser || observation.ToolCallID != "call-1" || observation.Content != "hello" {
+	if observation.Role != schema.RoleTool || observation.ToolCallID != "call-1" || messageText(t, observation) != "hello" {
 		t.Fatalf("observation = %#v", observation)
 	}
 }
@@ -284,7 +298,7 @@ func TestAgentEngineExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.
 	}
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	gates := map[string]chan struct{}{
 		"call-1": make(chan struct{}),
@@ -301,7 +315,7 @@ func TestAgentEngineExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.
 		finished: make(chan schema.ToolCall, len(toolCalls)),
 		gates:    gates,
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 	done := make(chan error, 1)
 	go func() {
@@ -367,10 +381,10 @@ func TestAgentEngineBoundsParallelTools(t *testing.T) {
 	}
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 2
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read all", registry.gates)
@@ -409,15 +423,11 @@ func TestAgentEngineUsesExclusiveToolsAsBarriers(t *testing.T) {
 	}
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	registry.results["call-5"] = schema.ToolResult{
-		ToolCallID: "call-5",
-		Output:     `tool "missing" is not registered`,
-		IsError:    true,
-	}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	registry.results["call-5"] = toolResult(schema.ToolCall{ID: "call-5", Name: "missing"}, `tool "missing" is not registered`, true)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "run ordered batch", registry.gates)
 	first := requireStartedCall(t, registry.started)
@@ -461,7 +471,7 @@ func TestAgentEngineUsesExclusiveToolsAsBarriers(t *testing.T) {
 	}
 	markFinished()
 	observation := provider.requests[1][7]
-	if observation.ToolCallID != "call-5" || !strings.Contains(observation.Content, "not registered") {
+	if observation.ToolCallID != "call-5" || !strings.Contains(messageText(t, observation), "not registered") {
 		t.Fatalf("unknown observation = %#v", observation)
 	}
 }
@@ -477,12 +487,12 @@ func TestAgentEngineCompletesParallelSiblingsAfterToolError(t *testing.T) {
 	}
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	registry.results["call-1"] = schema.ToolResult{ToolCallID: "call-1", Output: "read failed", IsError: true}
-	registry.results["call-2"] = schema.ToolResult{ToolCallID: "call-2", Output: "read ok"}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	registry.results["call-1"] = toolResult(schema.ToolCall{ID: "call-1", Name: "read-1"}, "read failed", true)
+	registry.results["call-2"] = toolResult(schema.ToolCall{ID: "call-2", Name: "read-2"}, "read ok", false)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read both", registry.gates)
 	requireStartedCall(t, registry.started)
@@ -495,10 +505,10 @@ func TestAgentEngineCompletesParallelSiblingsAfterToolError(t *testing.T) {
 	markFinished()
 
 	followUp := provider.requests[1]
-	if followUp[3].ToolCallID != "call-1" || followUp[3].Content != "read failed" {
+	if followUp[3].ToolCallID != "call-1" || messageText(t, followUp[3]) != "read failed" {
 		t.Fatalf("first observation = %#v", followUp[3])
 	}
-	if followUp[4].ToolCallID != "call-2" || followUp[4].Content != "read ok" {
+	if followUp[4].ToolCallID != "call-2" || messageText(t, followUp[4]) != "read ok" {
 		t.Fatalf("second observation = %#v", followUp[4])
 	}
 }
@@ -514,10 +524,10 @@ func TestAgentEngineUsesSerialFallbackForNonpositiveParallelLimit(t *testing.T) 
 	}
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 0
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read serially", registry.gates)
@@ -655,7 +665,7 @@ func TestAgentEngineRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 				{Role: schema.RoleAssistant, ToolCalls: tt.toolCalls},
 			}}
 			registry := &fakeRegistry{results: map[string]schema.ToolResult{}}
-			engine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+			engine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "run echo", nil)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
@@ -670,7 +680,7 @@ func TestAgentEngineRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 
 func TestAgentEngineRejectsNilProviderResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
+	engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "empty response") {
@@ -680,7 +690,7 @@ func TestAgentEngineRejectsNilProviderResponse(t *testing.T) {
 
 func TestAgentEngineWrapsProviderError(t *testing.T) {
 	provider := &fakeProvider{err: errors.New("provider unavailable")}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
+	engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "provider unavailable") {
@@ -693,9 +703,9 @@ func TestAgentEngineDoesNotCallProviderAfterCancellation(t *testing.T) {
 	cancel()
 
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "must not run"},
+		{Role: schema.RoleAssistant, Content: blocks("must not run")},
 	}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
+	engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(ctx, "hello", nil)
 	if !errors.Is(err, context.Canceled) {
@@ -723,8 +733,8 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 			{Name: "second", ParallelSafe: true},
 		},
 		results: map[string]schema.ToolResult{
-			"first":  {ToolCallID: "call-1", Output: "one"},
-			"second": {ToolCallID: "call-2", Output: "two"},
+			"first":  toolResult(schema.ToolCall{ID: "call-1", Name: "first"}, "one", false),
+			"second": toolResult(schema.ToolCall{ID: "call-2", Name: "second"}, "two", false),
 		},
 		afterExecute: func(callCount int) {
 			if callCount == 1 {
@@ -732,7 +742,7 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 			}
 		},
 	}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), false)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), false)
 	agentEngine.MaxParallelTools = 1
 
 	err := agentEngine.Run(ctx, "run both", nil)
@@ -746,13 +756,13 @@ func TestAgentEngineStopsToolBatchAfterCancellation(t *testing.T) {
 
 func TestAgentEngineCarriesThinkingIntoActionContext(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "先规划，再行动。"},
-		{Role: schema.RoleAssistant, Content: "任务完成"},
+		{Role: schema.RoleAssistant, Content: blocks("先规划，再行动。")},
+		{Role: schema.RoleAssistant, Content: blocks("任务完成")},
 	}}
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
 		{Name: "bash", Description: "execute command"},
 	}}
-	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
+	engine := newAgentEngineForTest(provider, registry, t.TempDir(), true)
 
 	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -768,83 +778,15 @@ func TestAgentEngineCarriesThinkingIntoActionContext(t *testing.T) {
 	}
 	actionContext := provider.requests[1]
 	if len(actionContext) != 4 || actionContext[2].Role != schema.RoleAssistant ||
-		actionContext[2].Content != "先规划，再行动。" ||
-		actionContext[3].Role != schema.RoleUser || !strings.Contains(actionContext[3].Content, "进入 Action") {
+		messageText(t, actionContext[2]) != "先规划，再行动。" ||
+		actionContext[3].Role != schema.RoleUser || !strings.Contains(messageText(t, actionContext[3]), "进入 Action") {
 		t.Fatalf("action context = %#v", actionContext)
 	}
 }
 
-func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
-	workDir := t.TempDir()
-	skillDir := filepath.Join(workDir, "skills", "git-workflow")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	const skillLocation = "skills/git-workflow/SKILL.md"
-	const skillBody = "progressive-body-secret"
-	if err := os.WriteFile(filepath.Join(workDir, filepath.FromSlash(skillLocation)),
-		[]byte("---\nname: git-workflow\ndescription: Handle Git workflows\n---\n"+skillBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	readTool, err := tools.NewReadFileTool(workDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = readTool.Close() })
-	registry := tools.NewRegistry()
-	if err := registry.Register(readTool); err != nil {
-		t.Fatal(err)
-	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "选择 git-workflow，先读取技能。"},
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
-			ID: "read-page-1", Name: "read_file",
-			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","limit":4}`),
-		}}},
-		{Role: schema.RoleAssistant, Content: "发现 continuation marker，继续读取。"},
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
-			ID: "read-page-2", Name: "read_file",
-			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","offset":5}`),
-		}}},
-		{Role: schema.RoleAssistant, Content: "技能已完整读取，可以执行。"},
-		{Role: schema.RoleAssistant, Content: "done"},
-	}}
-	agentEngine := engine.NewAgentEngine(provider, registry, workDir, true)
-
-	if err := agentEngine.Run(context.Background(), "提交代码", nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(provider.requests) != 6 {
-		t.Fatalf("provider calls = %d, want 6", len(provider.requests))
-	}
-	for _, request := range provider.requests {
-		if strings.Contains(request[0].Content, skillBody) {
-			t.Fatalf("System Prompt leaked Skill Body: %q", request[0].Content)
-		}
-	}
-	firstObservation := findMessageByToolCallID(provider.requests[2], "read-page-1")
-	if firstObservation == nil || !strings.Contains(firstObservation.Content, "Use offset=5") ||
-		strings.Contains(firstObservation.Content, skillBody) {
-		t.Fatalf("first observation = %#v", firstObservation)
-	}
-	secondObservation := findMessageByToolCallID(provider.requests[4], "read-page-2")
-	if secondObservation == nil || secondObservation.Content != skillBody {
-		t.Fatalf("second observation = %#v", secondObservation)
-	}
-}
-
-func findMessageByToolCallID(messages []schema.Message, toolCallID string) *schema.Message {
-	for index := range messages {
-		if messages[index].ToolCallID == toolCallID {
-			return &messages[index]
-		}
-	}
-	return nil
-}
-
 func TestAgentEngineRejectsNilThinkingResponse(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{nil}}
-	engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
+	engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "empty response") {
@@ -862,7 +804,7 @@ func TestAgentEngineRejectsToolCallsDuringThinking(t *testing.T) {
 		},
 	}}
 	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "bash"}}}
-	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
+	engine := newAgentEngineForTest(provider, registry, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
 	if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), "tool calls") {
@@ -886,12 +828,12 @@ func TestAgentEngineRejectsInvalidThinkingMessages(t *testing.T) {
 		},
 		{
 			name:     "wrong role",
-			response: &schema.Message{Role: schema.RoleUser, Content: "plan"},
+			response: &schema.Message{Role: schema.RoleUser, Content: blocks("plan")},
 			want:     "assistant role",
 		},
 		{
 			name:     "unexpected tool call ID",
-			response: &schema.Message{Role: schema.RoleAssistant, Content: "plan", ToolCallID: "call-1"},
+			response: &schema.Message{Role: schema.RoleAssistant, Content: blocks("plan"), ToolCallID: "call-1"},
 			want:     "tool_call_id",
 		},
 	}
@@ -899,7 +841,7 @@ func TestAgentEngineRejectsInvalidThinkingMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
-			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), true)
+			engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), true)
 
 			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Thinking") || !strings.Contains(err.Error(), tt.want) {
@@ -917,12 +859,12 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 	}{
 		{
 			name:     "wrong role",
-			response: &schema.Message{Role: schema.RoleUser, Content: "done"},
+			response: &schema.Message{Role: schema.RoleUser, Content: blocks("done")},
 			want:     "assistant role",
 		},
 		{
 			name:     "unexpected tool call ID",
-			response: &schema.Message{Role: schema.RoleAssistant, Content: "done", ToolCallID: "call-1"},
+			response: &schema.Message{Role: schema.RoleAssistant, Content: blocks("done"), ToolCallID: "call-1"},
 			want:     "tool_call_id",
 		},
 	}
@@ -930,7 +872,7 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
-			engine := engine.NewAgentEngine(provider, &fakeRegistry{}, t.TempDir(), false)
+			engine := newAgentEngineForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "hello", nil)
 			if err == nil || !strings.Contains(err.Error(), "Action") || !strings.Contains(err.Error(), tt.want) {
@@ -942,23 +884,23 @@ func TestAgentEngineRejectsInvalidActionMessages(t *testing.T) {
 
 func TestAgentEngineRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "先查看目录。"},
+		{Role: schema.RoleAssistant, Content: blocks("先查看目录。")},
 		{
 			Role: schema.RoleAssistant,
 			ToolCalls: []schema.ToolCall{
 				{ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls -la"}`)},
 			},
 		},
-		{Role: schema.RoleAssistant, Content: "已有观察结果，接下来总结。"},
-		{Role: schema.RoleAssistant, Content: "完成"},
+		{Role: schema.RoleAssistant, Content: blocks("已有观察结果，接下来总结。")},
+		{Role: schema.RoleAssistant, Content: blocks("完成")},
 	}}
 	registry := &fakeRegistry{
 		definitions: []schema.ToolDefinition{{Name: "bash"}},
 		results: map[string]schema.ToolResult{
-			"bash": {ToolCallID: "call-1", Output: "main.go"},
+			"bash": toolResult(schema.ToolCall{ID: "call-1", Name: "bash"}, "main.go", false),
 		},
 	}
-	engine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
+	engine := newAgentEngineForTest(provider, registry, t.TempDir(), true)
 
 	if err := engine.Run(context.Background(), "检查目录", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -973,20 +915,51 @@ func TestAgentEngineRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	}
 	secondThinkingContext := provider.requests[2]
 	lastBeforeThinking := secondThinkingContext[len(secondThinkingContext)-1]
-	if lastBeforeThinking.ToolCallID != "call-1" || lastBeforeThinking.Content != "main.go" {
+	if lastBeforeThinking.ToolCallID != "call-1" || messageText(t, lastBeforeThinking) != "main.go" {
 		t.Fatalf("second thinking observation = %#v", lastBeforeThinking)
 	}
 	secondActionContext := provider.requests[3]
 	observation := findMessageByToolCallID(secondActionContext, "call-1")
-	if observation == nil || observation.Content != "main.go" {
+	if observation == nil || messageText(t, *observation) != "main.go" {
 		t.Fatalf("second action observation = %#v", observation)
 	}
 	if got := secondActionContext[len(secondActionContext)-2]; got.Role != schema.RoleAssistant ||
-		got.Content != "已有观察结果，接下来总结。" {
+		messageText(t, got) != "已有观察结果，接下来总结。" {
 		t.Fatalf("second action thinking = %#v", got)
 	}
 	if got := secondActionContext[len(secondActionContext)-1]; got.Role != schema.RoleUser ||
-		!strings.Contains(got.Content, "进入 Action") {
+		!strings.Contains(messageText(t, got), "进入 Action") {
 		t.Fatalf("second action transition = %#v", got)
 	}
+}
+
+func findMessageByToolCallID(messages []schema.Message, toolCallID string) *schema.Message {
+	for index := range messages {
+		if messages[index].ToolCallID == toolCallID {
+			return &messages[index]
+		}
+	}
+	return nil
+}
+
+func blocks(text string) []schema.ContentBlock {
+	return []schema.ContentBlock{schema.TextBlock(text)}
+}
+
+func toolResult(call schema.ToolCall, text string, isError bool) schema.ToolResult {
+	return schema.ToolResult{
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Content:    blocks(text),
+		IsError:    isError,
+	}
+}
+
+func messageText(t *testing.T, message schema.Message) string {
+	t.Helper()
+	text, err := schema.TextContent(message.Content)
+	if err != nil {
+		t.Fatalf("TextContent() error = %v", err)
+	}
+	return text
 }

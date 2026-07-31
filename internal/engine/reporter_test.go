@@ -77,27 +77,27 @@ func TestMultiReporterForwardsEveryLifecycleMethod(t *testing.T) {
 
 func TestAgentEngineReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: "plan one"},
+		{Role: schema.RoleAssistant, Content: blocks("plan one")},
 		{
 			Role:    schema.RoleAssistant,
-			Content: "starting tool",
+			Content: blocks("starting tool"),
 			ToolCalls: []schema.ToolCall{{
 				ID:        "call-1",
 				Name:      "read_file",
 				Arguments: json.RawMessage(`{"path":"a.txt"}`),
 			}},
 		},
-		{Role: schema.RoleAssistant, Content: "plan two"},
-		{Role: schema.RoleAssistant, Content: "done"},
+		{Role: schema.RoleAssistant, Content: blocks("plan two")},
+		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{
 		definitions: []schema.ToolDefinition{{Name: "read_file"}},
 		results: map[string]schema.ToolResult{
-			"read_file": {ToolCallID: "call-1", Output: "file A"},
+			"read_file": toolResult(schema.ToolCall{ID: "call-1", Name: "read_file"}, "file A", false),
 		},
 	}
 	reporter := &recordingReporter{}
-	agentEngine := engine.NewAgentEngine(provider, registry, t.TempDir(), true)
+	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), true)
 
 	if err := agentEngine.Run(context.Background(), "read a", reporter); err != nil {
 		t.Fatalf("Run() error = %v", err)

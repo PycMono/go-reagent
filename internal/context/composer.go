@@ -54,6 +54,6 @@ func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPr
 
 	return schema.Message{
 		Role:    schema.RoleSystem,
-		Content: builder.String(),
+		Content: []schema.ContentBlock{schema.TextBlock(builder.String())},
 	}, report
 }

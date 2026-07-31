@@ -36,9 +36,15 @@ func TestToolCallArgumentsRemainJSON(t *testing.T) {
 }
 
 func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
-	result := schema.ToolResult{ToolCallID: "call-1", Output: "ok", IsError: false}
+	result := schema.ToolResult{
+		ToolCallID: "call-1",
+		ToolName:   "bash",
+		Content:    []schema.ContentBlock{schema.TextBlock("ok")},
+		IsError:    false,
+	}
 	definition := schema.ToolDefinition{
 		Name:        "bash",
+		Label:       "Read file",
 		Description: "execute a command",
 		InputSchema: map[string]any{"type": "object"},
 	}
@@ -47,7 +53,7 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal ToolResult: %v", err)
 	}
-	if got, want := string(resultJSON), `{"tool_call_id":"call-1","output":"ok","is_error":false}`; got != want {
+	if got, want := string(resultJSON), `{"tool_call_id":"call-1","tool_name":"bash","content":[{"type":"text","text":"ok"}],"is_error":false}`; got != want {
 		t.Fatalf("ToolResult JSON = %s, want %s", got, want)
 	}
 
@@ -55,8 +61,17 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal ToolDefinition: %v", err)
 	}
-	if got, want := string(definitionJSON), `{"name":"bash","description":"execute a command","input_schema":{"type":"object"}}`; got != want {
+	if got, want := string(definitionJSON), `{"name":"bash","label":"Read file","description":"execute a command","input_schema":{"type":"object"}}`; got != want {
 		t.Fatalf("ToolDefinition JSON = %s, want %s", got, want)
+	}
+
+	definition.Label = ""
+	definitionJSON, err = json.Marshal(definition)
+	if err != nil {
+		t.Fatalf("marshal unlabeled ToolDefinition: %v", err)
+	}
+	if got, want := string(definitionJSON), `{"name":"bash","description":"execute a command","input_schema":{"type":"object"}}`; got != want {
+		t.Fatalf("unlabeled ToolDefinition JSON = %s, want %s", got, want)
 	}
 
 	parallelDefinition := schema.ToolDefinition{
@@ -71,5 +86,23 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	}
 	if got, want := string(parallelJSON), `{"name":"read_file","description":"read a file","input_schema":{"type":"object"},"parallel_safe":true}`; got != want {
 		t.Fatalf("parallel ToolDefinition JSON = %s, want %s", got, want)
+	}
+}
+
+func TestToolMessageJSONContract(t *testing.T) {
+	message := schema.Message{
+		Role:       schema.RoleTool,
+		Content:    []schema.ContentBlock{schema.TextBlock("denied")},
+		ToolCallID: "call-1",
+		ToolName:   "read",
+		IsError:    true,
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"role":"tool","content":[{"type":"text","text":"denied"}],"tool_call_id":"call-1","tool_name":"read","is_error":true}`
+	if string(encoded) != want {
+		t.Fatalf("json = %s", encoded)
 	}
 }

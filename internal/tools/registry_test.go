@@ -98,7 +98,7 @@ func TestRegistryRejectsDuplicateWithoutOverwriting(t *testing.T) {
 	}
 
 	result := registry.Execute(context.Background(), schema.ToolCall{ID: "call-1", Name: "echo"})
-	if result.IsError || result.Output != "first" {
+	if result.IsError || toolResultText(t, result) != "first" {
 		t.Fatalf("result = %#v", result)
 	}
 }
@@ -116,7 +116,7 @@ func TestRegistryExecutesRegisteredTool(t *testing.T) {
 	}
 
 	result := registry.Execute(context.Background(), call)
-	if result.IsError || result.ToolCallID != call.ID || result.Output != "ok" {
+	if result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || toolResultText(t, result) != "ok" {
 		t.Fatalf("result = %#v", result)
 	}
 	tool.mu.Lock()
@@ -144,7 +144,7 @@ func TestRegistryReturnsExecutionErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := registry.Execute(context.Background(), tt.call)
-			if !result.IsError || result.ToolCallID != tt.call.ID || !strings.Contains(result.Output, tt.want) {
+			if !result.IsError || result.ToolCallID != tt.call.ID || !strings.Contains(toolResultText(t, result), tt.want) {
 				t.Fatalf("result = %#v", result)
 			}
 		})
@@ -180,12 +180,22 @@ func TestRegistryRecoversToolPanicWithoutExposingValue(t *testing.T) {
 	}
 
 	result := registry.Execute(context.Background(), schema.ToolCall{ID: "call-panic", Name: "panic"})
-	if !result.IsError || result.ToolCallID != "call-panic" || !strings.Contains(result.Output, "panicked") {
+	text := toolResultText(t, result)
+	if !result.IsError || result.ToolCallID != "call-panic" || !strings.Contains(text, "panicked") {
 		t.Fatalf("result = %#v", result)
 	}
-	if strings.Contains(result.Output, "sensitive panic value") {
-		t.Fatalf("panic value leaked in result: %q", result.Output)
+	if strings.Contains(text, "sensitive panic value") {
+		t.Fatalf("panic value leaked in result: %q", text)
 	}
+}
+
+func toolResultText(t *testing.T, result schema.ToolResult) string {
+	t.Helper()
+	text, err := schema.TextContent(result.Content)
+	if err != nil {
+		t.Fatalf("TextContent() error = %v", err)
+	}
+	return text
 }
 
 func TestRegistrySupportsConcurrentDiscoveryAndExecution(t *testing.T) {

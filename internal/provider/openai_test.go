@@ -52,15 +52,15 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 
 	p := newOpenAICompatibleProvider("test-key", server.URL+"/v1/", "test-model", "test")
 	messages := []schema.Message{
-		{Role: schema.RoleSystem, Content: "system prompt"},
-		{Role: schema.RoleUser, Content: "weather"},
+		{Role: schema.RoleSystem, Content: []schema.ContentBlock{schema.TextBlock("system prompt")}},
+		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("weather")}},
 		{
 			Role: schema.RoleAssistant,
 			ToolCalls: []schema.ToolCall{
 				{ID: "call-old", Name: "get_weather", Arguments: json.RawMessage(`{"city":"上海"}`)},
 			},
 		},
-		{Role: schema.RoleUser, Content: "sunny", ToolCallID: "call-old"},
+		{Role: schema.RoleTool, Content: []schema.ContentBlock{schema.TextBlock("sunny")}, ToolCallID: "call-old"},
 	}
 	definitions := []schema.ToolDefinition{
 		{
@@ -120,11 +120,53 @@ func TestOpenAICompatibleProviderOmitsToolsDuringThinking(t *testing.T) {
 	defer server.Close()
 
 	p := newOpenAICompatibleProvider("test-key", server.URL+"/v1/", "test-model", "test")
-	_, err := p.Generate(context.Background(), []schema.Message{{Role: schema.RoleUser, Content: "plan"}}, nil)
+	_, err := p.Generate(context.Background(), []schema.Message{{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("plan")}}}, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if _, exists := (<-requestBody)["tools"]; exists {
 		t.Fatal("thinking request unexpectedly contains tools")
+	}
+}
+
+func TestOpenAIMessagesMapNativeToolResults(t *testing.T) {
+	message := schema.Message{
+		Role:       schema.RoleTool,
+		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+		ToolCallID: "call-1",
+		ToolName:   "read",
+		IsError:    true,
+	}
+
+	messages, err := toOpenAIMessages([]schema.Message{message})
+	if err != nil {
+		t.Fatalf("toOpenAIMessages() error = %v", err)
+	}
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got := decoded[0]["role"]; got != "tool" {
+		t.Fatalf("role = %#v", got)
+	}
+	if got := decoded[0]["tool_call_id"]; got != "call-1" {
+		t.Fatalf("tool_call_id = %#v", got)
+	}
+	if _, exists := decoded[0]["details"]; exists {
+		t.Fatalf("tool result serialized Details: %#v", decoded[0])
+	}
+}
+
+func TestOpenAIMessagesRejectToolResultWithoutCallID(t *testing.T) {
+	_, err := toOpenAIMessages([]schema.Message{{
+		Role:    schema.RoleTool,
+		Content: []schema.ContentBlock{schema.TextBlock("permission denied")},
+	}})
+	if err == nil {
+		t.Fatal("toOpenAIMessages() error = nil")
 	}
 }

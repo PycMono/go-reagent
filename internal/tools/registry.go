@@ -99,13 +99,14 @@ func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
 
 func (r *registryImpl) Execute(ctx context.Context, call schema.ToolCall) (result schema.ToolResult) {
 	result.ToolCallID = call.ID
+	result.ToolName = call.Name
 	if ctx == nil {
-		result.Output = "tool execution failed: context is nil"
+		result.Content = []schema.ContentBlock{schema.TextBlock("tool execution failed: context is nil")}
 		result.IsError = true
 		return result
 	}
 	if err := ctx.Err(); err != nil {
-		result.Output = fmt.Sprintf("tool execution canceled: %v", err)
+		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool execution canceled: %v", err))}
 		result.IsError = true
 		return result
 	}
@@ -114,7 +115,7 @@ func (r *registryImpl) Execute(ctx context.Context, call schema.ToolCall) (resul
 	tool, exists := r.tools[call.Name]
 	r.mu.RUnlock()
 	if !exists {
-		result.Output = fmt.Sprintf("tool %q is not registered", call.Name)
+		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q is not registered", call.Name))}
 		result.IsError = true
 		return result
 	}
@@ -130,24 +131,25 @@ func (r *registryImpl) Execute(ctx context.Context, call schema.ToolCall) (resul
 		)
 		result = schema.ToolResult{
 			ToolCallID: call.ID,
-			Output:     fmt.Sprintf("tool %q panicked during execution", call.Name),
+			ToolName:   call.Name,
+			Content:    []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q panicked during execution", call.Name))},
 			IsError:    true,
 		}
 	}()
 
 	output, err := tool.Execute(ctx, call.Arguments)
 	if err != nil {
-		result.Output = fmt.Sprintf("tool %q failed: %v", call.Name, err)
+		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool %q failed: %v", call.Name, err))}
 		result.IsError = true
 		return result
 	}
 	if err := ctx.Err(); err != nil {
-		result.Output = fmt.Sprintf("tool execution canceled: %v", err)
+		result.Content = []schema.ContentBlock{schema.TextBlock(fmt.Sprintf("tool execution canceled: %v", err))}
 		result.IsError = true
 		return result
 	}
 
-	result.Output = output
+	result.Content = []schema.ContentBlock{schema.TextBlock(output)}
 	return result
 }
 

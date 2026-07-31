@@ -25,26 +25,27 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	}}, nil)
 
 	message, report := NewPromptComposer(workDir).Build(snapshot)
+	content := messageText(t, message)
 	if message.Role != schema.RoleSystem {
 		t.Fatalf("Role = %q, want %q", message.Role, schema.RoleSystem)
 	}
-	core := strings.Index(message.Content, "# 核心身份")
-	agents := strings.Index(message.Content, "# 项目专属指南")
-	skills := strings.Index(message.Content, "<available_skills>")
+	core := strings.Index(content, "# 核心身份")
+	agents := strings.Index(content, "# 项目专属指南")
+	skills := strings.Index(content, "<available_skills>")
 	if core < 0 || agents <= core || skills <= agents {
-		t.Fatalf("prompt sections out of order: %q", message.Content)
+		t.Fatalf("prompt sections out of order: %q", content)
 	}
 	for _, want := range []string{
 		"go-reagent", "Thinking", "修改文件前", "始终使用中文回复",
 		"Use project conventions.", "Review changes", ".claw/skills/review/SKILL.md",
 		"sha256:0123456789abcdef", "必须先使用 read_file",
 	} {
-		if !strings.Contains(message.Content, want) {
-			t.Fatalf("prompt missing %q: %q", want, message.Content)
+		if !strings.Contains(content, want) {
+			t.Fatalf("prompt missing %q: %q", want, content)
 		}
 	}
-	if strings.Contains(message.Content, "body-secret-must-not-leak") {
-		t.Fatalf("prompt leaked Skill Body: %q", message.Content)
+	if strings.Contains(content, "body-secret-must-not-leak") {
+		t.Fatalf("prompt leaked Skill Body: %q", content)
 	}
 	if report.IncludedSkills != 1 || report.Truncated {
 		t.Fatalf("report = %#v", report)
@@ -54,9 +55,10 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 // TestPromptComposerDoesNotRequireUnavailableTools 验证核心提示词不会要求模型调用未提供的工具。
 func TestPromptComposerDoesNotRequireUnavailableTools(t *testing.T) {
 	message, _ := NewPromptComposer(t.TempDir()).Build(nil)
+	content := messageText(t, message)
 	for _, unavailable := range []string{"write_file", "test -f", "ls 或", "调用 bash"} {
-		if strings.Contains(message.Content, unavailable) {
-			t.Fatalf("core prompt requires unavailable tool %q: %q", unavailable, message.Content)
+		if strings.Contains(content, unavailable) {
+			t.Fatalf("core prompt requires unavailable tool %q: %q", unavailable, content)
 		}
 	}
 }
@@ -64,12 +66,13 @@ func TestPromptComposerDoesNotRequireUnavailableTools(t *testing.T) {
 // TestPromptComposerOmitsAbsentWorkspaceSections 验证缺少 AGENTS.md 和 Skill 时只生成核心提示词。
 func TestPromptComposerOmitsAbsentWorkspaceSections(t *testing.T) {
 	message, report := NewPromptComposer(t.TempDir()).Build(newSkillSnapshot(nil, nil))
-	if message.Role != schema.RoleSystem || !strings.Contains(message.Content, "# 核心身份") {
+	content := messageText(t, message)
+	if message.Role != schema.RoleSystem || !strings.Contains(content, "# 核心身份") {
 		t.Fatalf("Build() = %#v", message)
 	}
 	for _, absent := range []string{"# 项目专属指南", "<available_skills>"} {
-		if strings.Contains(message.Content, absent) {
-			t.Fatalf("prompt contains absent section %q: %q", absent, message.Content)
+		if strings.Contains(content, absent) {
+			t.Fatalf("prompt contains absent section %q: %q", absent, content)
 		}
 	}
 	if report != (SkillPromptReport{}) {
@@ -92,11 +95,13 @@ func TestPromptComposerReadsAgentsFileOnEveryBuild(t *testing.T) {
 	}
 	second, _ := composer.Build(nil)
 
-	if !strings.Contains(first.Content, "guide-v1") || strings.Contains(first.Content, "guide-v2") {
-		t.Fatalf("first Build() = %q", first.Content)
+	firstContent := messageText(t, first)
+	secondContent := messageText(t, second)
+	if !strings.Contains(firstContent, "guide-v1") || strings.Contains(firstContent, "guide-v2") {
+		t.Fatalf("first Build() = %q", firstContent)
 	}
-	if !strings.Contains(second.Content, "guide-v2") || strings.Contains(second.Content, "guide-v1") {
-		t.Fatalf("second Build() = %q", second.Content)
+	if !strings.Contains(secondContent, "guide-v2") || strings.Contains(secondContent, "guide-v1") {
+		t.Fatalf("second Build() = %q", secondContent)
 	}
 }
 
@@ -112,8 +117,9 @@ func TestPromptComposerRejectsAgentsSymlinks(t *testing.T) {
 			t.Skipf("symlink unavailable: %v", err)
 		}
 		message, _ := NewPromptComposer(workDir).Build(nil)
-		if strings.Contains(message.Content, "outside-agents-secret") || strings.Contains(message.Content, "# 项目专属指南") {
-			t.Fatalf("Build() followed external symlink: %q", message.Content)
+		content := messageText(t, message)
+		if strings.Contains(content, "outside-agents-secret") || strings.Contains(content, "# 项目专属指南") {
+			t.Fatalf("Build() followed external symlink: %q", content)
 		}
 	})
 
@@ -126,8 +132,18 @@ func TestPromptComposerRejectsAgentsSymlinks(t *testing.T) {
 			t.Skipf("symlink unavailable: %v", err)
 		}
 		message, _ := NewPromptComposer(workDir).Build(nil)
-		if strings.Contains(message.Content, "inside-linked-guide") || strings.Contains(message.Content, "# 项目专属指南") {
-			t.Fatalf("Build() followed internal symlink: %q", message.Content)
+		content := messageText(t, message)
+		if strings.Contains(content, "inside-linked-guide") || strings.Contains(content, "# 项目专属指南") {
+			t.Fatalf("Build() followed internal symlink: %q", content)
 		}
 	})
+}
+
+func messageText(t *testing.T, message schema.Message) string {
+	t.Helper()
+	text, err := schema.TextContent(message.Content)
+	if err != nil {
+		t.Fatalf("TextContent() error = %v", err)
+	}
+	return text
 }
