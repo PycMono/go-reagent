@@ -16,13 +16,13 @@ import (
 const maxProcessWaitMS = 30_000
 
 type ProcessTool struct {
-	manager *ProcessManager
+	supervisor *ProcessSupervisor
 }
 
 var _ Tool = (*ProcessTool)(nil)
 
-func NewProcessTool(manager *ProcessManager) *ProcessTool {
-	return &ProcessTool{manager: manager}
+func NewProcessTool(supervisor *ProcessSupervisor) *ProcessTool {
+	return &ProcessTool{supervisor: supervisor}
 }
 
 func (t *ProcessTool) Name() string {
@@ -54,13 +54,13 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 }
 
 func (t *ProcessTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if t == nil || t.manager == nil {
+	if t == nil || t.supervisor == nil {
 		return "", errors.New("process 未初始化")
 	}
 	if ctx == nil {
 		return "", errors.New("context 不能为空")
 	}
-	if err := t.manager.ensureOpen(); err != nil {
+	if err := t.supervisor.ensureOpen(); err != nil {
 		return "", err
 	}
 	input, err := decodeProcessArgs(args)
@@ -69,7 +69,12 @@ func (t *ProcessTool) execute(ctx context.Context, args json.RawMessage) (string
 	}
 	input.Action = strings.TrimSpace(input.Action)
 	if input.Action == "list" {
-		output, err := json.Marshal(map[string]any{"sessions": t.manager.list()})
+		snapshots := t.supervisor.List()
+		sessions := make([]any, 0, len(snapshots))
+		for _, snapshot := range snapshots {
+			sessions = append(sessions, legacyProcessSnapshot(snapshot))
+		}
+		output, err := json.Marshal(map[string]any{"sessions": sessions})
 		if err != nil {
 			return "", fmt.Errorf("序列化 process 列表失败: %w", err)
 		}
@@ -89,50 +94,24 @@ func (t *ProcessTool) execute(ctx context.Context, args json.RawMessage) (string
 	if waitMS < 0 || waitMS > maxProcessWaitMS {
 		return "", fmt.Errorf("wait_ms 必须在 0..%d", maxProcessWaitMS)
 	}
-	session, err := t.manager.session(input.SessionID)
-	if err != nil {
-		return "", err
-	}
-
+	var snapshot ProcessSnapshot
 	switch input.Action {
 	case "poll":
-		if waitMS > 0 {
-			timer := time.NewTimer(time.Duration(waitMS) * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-session.done:
-			case <-timer.C:
-			case <-ctx.Done():
-				return "", fmt.Errorf("process poll 已取消: %w", ctx.Err())
-			}
-		}
+		snapshot, err = t.supervisor.Poll(ctx, input.SessionID, time.Duration(waitMS)*time.Millisecond)
 
 	case "write":
 		if input.Data == nil && !input.EOF {
 			return "", errors.New("write action 需要 data 或 eof=true")
 		}
-		writeDone := make(chan error, 1)
-		go func() {
-			writeDone <- session.writeInput(input.Data, input.EOF)
-		}()
-		select {
-		case err := <-writeDone:
-			if err != nil {
-				return "", err
-			}
-		case <-ctx.Done():
-			session.terminate("canceled")
-			return "", fmt.Errorf("process write 已取消: %w", ctx.Err())
-		}
+		snapshot, err = t.supervisor.Write(ctx, input.SessionID, input.Data, input.EOF)
 
 	case "kill":
-		session.terminate("killed")
-		select {
-		case <-session.done:
-		case <-time.After(time.Second):
-		}
+		snapshot, err = t.supervisor.Kill(ctx, input.SessionID)
 	}
-	return marshalProcessSnapshot(session.snapshot())
+	if err != nil {
+		return "", err
+	}
+	return marshalProcessSnapshot(snapshot)
 }
 
 type processArgs struct {

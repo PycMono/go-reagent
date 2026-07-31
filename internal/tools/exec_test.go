@@ -21,7 +21,7 @@ type processObservation struct {
 }
 
 func TestExecToolDefinitionIsExclusive(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	definition := NewExecTool(manager).Definition()
 	if definition.Name != "exec" || definition.Description == "" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
@@ -29,7 +29,7 @@ func TestExecToolDefinitionIsExclusive(t *testing.T) {
 }
 
 func TestExecToolReturnsOutputAndNonZeroExitCode(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	tool := NewExecTool(manager)
 	result := executeAndDecodeProcessObservation(t, tool, map[string]any{
 		"command":  toolHelperCommand("output-exit"),
@@ -44,7 +44,7 @@ func TestExecToolReturnsOutputAndNonZeroExitCode(t *testing.T) {
 }
 
 func TestExecToolPreservesOriginalCommandText(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	command := "  " + toolHelperCommand("print", "preserved") + "  "
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":  command,
@@ -61,7 +61,7 @@ func TestExecToolUsesWorkspaceRelativeWorkDirAndEnvironment(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(workDir, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manager := newProcessManagerForTest(t, workDir)
+	manager := newProcessSupervisorForTest(t, workDir)
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":  toolHelperCommand("cwd-env"),
 		"workdir":  "nested",
@@ -79,7 +79,7 @@ func TestExecToolUsesWorkspaceRelativeWorkDirAndEnvironment(t *testing.T) {
 }
 
 func TestExecToolTimesOutAndTerminatesCommand(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	started := time.Now()
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":    toolHelperCommand("sleep", "5000"),
@@ -92,7 +92,7 @@ func TestExecToolTimesOutAndTerminatesCommand(t *testing.T) {
 }
 
 func TestExecToolKeepsBoundedTailOutput(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":  toolHelperCommand("large-output", "60000"),
 		"yield_ms": 30000,
@@ -103,7 +103,7 @@ func TestExecToolKeepsBoundedTailOutput(t *testing.T) {
 }
 
 func TestExecToolAutoBackgroundsAfterYield(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":  toolHelperCommand("sleep-output", "200", "done"),
 		"yield_ms": 10,
@@ -114,7 +114,7 @@ func TestExecToolAutoBackgroundsAfterYield(t *testing.T) {
 }
 
 func TestExecToolYieldZeroReturnsImmediately(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	started := time.Now()
 	result := executeAndDecodeProcessObservation(t, NewExecTool(manager), map[string]any{
 		"command":  toolHelperCommand("sleep", "1000"),
@@ -126,7 +126,7 @@ func TestExecToolYieldZeroReturnsImmediately(t *testing.T) {
 }
 
 func TestExecToolRejectsInvalidArgumentsAndWorkDir(t *testing.T) {
-	manager := newProcessManagerForTest(t, t.TempDir())
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	tool := NewExecTool(manager)
 	tests := []struct {
 		args json.RawMessage
@@ -147,11 +147,8 @@ func TestExecToolRejectsInvalidArgumentsAndWorkDir(t *testing.T) {
 	}
 }
 
-func TestExecToolHonorsCanceledContextAndClosedManager(t *testing.T) {
-	manager, err := NewProcessManager(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestExecToolHonorsCanceledContextAndClosedSupervisor(t *testing.T) {
+	manager := newProcessSupervisorForTest(t, t.TempDir())
 	tool := NewExecTool(manager)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -186,14 +183,4 @@ func execArguments(t *testing.T, input map[string]any) json.RawMessage {
 		t.Fatalf("marshal arguments: %v", err)
 	}
 	return arguments
-}
-
-func newProcessManagerForTest(t *testing.T, workDir string) *ProcessManager {
-	t.Helper()
-	manager, err := NewProcessManager(workDir)
-	if err != nil {
-		t.Fatalf("NewProcessManager() error = %v", err)
-	}
-	t.Cleanup(func() { _ = manager.Close() })
-	return manager
 }

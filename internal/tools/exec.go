@@ -21,13 +21,13 @@ const (
 )
 
 type ExecTool struct {
-	manager *ProcessManager
+	supervisor *ProcessSupervisor
 }
 
 var _ Tool = (*ExecTool)(nil)
 
-func NewExecTool(manager *ProcessManager) *ExecTool {
-	return &ExecTool{manager: manager}
+func NewExecTool(supervisor *ProcessSupervisor) *ExecTool {
+	return &ExecTool{supervisor: supervisor}
 }
 
 func (t *ExecTool) Name() string {
@@ -60,7 +60,7 @@ func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEm
 }
 
 func (t *ExecTool) execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if t == nil || t.manager == nil {
+	if t == nil || t.supervisor == nil {
 		return "", errors.New("exec 未初始化")
 	}
 	if ctx == nil {
@@ -87,7 +87,12 @@ func (t *ExecTool) execute(ctx context.Context, args json.RawMessage) (string, e
 	if yieldMS < 0 || yieldMS > maxExecYieldMS {
 		return "", fmt.Errorf("yield_ms 必须在 0..%d", maxExecYieldMS)
 	}
-	session, err := t.manager.start(ctx, input.Command, input.WorkDir, input.Env, time.Duration(timeoutMS)*time.Millisecond)
+	session, err := t.supervisor.Start(ctx, ProcessStart{
+		Command: input.Command,
+		WorkDir: input.WorkDir,
+		Env:     input.Env,
+		Timeout: time.Duration(timeoutMS) * time.Millisecond,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +107,7 @@ func (t *ExecTool) execute(ctx context.Context, args json.RawMessage) (string, e
 	case <-timer.C:
 		return marshalProcessSnapshot(session.snapshot())
 	case <-ctx.Done():
-		session.terminate("canceled")
+		_ = session.terminate("canceled")
 		<-session.done
 		return "", fmt.Errorf("命令执行已取消: %w", ctx.Err())
 	}
@@ -134,10 +139,30 @@ func decodeExecArgs(args json.RawMessage) (execArgs, error) {
 	return input, nil
 }
 
-func marshalProcessSnapshot(snapshot processSnapshot) (string, error) {
-	output, err := json.Marshal(snapshot)
+func marshalProcessSnapshot(snapshot ProcessSnapshot) (string, error) {
+	output, err := json.Marshal(legacyProcessSnapshot(snapshot))
 	if err != nil {
 		return "", fmt.Errorf("序列化 process 结果失败: %w", err)
 	}
 	return string(output), nil
+}
+
+func legacyProcessSnapshot(snapshot ProcessSnapshot) any {
+	return struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+		Command   string `json:"command"`
+		WorkDir   string `json:"workdir"`
+		Output    string `json:"output"`
+		ExitCode  *int   `json:"exit_code,omitempty"`
+		Truncated bool   `json:"truncated"`
+	}{
+		SessionID: snapshot.SessionID,
+		Status:    snapshot.Status,
+		Command:   snapshot.Command,
+		WorkDir:   snapshot.CWD,
+		Output:    snapshot.Output,
+		ExitCode:  snapshot.ExitCode,
+		Truncated: snapshot.Truncated,
+	}
 }

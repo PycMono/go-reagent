@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -79,6 +80,36 @@ func TestToolCommandHelper(t *testing.T) {
 
 	case "copy-stdin":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
+
+	case "spawn-child":
+		if len(arguments) != 2 {
+			os.Exit(2)
+		}
+		marker := arguments[1]
+		child := exec.Command(os.Args[0], "-test.run=^TestToolCommandHelper$", "--", "delayed-write", "300", marker)
+		if err := child.Start(); err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(marker+".ready", []byte("ready"), 0o600); err != nil {
+			_ = child.Process.Kill()
+			os.Exit(2)
+		}
+		if err := child.Wait(); err != nil {
+			os.Exit(1)
+		}
+
+	case "delayed-write":
+		if len(arguments) != 3 {
+			os.Exit(2)
+		}
+		milliseconds, err := strconv.Atoi(arguments[1])
+		if err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(time.Duration(milliseconds) * time.Millisecond)
+		if err := os.WriteFile(arguments[2], []byte("survived"), 0o600); err != nil {
+			os.Exit(2)
+		}
 
 	default:
 		os.Exit(2)
