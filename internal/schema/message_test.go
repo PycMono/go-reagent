@@ -75,7 +75,7 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	}
 
 	parallelDefinition := schema.ToolDefinition{
-		Name:         "read_file",
+		Name:         "read",
 		Description:  "read a file",
 		InputSchema:  map[string]any{"type": "object"},
 		ParallelSafe: true,
@@ -84,7 +84,7 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal parallel ToolDefinition: %v", err)
 	}
-	if got, want := string(parallelJSON), `{"name":"read_file","description":"read a file","input_schema":{"type":"object"},"parallel_safe":true}`; got != want {
+	if got, want := string(parallelJSON), `{"name":"read","description":"read a file","input_schema":{"type":"object"},"parallel_safe":true}`; got != want {
 		t.Fatalf("parallel ToolDefinition JSON = %s, want %s", got, want)
 	}
 }

@@ -1,9 +1,14 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
@@ -12,10 +17,15 @@ import (
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-func TestNewReporterSendsWeComEventWhenConfigured(t *testing.T) {
-	received := make(chan struct{}, 1)
+func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests int
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		received <- struct{}{}
+		mu.Lock()
+		requests++
+		mu.Unlock()
 		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	defer server.Close()
@@ -28,12 +38,57 @@ func TestNewReporterSendsWeComEventWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReporterRegistrations() error = %v", err)
 	}
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = writeEnd
+	terminal := engine.NewTerminalReporter()
+	os.Stdout = originalStdout
+	registrations = append(registrations, engine.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
 	reporter := engine.NewMultiReporter(registrations)
-	reporter.Report(context.Background(), schema.NewToolStartEvent(schema.ToolCall{Name: "read_file"}))
+	ctx := context.Background()
+	execCall := schema.ToolCall{ID: "exec-1", Name: "exec", Arguments: []byte(`{"command":"go test ./..."}`)}
+	reporter.Report(ctx, schema.NewToolUpdateEvent(execCall, schema.ToolUpdate{
+		Content: []schema.ContentBlock{schema.TextBlock("streamed output")},
+	}))
+	mu.Lock()
+	requestsAfterUpdate := requests
+	mu.Unlock()
+	if requestsAfterUpdate != 0 {
+		t.Fatalf("WeCom requests after exec update = %d, want 0", requestsAfterUpdate)
+	}
 
-	select {
-	case <-received:
-	default:
-		t.Fatal("configured WeCom Reporter did not send lifecycle event")
+	reporter.Report(ctx, schema.NewToolStartEvent(execCall))
+	reporter.Report(ctx, schema.NewToolEndEvent(execCall, schema.ToolResult{
+		ToolCallID: execCall.ID,
+		ToolName:   execCall.Name,
+		Content:    []schema.ContentBlock{schema.TextBlock("exit status 1")},
+		IsError:    true,
+	}))
+	reporter.Report(ctx, schema.NewMessageEvent(schema.Message{
+		Role:    schema.RoleAssistant,
+		Content: []schema.ContentBlock{schema.TextBlock("final answer")},
+	}))
+	mu.Lock()
+	finalRequests := requests
+	mu.Unlock()
+	if finalRequests != 3 {
+		t.Fatalf("WeCom request count = %d, want 3", finalRequests)
+	}
+
+	if err := writeEnd.Close(); err != nil {
+		t.Fatal(err)
+	}
+	terminalOutput, err := io.ReadAll(readEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readEnd.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(terminalOutput, []byte("streamed output")) || strings.Count(string(terminalOutput), "streamed output") != 1 {
+		t.Fatalf("terminal output = %q, want one exec update", terminalOutput)
 	}
 }

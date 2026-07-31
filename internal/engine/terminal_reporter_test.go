@@ -17,7 +17,7 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newTerminalReporter(&output)
 	ctx := context.Background()
-	call := schema.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	execCall := schema.ToolCall{ID: "call-2", Name: "exec", Arguments: json.RawMessage(`{"command":"go test"}`)}
 
 	reporter.Report(ctx, schema.NewThinkingEvent())
@@ -31,7 +31,7 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 		ToolName:   call.Name,
 		Content:    []schema.ContentBlock{schema.TextBlock("ok")},
 	}))
-	failedCall := schema.ToolCall{ID: "call-3", Name: "edit_file"}
+	failedCall := schema.ToolCall{ID: "call-3", Name: "edit"}
 	reporter.Report(ctx, schema.NewToolEndEvent(failedCall, schema.ToolResult{
 		ToolCallID: failedCall.ID,
 		ToolName:   failedCall.Name,
@@ -46,7 +46,7 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 	got := output.String()
 	for _, want := range []string{
 		"思考中",
-		"read_file",
+		"read",
 		"stderr chunk",
 		"执行成功",
 		"执行失败",

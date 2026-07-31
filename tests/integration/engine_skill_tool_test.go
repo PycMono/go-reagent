@@ -35,7 +35,7 @@ func (p *scriptedProvider) Generate(
 	return p.responses[index], nil
 }
 
-func TestAgentRuntimeProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
+func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	workDir := t.TempDir()
 	skillDir := filepath.Join(workDir, "skills", "git-workflow")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -94,12 +94,12 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 			t.Fatalf("System Prompt leaked Skill Body: %q", messageText(t, request[0]))
 		}
 	}
-	firstObservation := findMessageByToolCallID(provider.requests[2], "read-page-1")
+	firstObservation := findToolObservation(provider.requests[2], "read-page-1")
 	if firstObservation == nil || !strings.Contains(messageText(t, *firstObservation), "Use offset=5") ||
 		strings.Contains(messageText(t, *firstObservation), skillBody) {
 		t.Fatalf("first observation = %#v", firstObservation)
 	}
-	secondObservation := findMessageByToolCallID(provider.requests[4], "read-page-2")
+	secondObservation := findToolObservation(provider.requests[4], "read-page-2")
 	if secondObservation == nil || messageText(t, *secondObservation) != skillBody {
 		t.Fatalf("second observation = %#v", secondObservation)
 	}
@@ -118,9 +118,9 @@ func messageText(t *testing.T, message schema.Message) string {
 	return text
 }
 
-func findMessageByToolCallID(messages []schema.Message, toolCallID string) *schema.Message {
+func findToolObservation(messages []schema.Message, toolCallID string) *schema.Message {
 	for index := range messages {
-		if messages[index].ToolCallID == toolCallID {
+		if messages[index].Role == schema.RoleTool && messages[index].ToolCallID == toolCallID {
 			return &messages[index]
 		}
 	}

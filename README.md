@@ -2,7 +2,7 @@
 
 `go-reagent` 是一个用 Go 编写的企业级 Agent Harness 内核，用于统一承载大模型推理、工具调用与 Agent 生命周期。
 
-项目目前处于核心能力搭建阶段：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry，以及 `read_file`、`write_file`、`edit_file`、`apply_patch`、`exec` 和 `process` 本地编码工具闭环已经就位。
+项目目前处于核心能力搭建阶段：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry，以及最终的 `apply_patch`、`edit`、`exec`、`process`、`read` 和 `write` 六工具闭环已经就位。
 
 ## 核心流程
 
@@ -45,60 +45,84 @@ go-reagent/
 │   ├── main_test.go             # 应用日志测试
 │   └── ping/main.go             # 独立 HTTP ping 示例
 ├── internal/
-│   ├── app/                 # Uber Fx 组合根与一次性进程生命周期
-│   │   ├── module.go        # 完整 Fx Option 依赖图
-│   │   ├── providers.go     # Config、Provider、Registry、Reporter 与 Engine 构造
+│   ├── register.go          # 聚合各包 Register 的根 Fx 入口
+│   ├── app/                 # 一次性进程生命周期
+│   │   ├── register.go      # AgentRunner 与生命周期注册
 │   │   ├── runner.go        # AgentRunner 和 Fx 启停钩子
-│   │   └── *_test.go        # 构造链、资源关闭、退出码与依赖图测试
+│   │   └── *_test.go        # 取消、退出码与生命周期测试
 │   ├── config/              # 启动配置层
 │   │   ├── config.go        # 配置结构、加载与当前平台选择
+│   │   ├── register.go      # Config、WorkDir 与 Prompt 注册
 │   │   ├── validate.go      # 配置规范化与数据校验
 │   │   └── config_test.go   # 配置解析与错误处理测试
+│   ├── context/             # 工作区 Prompt 与 Skill 上下文
+│   │   └── register.go      # PromptComposer 与 SkillLoader 注册
 │   ├── dispatch/            # 外部消息渠道输出适配层
+│   │   ├── register.go      # Terminal/WeCom Reporter 注册
 │   │   ├── wecom.go         # 企业微信群机器人 Reporter
 │   │   └── wecom_test.go    # Webhook 协议、长度与并发测试
 │   ├── engine/              # 核心引擎层
-│   │   ├── engine.go        # AgentEngine 状态与构造
+│   │   ├── engine.go        # AgentRuntime、AgentLoop 与调度构造
+│   │   ├── register.go      # Engine Agent 注册
 │   │   ├── run_*.go         # ReAct Main Loop、校验、执行与诊断
 │   │   ├── reporter.go      # Agent 生命周期 Reporter 与广播实现
 │   │   ├── terminal_reporter.go # 终端输出 Reporter
 │   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
 │   ├── provider/            # 模型适配层
 │   │   ├── interface.go     # LLM Provider 接口
+│   │   ├── register.go      # 当前平台 Provider 注册
 │   │   ├── factory.go       # 根据协议创建 Provider
 │   │   ├── openai.go        # OpenAI Chat Completions 兼容适配器
 │   │   └── claude.go        # Anthropic Messages 兼容适配器
 │   ├── schema/              # 公共数据结构
 │   │   └── message.go       # 消息、角色与工具调用类型
 │   └── tools/               # 工具与执行层
+│       ├── register.go      # 六个工具、Registry 与资源生命周期注册
 │       ├── registry.go      # 线程安全的工具注册、发现与执行
 │       ├── registry_test.go # Registry 生命周期与错误隔离测试
-│       ├── read_file.go      # WorkDir 内受限文本文件读取工具
-│       ├── read_file_test.go # 路径与输出预算安全测试
-│       ├── edit_file.go      # WorkDir 内受限的多级唯一匹配编辑工具
-│       ├── write_file.go     # 创建或完整覆盖 UTF-8 文本文件
+│       ├── read.go           # WorkDir 内受限文本文件读取工具
+│       ├── read_test.go      # 路径与输出预算安全测试
+│       ├── edit.go           # WorkDir 内受限的批量唯一匹配编辑工具
+│       ├── write.go          # 创建或完整覆盖 UTF-8 文本文件
 │       ├── apply_patch*.go   # 结构化多文件补丁解析与应用
 │       ├── exec.go           # 有界输出的 shell 命令执行工具
 │       └── process*.go       # 后台进程会话与进程组管理
+├── tests/
+│   └── integration/          # 跨包协作、生命周期和组合根集成测试
 ├── go.mod
 └── README.md
 ```
 
-`internal/app` 是唯一的 Fx 组合根，负责依赖注入；核心包不依赖 Fx：
+每个业务包通过自己的 `Register` 声明 Fx 对象，根 `internal.Register` 只负责统一聚合：
 
 ```text
-cmd ──► app ──► config / dispatch / engine / provider / tools
+cmd ──► internal.Register
+          ├── config / context / provider / tools / dispatch / engine
+          └── app（AgentRunner 与 Fx 生命周期）
 
 engine ──► provider ──► schema
+   ├─────► context
    └─────► tools ─────► schema
+```
+
+一次运行内部按以下边界协作：
+
+```text
+RunContextFactory -> AgentLoop -> LLMProvider
+                         |
+                         v
+                   ToolScheduler -> Registry -> Middleware -> Tool
+                                                   |
+ToolUpdate -> ToolEvent -> AgentEvent -> MultiReporter -> Terminal / WeCom
 ```
 
 - `schema` 不依赖其他业务包，统一各层交换的数据结构。
 - `config` 通过 Configor 加载 JSON、YAML 或 TOML 平台配置，并返回 `currentPlatform` 选中的完整配置。
 - `provider` 通过 `LLMProvider.Generate` 隔离协议调用细节，通过工厂选择 OpenAI 或 Anthropic 适配器。
-- `tools` 通过 `BaseTool`、`MutableRegistry` 和 `Registry` 分离工具注册、发现与执行权限。
-- `engine` 持有工作区路径并负责编排上下文、模型推理与工具执行，不关心具体厂商和工具实现。
-- `app` 使用 Fx 注入 Config、WorkDir、Provider、Registry、Reporter、Engine 和 AgentRunner，并管理资源关闭顺序。
+- `tools` 通过 `Tool`、`Registry` 和有序 `Middleware` 分离工具实现、发现、执行与横切策略。
+- `engine` 通过 `AgentRuntime` 编排运行上下文、模型推理、工具调度和事件路由，不关心具体厂商和工具实现。
+- 各包的 `register.go` 构造本包运行时对象；`schema` 只有纯数据结构，因此不依赖 Fx。
+- `app` 只注册 AgentRunner 和进程启停钩子；工具资源生命周期由 `tools.Register` 管理。
 - `cmd` 只初始化项目日志并运行 Fx App，不承载依赖组装和业务逻辑。
 
 ## 环境要求
@@ -199,20 +223,22 @@ Configor 会先加载基础文件，再加载同目录下的环境文件，例�
 }
 ```
 
-`webhookURL` 为空时只输出到终端；配置后，终端输出和企业微信群通知同时启用。当前按照
-Reporter 生命周期逐条发送，不做聚合：每次 Thinking、每个 Tool Call、每个 Tool Result 和
-每段非空模型回复各发送一条 Markdown 消息。单条内容最多 4096 字节，超长内容会在合法 UTF-8
-边界截断。
+`webhookURL` 为空时只输出到终端；配置后，Terminal 和企业微信群 Reporter 同时启用。运行时事件
+统一为 `thinking`、`tool_start`、`tool_update`、`tool_end` 和 `message`；消息、更新与结果的 Content
+当前只允许文本块。Terminal 实时显示 `exec` 的 stdout/stderr `tool_update`，同时显示工具开始、最终
+状态和模型回复。WeCom 主动过滤 Thinking、所有 update、成功结果和非 Assistant 消息，只发送工具
+开始、工具失败和最终 Assistant 回复，避免流式输出刷屏。单条 Markdown 最多 4096 字节，超长内容
+会在合法 UTF-8 边界截断。
 
 当前能力仅为单向群通知，不接收群消息，也不需要配置企业微信回调、Token 或 EncodingAESKey。
 Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地配置中，不能写入示例配置、日志或提交。
 
 ### Fx 启动与退出
 
-启动依赖链由 `internal/app.Module` 统一提供：
+启动依赖链由根 `internal.Register` 聚合各包注册项后统一提供：
 
 ```text
-Config -> WorkDir -> LLMProvider -> Registry -> Reporter -> AgentEngine -> AgentRunner
+Config -> WorkDir -> LLMProvider / RunContextFactory / Registry / Reporter -> AgentRuntime -> AgentRunner
 ```
 
 AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻塞启动钩子。任务完成后主动关闭 Fx：
@@ -237,13 +263,26 @@ AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻
 ### 工具并发调度
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
-- 当前只有只读的 `read_file` 标记为并发安全；其余文件修改和进程工具保持独占执行。
+- 当前只有只读的 `read` 标记为并发安全；其余五个工具保持独占执行。
 - 连续的安全工具组成一个波次，默认最多同时执行 4 个；`MaxParallelTools <= 0` 时退化为串行。
 - 独占工具会等待前一安全波完成，并阻止后一波提前启动。
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
 - 同一安全波中的调用必须语义独立；需要前序结果的操作仍应拆成多个模型轮次。
 
-### read_file 安全边界
+### 最终工具协议
+
+Registry 只注册下列六个名称；参数使用驼峰字段，不提供旧名称或旧字段别名：
+
+| 工具 | 参数字段 |
+| --- | --- |
+| `apply_patch` | `input` |
+| `edit` | `path`、非空 `edits[]`；每项为 `oldText`、`newText` |
+| `exec` | `command`，可选 `workdir`、`env`、`yieldMs`、`background`、`timeout` |
+| `process` | `action`，按动作使用 `sessionId`、`timeout`、`offset`、`limit`、`data`、`eof` |
+| `read` | `path`，可选 `offset`、`limit` |
+| `write` | `path`、`content` |
+
+### read 安全边界
 
 - 只接受相对于当前 WorkDir 的路径。
 - 使用 Go 1.26 `os.Root` 阻止绝对路径、`..` 穿越和外部符号链接逃逸。
@@ -251,28 +290,30 @@ AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻
 - 只读取普通 UTF-8 文本文件，拒绝目录、设备和疑似二进制内容。
 - 单页最多返回 2000 行且最终输出不超过 50 KiB；响应提供 `offset` 续读标记。
 
-### edit_file 安全边界
+### edit 安全边界
 
 - 只修改 WorkDir 内已经存在的普通 UTF-8 文本文件，拒绝 NUL 内容、路径穿越和外部符号链接。
-- `old_text` 依次尝试精确匹配、CRLF/LF 等价、片段首尾空白容错和逐行忽略缩进匹配。
-- 每一级都必须唯一命中；未命中会提示先调用 `read_file`，多处命中会要求提供更多上下文。
-- 替换只改变命中的原始字节区间，并保留其他内容、原换行风格和文件权限。
-- `new_text` 可以显式传入空字符串以删除片段，但字段不能缺失。
+- `edits[]` 中每个 `oldText` 都基于原始文件独立做唯一匹配，匹配范围不得重叠或嵌套。
+- 全部编辑预检成功后一次写回；`newText` 可以是空字符串以删除片段，但字段不能缺失。
+- 替换保留未修改内容、原换行风格和文件权限，并在 Details 返回 diff、patch、替换数和首个修改行。
 - 工具未标记为并发安全，调度器会把每次编辑作为独占屏障执行。
 
-### write_file 与 apply_patch
+### write 与 apply_patch
 
-- `write_file` 创建或完整覆盖 WorkDir 内的 UTF-8 文本文件，并自动创建父目录；相同内容不会重复写入。
+- `write` 创建或完整覆盖 WorkDir 内的 UTF-8 文本文件，并自动创建父目录；相同内容不会重复写入。
 - `apply_patch` 接受 OpenClaw 风格的 `*** Begin Patch` 结构化补丁，支持 Add、Update、Delete 和 Move。
 - 补丁先在内存中完成全部路径、冲突和上下文预检，再写入磁盘，避免语法错误造成部分修改。
 - 两个工具都拒绝绝对路径、`..` 逃逸、外部符号链接、NUL 和非 UTF-8 文本。
 
 ### exec 与 process
 
-- `exec` 在 WorkDir 或其相对子目录中运行 shell 命令，支持环境覆盖、超时、前台等待和自动后台化。
-- `process` 对后台 session 执行 `list`、`poll`、`write` 和 `kill`，Registry 关闭时终止仍在运行的进程组。
+- `exec.timeout` 的单位是秒，默认 120、最大 600；`exec.yieldMs` 的单位是毫秒，默认 10000、最大 30000。
+- `background=true` 会立即返回 session；前台命令超过 `yieldMs` 也会转为后台 session。
+- `process.action` 恰好支持七种动作：`list`、`poll`、`log`、`write`、`kill`、`clear`、`remove`。
+- `process.poll.timeout` 的单位是毫秒且最大 30000；`log` 使用 `offset/limit` 分页，`write` 使用 `data/eof` 写入 stdin。
+- `kill` 保留最终记录，`clear` 只清理已结束记录，`remove` 会终止并删除指定 session；Registry 关闭时终止全部运行中的进程组并清空记录。
 - 每个 session 只保留最后 50 KiB 合并输出，避免长命令无限占用内存。
-- `workdir` 边界只限制命令起始目录，不是系统调用沙箱；命令仍拥有 go-reagent 宿主进程权限。
+- WorkDir 只限制 exec 的启动目录，不是文件系统沙箱。命令继承 go-reagent 进程的宿主权限，仍可主动访问工作区外文件和网络。
 - 人工审批、命令 allowlist、PTY 和容器/Seatbelt 沙箱尚未实现，不应把 `exec` 暴露给不受信任的调用方。
 
 运行全部测试：
@@ -283,8 +324,8 @@ go test ./...
 
 ## 当前能力
 
-- 统一的 `system`、`user` 和 `assistant` 消息角色；工具观察结果通过 `user` 消息和 `tool_call_id` 关联。
-- Provider 无关的消息、Tool Call、Tool Result 和带调度元数据的 Tool Definition 数据结构。
+- 统一的 `system`、`user`、`assistant` 和 `tool` 消息角色；最终工具观察通过原生 `tool` 消息和 `tool_call_id` 关联。
+- Provider 无关的消息、Tool Call、Tool Update、Tool Result、Agent Event 和带调度元数据的 Tool Definition 数据结构。
 - 使用 `json.RawMessage` 保留工具调用参数，并由具体工具延迟解析。
 - 可替换的 `LLMProvider` 接口，每轮接收上下文和可用工具定义。
 - Configor 驱动的 JSON/YAML/TOML 平台配置加载，以及项目级规范化与启动前校验。
@@ -294,14 +335,14 @@ go test ./...
 - 基于 `go-logger-sdk` 的 JSON 运行日志，以及 Bootstrap、Engine 和 Registry 的结构化上下文字段。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
-- 受 WorkDir 能力边界保护的 `read_file`、`write_file`、`edit_file` 和 `apply_patch` 文件工具。
+- 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。
 - 支持超时、后台化、有界输出和进程组终止的 `exec` 与 `process` 工具。
-- 持有 `WorkDir` 的 `AgentEngine` 生命周期驱动。
+- 由 `RunContextFactory`、`AgentLoop`、`ToolScheduler` 和 `AgentRuntime` 分层驱动的运行时。
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
-- 通过 Reporter 广播 Thinking、Tool Call、Tool Result 和模型回复生命周期事件。
-- 支持配置化企业微信群机器人 Webhook，将 Agent 生命周期逐条发送为 Markdown 通知。
+- 通过 Reporter 广播统一 Agent Event；增量更新只到 Terminal，不进入模型历史或 WeCom。
+- 支持配置化企业微信群机器人 Webhook，将工具开始、失败和最终回复发送为 Markdown 通知。
 - 基于 Uber Fx 的完整启动依赖注入，以及一次性 Runner 的取消、退出码和资源关闭生命周期。
 - Provider 错误和空响应防护。
 - 工具调用 ID 的整批前置校验。
@@ -313,7 +354,7 @@ go test ./...
 - [x] 定义公共消息与工具调用结构。
 - [x] 定义 LLM Provider 接口。
 - [x] 定义工具发现和执行 Registry 接口。
-- [x] 实现并测试最小 AgentEngine ReAct Main Loop。
+- [x] 实现并测试最小 Agent Runtime ReAct Main Loop。
 - [x] 增加可开关的慢思考与行动双阶段循环。
 - [x] 实现内存版 Tool Registry 和本地编码工具闭环。
 - [x] 实现配置驱动的 OpenAI/Anthropic 兼容 Provider。
