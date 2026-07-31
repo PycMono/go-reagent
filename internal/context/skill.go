@@ -108,7 +108,7 @@ func parseSkillMD(content []byte) (parsedSkill, error) {
 
 	var metadata skillFrontmatter
 	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "\n")), &metadata); err != nil {
-		return parsedSkill{}, newSkillParseError("skill_frontmatter_invalid", fmt.Sprintf("解析 SKILL.md Frontmatter 失败: %v", err))
+		return parsedSkill{}, newSkillParseError("skill_frontmatter_invalid", "SKILL.md Frontmatter YAML 无效")
 	}
 
 	name := strings.TrimSpace(metadata.Name)
@@ -126,6 +126,12 @@ func parseSkillMD(content []byte) (parsedSkill, error) {
 	if utf8.RuneCountInString(description) > 1024 {
 		return parsedSkill{}, newSkillParseError("skill_description_too_long", "Skill description 超过 1024 个字符")
 	}
+	if !isValidXMLText(description) ||
+		!allValidXMLText(metadata.Metadata.OpenClaw.OS) ||
+		!allValidXMLText(metadata.Metadata.OpenClaw.Requires.Bins) ||
+		!allValidXMLText(metadata.Metadata.OpenClaw.Requires.Env) {
+		return parsedSkill{}, newSkillParseError("skill_frontmatter_invalid", "SKILL.md Frontmatter 包含非法控制字符")
+	}
 
 	body := strings.TrimSpace(strings.Join(lines[closing+1:], "\n"))
 	if body == "" {
@@ -141,4 +147,13 @@ func parseSkillMD(content []byte) (parsedSkill, error) {
 		RequiredEnv:            append([]string(nil), metadata.Metadata.OpenClaw.Requires.Env...),
 		DisableModelInvocation: metadata.DisableModelInvocation,
 	}, nil
+}
+
+func allValidXMLText(values []string) bool {
+	for _, value := range values {
+		if !isValidXMLText(value) {
+			return false
+		}
+	}
+	return true
 }

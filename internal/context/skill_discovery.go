@@ -250,6 +250,13 @@ func mergeDiscoveredSkills(bySource map[SkillSource][]discoveredSkill) ([]SkillS
 		sort.Strings(names)
 		for _, name := range names {
 			group := groups[name]
+			duplicate := len(group) > 1
+			if duplicate {
+				for _, candidate := range group {
+					diagnostics = append(diagnostics, skillDiagnostic(candidate.Summary.Location,
+						DiagnosticSeverityWarning, "skill_duplicate_name", "同一来源存在重复 Skill name"))
+				}
+			}
 			if blocked[name] || winners[name].Name != "" {
 				for _, candidate := range group {
 					diagnostics = append(diagnostics, skillDiagnostic(candidate.Summary.Location,
@@ -257,12 +264,8 @@ func mergeDiscoveredSkills(bySource map[SkillSource][]discoveredSkill) ([]SkillS
 				}
 				continue
 			}
-			if len(group) > 1 {
+			if duplicate {
 				blocked[name] = true
-				for _, candidate := range group {
-					diagnostics = append(diagnostics, skillDiagnostic(candidate.Summary.Location,
-						DiagnosticSeverityWarning, "skill_duplicate_name", "同一来源存在重复 Skill name"))
-				}
 				continue
 			}
 			winners[name] = group[0].Summary

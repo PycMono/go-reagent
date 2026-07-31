@@ -107,6 +107,59 @@ func TestReadFileToolDefaultsTo2000Lines(t *testing.T) {
 	}
 }
 
+func TestReadFileToolConsecutivePagesReconstructOriginalContent(t *testing.T) {
+	workDir := t.TempDir()
+	var original strings.Builder
+	for line := 1; line <= 1800; line++ {
+		fmt.Fprintf(&original, "第%04d行-%s", line, strings.Repeat("内容", 12))
+		if line < 1800 {
+			original.WriteByte('\n')
+		}
+	}
+	writeTestFile(t, filepath.Join(workDir, "reconstruct.txt"), []byte(original.String()))
+	tool := newReadFileToolForTest(t, workDir)
+
+	var rebuilt strings.Builder
+	nextOffset := 1
+	pageCount := 0
+	for {
+		pageCount++
+		page, err := tool.Execute(context.Background(), readFilePageArguments(t, "reconstruct.txt", &nextOffset, nil))
+		if err != nil {
+			t.Fatalf("page %d error = %v", pageCount, err)
+		}
+		markerStart := strings.LastIndex(page, "[Showing lines ")
+		if markerStart < 0 {
+			rebuilt.WriteString(page)
+			break
+		}
+		pageWithSeparator := page[:markerStart]
+		if !strings.HasSuffix(pageWithSeparator, "\n") {
+			t.Fatalf("page %d has no marker separator", pageCount)
+		}
+		rebuilt.WriteString(strings.TrimSuffix(pageWithSeparator, "\n"))
+
+		var start, end, next int
+		if _, err := fmt.Sscanf(page[markerStart:], "[Showing lines %d-%d. Use offset=%d to continue.]", &start, &end, &next); err != nil {
+			t.Fatalf("parse page %d marker: %v", pageCount, err)
+		}
+		if start != nextOffset || next != end+1 {
+			t.Fatalf("page %d marker = start %d end %d next %d", pageCount, start, end, next)
+		}
+		nextOffset = next
+		if pageCount > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+
+	if rebuilt.String() != original.String() {
+		t.Fatalf("rebuilt content differs: got %d bytes, want %d", rebuilt.Len(), original.Len())
+	}
+	if pageCount < 2 {
+		t.Fatalf("page count = %d, want multiple byte-limited pages", pageCount)
+	}
+}
+
 func TestReadFileToolHandlesEmptyAndPastEOF(t *testing.T) {
 	workDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workDir, "empty.txt"), nil)

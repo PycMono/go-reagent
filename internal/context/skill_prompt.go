@@ -150,9 +150,9 @@ func renderSkillCatalog(skills []SkillSummary, descriptions []string, omitted in
 func renderSkillEntry(skill SkillSummary, description string) string {
 	return fmt.Sprintf(
 		"  <skill>\n    <name>%s</name>\n    <description>%s</description>\n    <location>%s</location>\n    <version>%s</version>\n  </skill>\n",
-		xmlTextReplacer.Replace(skill.Name),
-		xmlTextReplacer.Replace(description),
-		xmlTextReplacer.Replace(skill.Location),
-		xmlTextReplacer.Replace(skill.Version),
+		xmlTextReplacer.Replace(sanitizeXMLText(skill.Name)),
+		xmlTextReplacer.Replace(sanitizeXMLText(description)),
+		xmlTextReplacer.Replace(sanitizeXMLText(skill.Location)),
+		xmlTextReplacer.Replace(sanitizeXMLText(skill.Version)),
 	)
 }

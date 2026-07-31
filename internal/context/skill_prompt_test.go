@@ -1,6 +1,7 @@
 package context
 
 import (
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"testing"
@@ -95,5 +96,30 @@ func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *tes
 	}
 	if report.ShortenedDescriptions == 0 || !report.Truncated {
 		t.Fatalf("descriptions were not shortened: %#v", report)
+	}
+}
+
+func TestRenderSkillPromptProducesWellFormedXMLForControlCharacters(t *testing.T) {
+	snapshot := newSkillSnapshot([]SkillSummary{{
+		Name:        "control",
+		Description: "bad\x00description",
+		Location:    "skills/\x01control/SKILL.md",
+		Version:     "sha256:0123456789abcdef",
+	}}, nil)
+
+	prompt, _ := renderSkillPrompt(snapshot)
+	start := strings.Index(prompt, "<available_skills>")
+	end := strings.Index(prompt, "</available_skills>")
+	if start < 0 || end < start {
+		t.Fatalf("catalog missing: %q", prompt)
+	}
+	end += len("</available_skills>")
+	catalog := prompt[start:end]
+	if strings.ContainsAny(catalog, "\x00\x01") {
+		t.Fatalf("catalog contains forbidden control characters: %q", catalog)
+	}
+	var decoded struct{}
+	if err := xml.Unmarshal([]byte(catalog), &decoded); err != nil {
+		t.Fatalf("catalog is not well-formed XML: %v", err)
 	}
 }
