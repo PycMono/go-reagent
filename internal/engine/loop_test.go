@@ -76,12 +76,16 @@ func newAgentLoopForTest(
 }
 
 func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter engine.Reporter) error {
-	runContext, err := r.factory.Create(ctx, prompt, r.registry.GetAvailableTools())
+	runContext, err := r.factory.Create(ctx, schema.RunRequest{Input: schema.Message{
+		Role:    schema.RoleUser,
+		Content: blocks(prompt),
+	}}, r.registry.GetAvailableTools())
 	if err != nil {
 		return err
 	}
 	loop := engine.NewAgentLoop(r.provider, engine.NewToolScheduler(r.registry, r.MaxParallelTools), r.enableThinking)
-	return loop.Run(ctx, runContext, reporter)
+	_, err = loop.Run(ctx, runContext, reporter)
+	return err
 }
 
 func (r *fakeRegistry) GetAvailableTools() []schema.ToolDefinition {
@@ -213,7 +217,7 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 		Tools: registry.definitions,
 	}
 
-	if err := loop.Run(context.Background(), runContext, reporter); err != nil {
+	if _, err := loop.Run(context.Background(), runContext, reporter); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, index := range []int{0, 2} {

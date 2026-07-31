@@ -8,22 +8,45 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-type runtimeFunc func(context.Context, string) error
+type runtimeFunc func(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error)
 
-func (f runtimeFunc) Run(ctx context.Context, prompt string) error { return f(ctx, prompt) }
+func (f runtimeFunc) Run(
+	ctx context.Context,
+	request schema.RunRequest,
+	reporter engine.Reporter,
+) (schema.RunResult, error) {
+	return f(ctx, request, reporter)
+}
 
-func TestAgentRunnerPassesPromptToRuntime(t *testing.T) {
+type runnerReporterFake struct{}
+
+func (*runnerReporterFake) Report(context.Context, schema.AgentEvent) {}
+
+func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 	called := make(chan struct{}, 1)
-	runtime := runtimeFunc(func(_ context.Context, prompt string) error {
-		if prompt != "test prompt" {
-			t.Errorf("Run(prompt) = %q", prompt)
+	reporter := &runnerReporterFake{}
+	runtime := runtimeFunc(func(_ context.Context, request schema.RunRequest, gotReporter engine.Reporter) (schema.RunResult, error) {
+		if request.Input.Role != schema.RoleUser {
+			t.Errorf("Run(Input.Role) = %q, want user", request.Input.Role)
+		}
+		text, err := schema.TextContent(request.Input.Content)
+		if err != nil || text != "test prompt" {
+			t.Errorf("Run(Input.Content) = %q, %v", text, err)
+		}
+		if len(request.History) != 0 || len(request.Context) != 0 {
+			t.Errorf("Run(request) = %#v, want empty history and context", request)
+		}
+		if gotReporter != reporter {
+			t.Errorf("Run(reporter) = %T, want injected reporter", gotReporter)
 		}
 		called <- struct{}{}
-		return nil
+		return schema.RunResult{}, nil
 	})
-	runner := NewAgentRunner(runtime, config.Prompt("test prompt"))
+	runner := NewAgentRunner(runtime, config.Prompt("test prompt"), reporter)
 	completed := make(chan error, 1)
 
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
@@ -46,7 +69,9 @@ func TestAgentRunnerPassesPromptToRuntime(t *testing.T) {
 
 func TestAgentRunnerReportsRuntimeError(t *testing.T) {
 	want := errors.New("runtime failed")
-	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error { return want }), config.Prompt("test"))
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error) {
+		return schema.RunResult{}, want
+	}), config.Prompt("test"), nil)
 	completed := make(chan error, 1)
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -64,11 +89,11 @@ func TestAgentRunnerReportsRuntimeError(t *testing.T) {
 func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int32
-	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error {
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error) {
 		calls.Add(1)
 		<-release
-		return nil
-	}), config.Prompt("test"))
+		return schema.RunResult{}, nil
+	}), config.Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("first Start() error = %v", err)
 	}
@@ -86,11 +111,11 @@ func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 
 func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 	canceled := make(chan struct{})
-	runner := NewAgentRunner(runtimeFunc(func(ctx context.Context, _ string) error {
+	runner := NewAgentRunner(runtimeFunc(func(ctx context.Context, _ schema.RunRequest, _ engine.Reporter) (schema.RunResult, error) {
 		<-ctx.Done()
 		close(canceled)
-		return ctx.Err()
-	}), config.Prompt("test"))
+		return schema.RunResult{}, ctx.Err()
+	}), config.Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -106,10 +131,10 @@ func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 
 func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	release := make(chan struct{})
-	runner := NewAgentRunner(runtimeFunc(func(context.Context, string) error {
+	runner := NewAgentRunner(runtimeFunc(func(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error) {
 		<-release
-		return nil
-	}), config.Prompt("test"))
+		return schema.RunResult{}, nil
+	}), config.Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}

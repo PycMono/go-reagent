@@ -39,6 +39,7 @@ func NewWeComReporter(webhookURL string, client *http.Client) (*WeComReporter, e
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
+
 	return &WeComReporter{webhookURL: webhookURL, client: client}, nil
 }
 
@@ -110,6 +111,7 @@ func (r *WeComReporter) sendMarkdown(ctx context.Context, content string) error 
 	if result.ErrorCode != 0 {
 		return fmt.Errorf("wecom error %d: %s", result.ErrorCode, result.ErrorMsg)
 	}
+
 	return nil
 }
 

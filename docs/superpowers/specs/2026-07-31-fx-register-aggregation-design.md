@@ -58,7 +58,7 @@ Fx 根据构造函数参数解析实际初始化顺序，`fx.Options` 中的书�
 - `*PromptComposer`
 - `*SkillLoader`
 
-Engine 的 Fx 构造路径显式注入这两个对象。现有 `NewAgentEngine` 便捷构造函数保留，用于单元测试和非 Fx 调用，并继续根据工作目录自行创建默认 Context 组件。
+Engine 的 Fx 构造路径显式注入这两个对象。`NewAgentEngine` 同样要求调用方传入 `PromptComposer` 和 `SkillLoader`，不得根据工作目录在 Engine 内部隐式创建 Context 组件。
 
 ### provider.Register
 
@@ -100,6 +100,8 @@ Engine 的 Fx 构造路径显式注入这两个对象。现有 `NewAgentEngine` 
 - 以 `Agent` 接口类型暴露 Engine，供 `app.AgentRunner` 使用。
 
 Fx 专用构造路径保持 Thinking 默认开启、工具并发上限默认值不变。
+
+所有可注入对象只允许在所属包的 `register.go` Provider 边界中创建；普通业务文件必须通过构造函数参数接收依赖。SDK 客户端和标准库对象仍由其所属适配器内部创建。
 
 ### app.Register
 
@@ -153,5 +155,6 @@ var Register = fx.Options(
 - `cmd/main.go` 只使用 `internal.Register` 作为业务依赖入口。
 - 除 `schema` 外，约定的每个业务包都有承担实际注册职责的 `register.go`。
 - `internal/app/providers.go` 不再集中持有其他包的构造逻辑。
+- 除所属包的 `register.go` Provider 边界外，业务代码不直接构造可注入依赖。
 - 不存在 Fx 重复 Provider、缺失依赖或 Go import cycle。
 - 全量测试和静态检查通过。

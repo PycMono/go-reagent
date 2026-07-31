@@ -28,6 +28,7 @@ func NewWorkspace(lifecycle fx.Lifecycle, workDir config.WorkDir) (*Workspace, e
 	if path == "" {
 		return nil, errors.New("workDir 不能为空")
 	}
+
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("解析工作区失败: %w", err)
@@ -36,6 +37,7 @@ func NewWorkspace(lifecycle fx.Lifecycle, workDir config.WorkDir) (*Workspace, e
 	if err != nil {
 		return nil, fmt.Errorf("解析工作区真实路径失败: %w", err)
 	}
+
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("检查工作区失败: %w", err)
@@ -43,10 +45,12 @@ func NewWorkspace(lifecycle fx.Lifecycle, workDir config.WorkDir) (*Workspace, e
 	if !info.IsDir() {
 		return nil, errors.New("workDir 必须是目录")
 	}
+
 	root, err := os.OpenRoot(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("打开工作区失败: %w", err)
 	}
+
 	workspace := &Workspace{path: resolvedPath, root: root}
 	lifecycle.Append(fx.Hook{OnStop: func(_ context.Context) error { return workspace.Close() }})
 	return workspace, nil
@@ -230,16 +234,19 @@ func cleanRelativePath(path string, requiresFile bool) (string, error) {
 		}
 		return ".", nil
 	}
+
 	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" ||
 		strings.HasPrefix(path, "/") || strings.HasPrefix(path, "\\") ||
 		(len(path) >= 2 && ((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) && path[1] == ':') {
 		return "", errors.New("path 必须是相对于工作区的相对路径")
 	}
+
 	portable := filepath.ToSlash(strings.ReplaceAll(path, "\\", "/"))
 	portable = filepath.Clean(portable)
 	if portable == ".." || strings.HasPrefix(portable, "../") {
 		return "", errors.New("path 不能逃逸工作区")
 	}
+
 	path = filepath.Clean(path)
 	if requiresFile && path == "." {
 		return "", errors.New("path 必须指向文件")

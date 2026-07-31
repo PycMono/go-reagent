@@ -34,6 +34,31 @@ Engine Main Loop
           └─────────────────────────► 再次调用 Provider
 ```
 
+## 结构化运行协议
+
+当前 Runtime 以一次 `Run` 为状态边界。调用方传入历史消息、当前用户输入、外部上下文和不透明业务元数据；框架只在本次运行期间维护有效消息与工具循环状态，并返回新产生的 Assistant/Tool 消息：
+
+```go
+result, err := runtime.Run(ctx, schema.RunRequest{
+	RunID:   "run-001",
+	History: history,
+	Input: schema.Message{
+		Role:    schema.RoleUser,
+		Content: []schema.ContentBlock{schema.TextBlock("这个订单为什么还没发货？")},
+	},
+	Context: []schema.ContextBlock{
+		{Name: "customer-profile", Content: customerProfile, Priority: 100},
+	},
+	Metadata: map[string]string{
+		"conversationId": conversationID,
+	},
+}, reporter)
+```
+
+`RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的消息，不重复返回 System Prompt、外部上下文、历史、当前用户输入或内部 Thinking 脚手架。运行中途失败时，`RunResult` 仍会携带失败前已经完成的消息增量，业务方可以自行决定是否持久化。
+
+Runtime 不持有跨 `Run` 的 Conversation、Session、用户长期记忆或业务数据库状态。下一次运行所需的历史和外部上下文必须由调用方重新传入。当前协议仍位于 `internal` 包；公共 SDK 包迁移将在后续单独完成。
+
 ## 项目布局
 
 ```text

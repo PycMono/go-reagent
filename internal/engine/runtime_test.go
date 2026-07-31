@@ -13,7 +13,7 @@ import (
 
 type runtimeFactoryFake struct {
 	calls       int
-	prompt      string
+	request     schema.RunRequest
 	definitions []schema.ToolDefinition
 	runContext  ctxpkg.RunContext
 	err         error
@@ -21,11 +21,11 @@ type runtimeFactoryFake struct {
 
 func (f *runtimeFactoryFake) Create(
 	_ context.Context,
-	prompt string,
+	request schema.RunRequest,
 	definitions []schema.ToolDefinition,
 ) (ctxpkg.RunContext, error) {
 	f.calls++
-	f.prompt = prompt
+	f.request = request
 	f.definitions = append([]schema.ToolDefinition(nil), definitions...)
 	return f.runContext, f.err
 }
@@ -34,6 +34,7 @@ type runtimeLoopFake struct {
 	calls      int
 	runContext ctxpkg.RunContext
 	reporter   Reporter
+	messages   []schema.Message
 	err        error
 }
 
@@ -57,14 +58,14 @@ type runtimeReporterFake struct{}
 
 func (*runtimeReporterFake) Report(context.Context, schema.AgentEvent) {}
 
-func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter Reporter) error {
+func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]schema.Message, error) {
 	l.calls++
 	l.runContext = runContext
 	l.reporter = reporter
-	return l.err
+	return append([]schema.Message(nil), l.messages...), l.err
 }
 
-func TestAgentRuntimePreparesExactlyOnceBeforeLoop(t *testing.T) {
+func TestAgentRuntimePreparesStructuredRequestAndReturnsIncrement(t *testing.T) {
 	definitions := []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := &runtimeRegistryFake{definitions: definitions}
 	wantContext := ctxpkg.RunContext{
@@ -72,33 +73,77 @@ func TestAgentRuntimePreparesExactlyOnceBeforeLoop(t *testing.T) {
 		Tools:    definitions,
 	}
 	factory := &runtimeFactoryFake{runContext: wantContext}
-	loop := &runtimeLoopFake{}
+	wantMessages := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("done")}}}
+	loop := &runtimeLoopFake{messages: wantMessages}
 	reporter := &runtimeReporterFake{}
-	runtime := newAgentRuntime(factory, loop, registry, reporter)
+	runtime := newAgentRuntime(factory, loop, registry)
+	request := schema.RunRequest{
+		RunID: "run-1",
+		Input: schema.Message{
+			Role:    schema.RoleUser,
+			Content: []schema.ContentBlock{schema.TextBlock("do work")},
+		},
+		Metadata: map[string]string{"conversationId": "conversation-1"},
+	}
 
-	if err := runtime.Run(context.Background(), "do work"); err != nil {
+	result, err := runtime.Run(context.Background(), request, reporter)
+	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if factory.calls != 1 || factory.prompt != "do work" || !reflect.DeepEqual(factory.definitions, definitions) {
-		t.Fatalf("factory calls=%d prompt=%q definitions=%#v", factory.calls, factory.prompt, factory.definitions)
+	if factory.calls != 1 || !reflect.DeepEqual(factory.request, request) || !reflect.DeepEqual(factory.definitions, definitions) {
+		t.Fatalf("factory calls=%d request=%#v definitions=%#v", factory.calls, factory.request, factory.definitions)
 	}
 	if loop.calls != 1 || !reflect.DeepEqual(loop.runContext, wantContext) || loop.reporter != reporter {
 		t.Fatalf("loop calls=%d context=%#v reporter=%T", loop.calls, loop.runContext, loop.reporter)
 	}
+	if result.RunID != "run-1" || !reflect.DeepEqual(result.NewMessages, wantMessages) {
+		t.Fatalf("RunResult = %#v, want RunID and loop messages", result)
+	}
 }
 
-func TestAgentRuntimePreparationErrorPreventsLoop(t *testing.T) {
+func TestAgentRuntimePreparationErrorPreservesRunID(t *testing.T) {
 	wantErr := errors.New("preparation failed")
 	factory := &runtimeFactoryFake{err: wantErr}
 	loop := &runtimeLoopFake{}
-	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{}, nil)
+	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{})
+	request := schema.RunRequest{RunID: "run-preparation-error"}
 
-	err := runtime.Run(context.Background(), "do work")
+	result, err := runtime.Run(context.Background(), request, nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want %v", err, wantErr)
 	}
+	if result.RunID != request.RunID || len(result.NewMessages) != 0 {
+		t.Fatalf("RunResult = %#v, want RunID with no messages", result)
+	}
 	if factory.calls != 1 || loop.calls != 0 {
 		t.Fatalf("factory calls=%d loop calls=%d, want 1 and 0", factory.calls, loop.calls)
+	}
+}
+
+func TestAgentRuntimeLoopErrorPreservesIncrement(t *testing.T) {
+	wantErr := errors.New("loop failed")
+	wantMessages := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("partial")}}}
+	factory := &runtimeFactoryFake{runContext: ctxpkg.RunContext{}}
+	loop := &runtimeLoopFake{messages: wantMessages, err: wantErr}
+	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{})
+
+	result, err := runtime.Run(context.Background(), schema.RunRequest{RunID: "run-loop-error"}, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Run() error = %v, want %v", err, wantErr)
+	}
+	if result.RunID != "run-loop-error" || !reflect.DeepEqual(result.NewMessages, wantMessages) {
+		t.Fatalf("RunResult = %#v, want partial loop messages", result)
+	}
+}
+
+func TestAgentRuntimeMissingDependenciesPreservesRunID(t *testing.T) {
+	var runtime *runtime
+	result, err := runtime.Run(context.Background(), schema.RunRequest{RunID: "run-invalid-runtime"}, nil)
+	if err == nil || err.Error() != "agent runtime: factory, loop, and registry are required" {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.RunID != "run-invalid-runtime" || len(result.NewMessages) != 0 {
+		t.Fatalf("RunResult = %#v, want RunID with no messages", result)
 	}
 }
 
