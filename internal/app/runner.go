@@ -8,13 +8,15 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
 )
 
 // AgentRunner executes the configured Agent task exactly once.
 type AgentRunner struct {
-	runtime engine.AgentRuntime
-	prompt  config.Prompt
+	runtime  engine.AgentRuntime
+	prompt   config.Prompt
+	reporter engine.Reporter
 
 	mu       sync.Mutex
 	started  bool
@@ -24,8 +26,8 @@ type AgentRunner struct {
 }
 
 // NewAgentRunner creates the one-shot application runner.
-func NewAgentRunner(runtime engine.AgentRuntime, prompt config.Prompt) *AgentRunner {
-	return &AgentRunner{runtime: runtime, prompt: prompt}
+func NewAgentRunner(runtime engine.AgentRuntime, prompt config.Prompt, reporter engine.Reporter) *AgentRunner {
+	return &AgentRunner{runtime: runtime, prompt: prompt, reporter: reporter}
 }
 
 // Start launches the Agent without blocking the Fx OnStart hook.
@@ -43,7 +45,10 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 	r.mu.Unlock()
 
 	go func() {
-		err := r.runtime.Run(ctx, string(r.prompt))
+		_, err := r.runtime.Run(ctx, schema.RunRequest{Input: schema.Message{
+			Role:    schema.RoleUser,
+			Content: []schema.ContentBlock{schema.TextBlock(string(r.prompt))},
+		}}, r.reporter)
 
 		r.mu.Lock()
 		stopping := r.stopping

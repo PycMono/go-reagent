@@ -8,6 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
@@ -48,11 +49,12 @@ func newLifecycleTestApp(t *testing.T, runError error) *fxtest.App {
 	return fxtest.New(t,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
 		fx.Provide(func() engine.AgentRuntime {
-			return runtimeFunc(func(context.Context, string) error {
-				return runError
+			return runtimeFunc(func(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error) {
+				return schema.RunResult{}, runError
 			})
 		}),
 		fx.Supply(config.Prompt("test")),
+		fx.Provide(func() engine.Reporter { return nil }),
 		Register,
 	)
 }

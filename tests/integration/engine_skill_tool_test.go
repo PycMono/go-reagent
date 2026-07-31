@@ -81,9 +81,13 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 		ctxpkg.NewSkillLoader(workDir),
 	)
 	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 4), true)
-	runtime := engine.NewAgentRuntime(factory, loop, registry, nil)
+	runtime := engine.NewAgentRuntime(factory, loop, registry)
 
-	if err := runtime.Run(context.Background(), "提交代码"); err != nil {
+	_, err = runtime.Run(context.Background(), schema.RunRequest{Input: schema.Message{
+		Role:    schema.RoleUser,
+		Content: blocks("提交代码"),
+	}}, nil)
+	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 6 {

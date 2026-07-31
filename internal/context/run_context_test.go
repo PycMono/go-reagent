@@ -36,7 +36,7 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 		{Name: "read", Description: "read files", ParallelSafe: true},
 	}
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
-	runContext, err := factory.Create(context.Background(), "review this", definitions)
+	runContext, err := factory.Create(context.Background(), runRequest("review this"), definitions)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -63,6 +63,144 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 	}
 }
 
+func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
+	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
+	history := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("previous answer")}}}
+	contextBlocks := []schema.ContextBlock{
+		{Name: "preferences", Content: "prefers concise replies", Priority: 10},
+		{Name: "customer", Content: "customer tier is gold", Priority: 100},
+	}
+	metadata := map[string]string{"conversationId": "conversation-1"}
+	request := schema.RunRequest{
+		RunID:   "run-1",
+		History: history,
+		Input: schema.Message{
+			Role:    schema.RoleUser,
+			Content: []schema.ContentBlock{schema.TextBlock("where is my order?")},
+		},
+		Context:  contextBlocks,
+		Metadata: metadata,
+	}
+
+	runContext, err := factory.Create(context.Background(), request, nil)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(runContext.Messages) != 5 {
+		t.Fatalf("Messages count = %d, want 5: %#v", len(runContext.Messages), runContext.Messages)
+	}
+	wantRoles := []schema.Role{
+		schema.RoleSystem,
+		schema.RoleSystem,
+		schema.RoleSystem,
+		schema.RoleAssistant,
+		schema.RoleUser,
+	}
+	for index, want := range wantRoles {
+		if got := runContext.Messages[index].Role; got != want {
+			t.Fatalf("Messages[%d].Role = %q, want %q", index, got, want)
+		}
+	}
+	wantText := []string{
+		"# Context: customer\ncustomer tier is gold",
+		"# Context: preferences\nprefers concise replies",
+		"previous answer",
+		"where is my order?",
+	}
+	for offset, want := range wantText {
+		if got := runContextMessageText(t, runContext.Messages[offset+1]); got != want {
+			t.Fatalf("Messages[%d] text = %q, want %q", offset+1, got, want)
+		}
+	}
+
+	history[0] = schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("mutated history")}}
+	contextBlocks[0] = schema.ContextBlock{Name: "mutated", Content: "mutated", Priority: 1000}
+	metadata["conversationId"] = "mutated"
+	if got := runContextMessageText(t, runContext.Messages[3]); got != "previous answer" {
+		t.Fatalf("history was not cloned: %q", got)
+	}
+	if got := runContextMessageText(t, runContext.Messages[2]); got != "# Context: preferences\nprefers concise replies" {
+		t.Fatalf("context was not cloned: %q", got)
+	}
+	if got := runContext.Metadata["conversationId"]; got != "conversation-1" {
+		t.Fatalf("Metadata[conversationId] = %q, want conversation-1", got)
+	}
+}
+
+func TestRunContextFactoryRejectsInvalidStructuredRequest(t *testing.T) {
+	validInput := schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("hello")}}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		request schema.RunRequest
+		want    string
+	}{
+		{
+			name:    "nil go context",
+			request: schema.RunRequest{Input: validInput},
+			want:    "context is required",
+		},
+		{
+			name: "non-user input",
+			ctx:  context.Background(),
+			request: schema.RunRequest{Input: schema.Message{
+				Role:    schema.RoleAssistant,
+				Content: []schema.ContentBlock{schema.TextBlock("hello")},
+			}},
+			want: "input role must be user",
+		},
+		{
+			name:    "empty input",
+			ctx:     context.Background(),
+			request: schema.RunRequest{Input: schema.Message{Role: schema.RoleUser}},
+			want:    "input content must not be empty",
+		},
+		{
+			name: "input tool calls",
+			ctx:  context.Background(),
+			request: schema.RunRequest{Input: schema.Message{
+				Role:      schema.RoleUser,
+				Content:   []schema.ContentBlock{schema.TextBlock("hello")},
+				ToolCalls: []schema.ToolCall{{ID: "call-1", Name: "read"}},
+			}},
+			want: "input must not contain tool fields",
+		},
+		{
+			name: "input tool result fields",
+			ctx:  context.Background(),
+			request: schema.RunRequest{Input: schema.Message{
+				Role:       schema.RoleUser,
+				Content:    []schema.ContentBlock{schema.TextBlock("hello")},
+				ToolCallID: "call-1",
+				ToolName:   "read",
+			}},
+			want: "input must not contain tool fields",
+		},
+		{
+			name:    "empty context name",
+			ctx:     context.Background(),
+			request: schema.RunRequest{Input: validInput, Context: []schema.ContextBlock{{Content: "value"}}},
+			want:    "context block 0 name must not be empty",
+		},
+		{
+			name:    "empty context content",
+			ctx:     context.Background(),
+			request: schema.RunRequest{Input: validInput, Context: []schema.ContextBlock{{Name: "profile"}}},
+			want:    "context block 0 content must not be empty",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
+			_, err := factory.Create(test.ctx, test.request, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Create() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	workDir := t.TempDir()
 	skillDir := filepath.Join(workDir, "skills", "review")
@@ -74,7 +212,7 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	}
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 
-	_, err := factory.Create(context.Background(), "review", []schema.ToolDefinition{{Name: "read_file"}})
+	_, err := factory.Create(context.Background(), runRequest("review"), []schema.ToolDefinition{{Name: "read_file"}})
 	if err == nil || err.Error() != "发现可用 Agent Skills，但 Registry 未挂载 read" {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -85,10 +223,17 @@ func TestRunContextFactoryHonorsCancellation(t *testing.T) {
 	cancel()
 	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
 
-	_, err := factory.Create(ctx, "unused", nil)
+	_, err := factory.Create(ctx, runRequest("unused"), nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Create() error = %v, want context.Canceled", err)
 	}
+}
+
+func runRequest(input string) schema.RunRequest {
+	return schema.RunRequest{Input: schema.Message{
+		Role:    schema.RoleUser,
+		Content: []schema.ContentBlock{schema.TextBlock(input)},
+	}}
 }
 
 func runContextMessageText(t *testing.T, message schema.Message) string {
