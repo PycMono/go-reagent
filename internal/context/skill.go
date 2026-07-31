@@ -2,27 +2,34 @@
 package context
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	defaultSkillName        = "Unknown Skill"
-	defaultSkillDescription = "No description provided."
-)
+const maxSkillFileBytes = 256 * 1024
 
-// Skill defines the normalized metadata and instructions loaded from SKILL.md.
-type Skill struct {
-	Name        string
-	Description string
-	Body        string
+var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+type parsedSkill struct {
+	Name                   string
+	Description            string
+	Body                   string
+	OS                     []string
+	RequiredBins           []string
+	RequiredEnv            []string
+	DisableModelInvocation bool
 }
+
+// Skill is retained temporarily for the legacy renderer while discovery is migrated.
+type Skill = parsedSkill
 
 // SkillLoader loads standard Agent Skills from one workspace.
 type SkillLoader struct {
@@ -61,7 +68,7 @@ func (s *SkillLoader) LoadAll() string {
 		if err != nil {
 			return nil
 		}
-		skill, err := parseSkillMD(string(content))
+		skill, err := parseSkillMD(content)
 		if err != nil {
 			return nil
 		}
@@ -95,21 +102,52 @@ func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 	return root.ReadFile(name)
 }
 
-type skillMetadata struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+type skillFrontmatter struct {
+	Name                   string            `yaml:"name"`
+	Description            string            `yaml:"description"`
+	DisableModelInvocation bool              `yaml:"disable-model-invocation"`
+	Metadata               skillMetadataRoot `yaml:"metadata"`
 }
 
-func parseSkillMD(content string) (Skill, error) {
-	skill := Skill{
-		Name:        defaultSkillName,
-		Description: defaultSkillDescription,
-		Body:        content,
+type skillMetadataRoot struct {
+	OpenClaw openClawMetadata `yaml:"openclaw"`
+}
+
+type openClawMetadata struct {
+	OS       []string             `yaml:"os"`
+	Requires openClawRequirements `yaml:"requires"`
+}
+
+type openClawRequirements struct {
+	Bins []string `yaml:"bins"`
+	Env  []string `yaml:"env"`
+}
+
+type skillParseError struct {
+	Code    string
+	Message string
+}
+
+func (e *skillParseError) Error() string {
+	return e.Message
+}
+
+func newSkillParseError(code string, message string) error {
+	return &skillParseError{Code: code, Message: message}
+}
+
+func parseSkillMD(content []byte) (parsedSkill, error) {
+	if bytes.IndexByte(content, 0) >= 0 {
+		return parsedSkill{}, newSkillParseError("skill_binary_content", "SKILL.md 包含 NUL 字节")
 	}
-	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	if !utf8.Valid(content) {
+		return parsedSkill{}, newSkillParseError("skill_not_utf8", "SKILL.md 不是有效的 UTF-8 文本")
+	}
+
+	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
 	if len(lines) == 0 || lines[0] != "---" {
-		return skill, nil
+		return parsedSkill{}, newSkillParseError("skill_frontmatter_missing", "SKILL.md 缺少首行 Frontmatter")
 	}
 
 	closing := -1
@@ -120,19 +158,42 @@ func parseSkillMD(content string) (Skill, error) {
 		}
 	}
 	if closing == -1 {
-		return Skill{}, errors.New("skill frontmatter is not closed")
+		return parsedSkill{}, newSkillParseError("skill_frontmatter_invalid", "SKILL.md Frontmatter 未闭合")
 	}
 
-	var metadata skillMetadata
+	var metadata skillFrontmatter
 	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "\n")), &metadata); err != nil {
-		return Skill{}, fmt.Errorf("parse skill frontmatter: %w", err)
+		return parsedSkill{}, newSkillParseError("skill_frontmatter_invalid", fmt.Sprintf("解析 SKILL.md Frontmatter 失败: %v", err))
 	}
-	if name := strings.TrimSpace(metadata.Name); name != "" {
-		skill.Name = name
+
+	name := strings.TrimSpace(metadata.Name)
+	if name == "" {
+		return parsedSkill{}, newSkillParseError("skill_name_missing", "Skill name 不能为空")
 	}
-	if description := strings.TrimSpace(metadata.Description); description != "" {
-		skill.Description = description
+	if utf8.RuneCountInString(name) > 64 || !skillNamePattern.MatchString(name) {
+		return parsedSkill{}, newSkillParseError("skill_name_invalid", "Skill name 格式无效")
 	}
-	skill.Body = strings.TrimSpace(strings.Join(lines[closing+1:], "\n"))
-	return skill, nil
+
+	description := strings.TrimSpace(metadata.Description)
+	if description == "" {
+		return parsedSkill{}, newSkillParseError("skill_description_missing", "Skill description 不能为空")
+	}
+	if utf8.RuneCountInString(description) > 1024 {
+		return parsedSkill{}, newSkillParseError("skill_description_too_long", "Skill description 超过 1024 个字符")
+	}
+
+	body := strings.TrimSpace(strings.Join(lines[closing+1:], "\n"))
+	if body == "" {
+		return parsedSkill{}, newSkillParseError("skill_body_empty", "Skill Body 不能为空")
+	}
+
+	return parsedSkill{
+		Name:                   name,
+		Description:            description,
+		Body:                   body,
+		OS:                     append([]string(nil), metadata.Metadata.OpenClaw.OS...),
+		RequiredBins:           append([]string(nil), metadata.Metadata.OpenClaw.Requires.Bins...),
+		RequiredEnv:            append([]string(nil), metadata.Metadata.OpenClaw.Requires.Env...),
+		DisableModelInvocation: metadata.DisableModelInvocation,
+	}, nil
 }

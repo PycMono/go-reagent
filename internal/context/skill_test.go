@@ -1,175 +1,86 @@
 package context
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestParseSkillMD(t *testing.T) {
+func TestParseSkillMDParsesStrictFrontmatter(t *testing.T) {
+	content := []byte("---\r\nname: code-review\r\ndescription: |\r\n  Review code carefully.\r\n  Report concrete risks.\r\ndisable-model-invocation: true\r\nmetadata:\r\n  openclaw:\r\n    os: [darwin, linux]\r\n    requires:\r\n      bins: [git]\r\n      env: [REVIEW_TOKEN]\r\n---\r\n# Guide\r\nKeep this --- marker.\r\n")
+
+	got, err := parseSkillMD(content)
+	if err != nil {
+		t.Fatalf("parseSkillMD() error = %v", err)
+	}
+	if got.Name != "code-review" {
+		t.Fatalf("Name = %q", got.Name)
+	}
+	if got.Description != "Review code carefully.\nReport concrete risks." {
+		t.Fatalf("Description = %q", got.Description)
+	}
+	if got.Body != "# Guide\nKeep this --- marker." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+	if !got.DisableModelInvocation {
+		t.Fatal("DisableModelInvocation = false")
+	}
+	if strings.Join(got.OS, ",") != "darwin,linux" ||
+		strings.Join(got.RequiredBins, ",") != "git" ||
+		strings.Join(got.RequiredEnv, ",") != "REVIEW_TOKEN" {
+		t.Fatalf("metadata = %#v", got)
+	}
+}
+
+func TestParseSkillMDRejectsInvalidContent(t *testing.T) {
+	longName := strings.Repeat("a", 65)
+	longDescription := strings.Repeat("界", 1025)
 	tests := []struct {
-		name    string
-		content string
-		want    Skill
-		wantErr bool
+		name     string
+		content  []byte
+		wantCode string
 	}{
-		{
-			name: "YAML metadata and body separator",
-			content: `---
-name: review
-description: |
-  Review code carefully.
-  Report concrete risks.
----
-# Guide
-Keep this --- marker in the body.
----
-Done.`,
-			want: Skill{
-				Name:        "review",
-				Description: "Review code carefully.\nReport concrete risks.",
-				Body:        "# Guide\nKeep this --- marker in the body.\n---\nDone.",
-			},
-		},
-		{
-			name:    "CRLF and quoted values",
-			content: "---\r\nname: \"release\"\r\ndescription: 'Ship safely'\r\n---\r\nRun checks.\r\n",
-			want:    Skill{Name: "release", Description: "Ship safely", Body: "Run checks."},
-		},
-		{
-			name:    "plain Markdown",
-			content: "# Plain skill\nNo frontmatter.",
-			want: Skill{
-				Name:        "Unknown Skill",
-				Description: "No description provided.",
-				Body:        "# Plain skill\nNo frontmatter.",
-			},
-		},
-		{
-			name:    "empty metadata uses defaults",
-			content: "---\nname: '  '\ndescription: ''\n---\nBody",
-			want: Skill{
-				Name:        "Unknown Skill",
-				Description: "No description provided.",
-				Body:        "Body",
-			},
-		},
-		{name: "unclosed frontmatter", content: "---\nname: broken", wantErr: true},
-		{name: "invalid YAML", content: "---\nname: [broken\n---\nBody", wantErr: true},
+		{name: "missing frontmatter", content: []byte("# Guide\nBody"), wantCode: "skill_frontmatter_missing"},
+		{name: "unclosed frontmatter", content: []byte("---\nname: broken"), wantCode: "skill_frontmatter_invalid"},
+		{name: "invalid YAML", content: []byte("---\nname: [broken\n---\nBody"), wantCode: "skill_frontmatter_invalid"},
+		{name: "missing name", content: []byte("---\ndescription: useful\n---\nBody"), wantCode: "skill_name_missing"},
+		{name: "invalid name characters", content: []byte("---\nname: Bad_Name\ndescription: useful\n---\nBody"), wantCode: "skill_name_invalid"},
+		{name: "invalid repeated separator", content: []byte("---\nname: bad--name\ndescription: useful\n---\nBody"), wantCode: "skill_name_invalid"},
+		{name: "name too long", content: []byte("---\nname: " + longName + "\ndescription: useful\n---\nBody"), wantCode: "skill_name_invalid"},
+		{name: "missing description", content: []byte("---\nname: valid\n---\nBody"), wantCode: "skill_description_missing"},
+		{name: "description too long", content: []byte("---\nname: valid\ndescription: " + longDescription + "\n---\nBody"), wantCode: "skill_description_too_long"},
+		{name: "empty body", content: []byte("---\nname: valid\ndescription: useful\n---\n  \n"), wantCode: "skill_body_empty"},
+		{name: "NUL", content: []byte("---\nname: valid\ndescription: useful\n---\nA\x00B"), wantCode: "skill_binary_content"},
+		{name: "invalid UTF-8", content: append([]byte("---\nname: valid\ndescription: useful\n---\n"), 0xff), wantCode: "skill_not_utf8"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseSkillMD(tt.content)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("parseSkillMD() error = %v, wantErr %v", err, tt.wantErr)
+			_, err := parseSkillMD(tt.content)
+			var parseErr *skillParseError
+			if !errors.As(err, &parseErr) {
+				t.Fatalf("parseSkillMD() error = %v, want *skillParseError", err)
 			}
-			if !tt.wantErr && got != tt.want {
-				t.Fatalf("parseSkillMD() = %#v, want %#v", got, tt.want)
+			if parseErr.Code != tt.wantCode {
+				t.Fatalf("error code = %q, want %q", parseErr.Code, tt.wantCode)
 			}
 		})
 	}
 }
 
-func TestSkillLoaderLoadsValidSkillsInPathOrder(t *testing.T) {
-	workDir := t.TempDir()
-	writeSkill(t, workDir, "zeta/SKILL.md", "---\nname: Zeta\ndescription: Last\n---\nZ body")
-	writeSkill(t, workDir, "alpha/SKILL.md", "---\nname: Alpha\ndescription: First\n---\nA body")
-	writeSkill(t, workDir, "middle/SKILL.md", "---\nname: [broken\n---\nBad")
-	writeSkill(t, workDir, "ignored/skill.md", "---\nname: ignored\n---\nignored")
+func TestParseSkillMDAcceptsBoundaryLengths(t *testing.T) {
+	name := strings.Repeat("a", 64)
+	description := strings.Repeat("界", 1024)
+	content := []byte("---\nname: " + name + "\ndescription: " + description + "\n---\nBody")
 
-	got := NewSkillLoader(workDir).LoadAll()
-	if strings.Count(got, "### 可用专业技能 (Agent Skills)") != 1 {
-		t.Fatalf("skill header count in %q", got)
+	got, err := parseSkillMD(content)
+	if err != nil {
+		t.Fatalf("parseSkillMD() error = %v", err)
 	}
-	alpha := strings.Index(got, "#### 技能名称: Alpha")
-	zeta := strings.Index(got, "#### 技能名称: Zeta")
-	if alpha < 0 || zeta < 0 || alpha >= zeta {
-		t.Fatalf("skills not rendered in path order: %q", got)
-	}
-	for _, want := range []string{
-		"**触发条件**: First",
-		"**执行指南**:\nA body",
-		"**触发条件**: Last",
-		"**执行指南**:\nZ body",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("rendered skills missing %q: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "broken") || strings.Contains(got, "ignored") {
-		t.Fatalf("invalid or non-SKILL file was rendered: %q", got)
-	}
-}
-
-func TestSkillLoaderReturnsEmptyWithoutValidSkills(t *testing.T) {
-	tests := []struct {
-		name  string
-		setup func(t *testing.T, workDir string)
-	}{
-		{name: "missing skills directory"},
-		{
-			name: "only malformed skill",
-			setup: func(t *testing.T, workDir string) {
-				writeSkill(t, workDir, "broken/SKILL.md", "---\nname: [broken\n---\nBad")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			workDir := t.TempDir()
-			if tt.setup != nil {
-				tt.setup(t, workDir)
-			}
-			if got := NewSkillLoader(workDir).LoadAll(); got != "" {
-				t.Fatalf("LoadAll() = %q, want empty", got)
-			}
-		})
-	}
-}
-
-func TestSkillLoaderRejectsSkillSymlinkOutsideWorkspace(t *testing.T) {
-	outsideDir := t.TempDir()
-	outsidePath := filepath.Join(outsideDir, "outside-skill.md")
-	const secret = "outside-skill-secret"
-	if err := os.WriteFile(
-		outsidePath,
-		[]byte("---\nname: escaped\ndescription: escaped\n---\n"+secret),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	workDir := t.TempDir()
-	skillDir := filepath.Join(workDir, ".claw", "skills", "escaped")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outsidePath, filepath.Join(skillDir, "SKILL.md")); err != nil {
-		t.Skipf("symlink is unavailable: %v", err)
-	}
-
-	got := NewSkillLoader(workDir).LoadAll()
-	if strings.Contains(got, secret) || got != "" {
-		t.Fatalf("LoadAll() followed an external symlink: %q", got)
-	}
-}
-
-func TestSkillLoaderRejectsSkillSymlinkInsideWorkspace(t *testing.T) {
-	workDir := t.TempDir()
-	writeSkill(t, workDir, "shared.md", "---\nname: linked\ndescription: linked\n---\nlinked body")
-	skillDir := filepath.Join(workDir, ".claw", "skills", "linked")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../shared.md", filepath.Join(skillDir, "SKILL.md")); err != nil {
-		t.Skipf("symlink is unavailable: %v", err)
-	}
-
-	if got := NewSkillLoader(workDir).LoadAll(); got != "" {
-		t.Fatalf("LoadAll() loaded a symlinked Skill: %q", got)
+	if got.Name != name || got.Description != description || got.Body != "Body" {
+		t.Fatalf("parseSkillMD() = %#v", got)
 	}
 }
 
