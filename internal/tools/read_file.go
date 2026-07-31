@@ -199,12 +199,6 @@ func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit i
 			}
 			break
 		}
-		if bytes.IndexByte(line, 0) >= 0 {
-			return "", errors.New("文件包含 NUL 字节，疑似二进制内容")
-		}
-		if !utf8.Valid(line) {
-			return "", errors.New("文件内容不是有效的 UTF-8 文本")
-		}
 		lines = append(lines, line)
 		contentBytes += len(line)
 	}
@@ -228,6 +222,9 @@ func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit i
 		return "", nil
 	}
 	if !hasMore {
+		if err := validateReadFileLines(lines); err != nil {
+			return "", err
+		}
 		return string(joinReadFileLines(lines)), nil
 	}
 
@@ -237,11 +234,26 @@ func readFilePage(ctx context.Context, reader *bufio.Reader, offset int, limit i
 		marker := readFileContinuationMarker(offset, end, end+1)
 		separator := readFileMarkerSeparator(content)
 		if len(content)+len(separator)+len(marker) <= defaultReadFileMaxBytes {
+			if err := validateReadFileLines(lines); err != nil {
+				return "", err
+			}
 			return string(content) + separator + marker, nil
 		}
 		lines = lines[:len(lines)-1]
 	}
 	return "", errors.New("单行超过 read_file 单页限制")
+}
+
+func validateReadFileLines(lines [][]byte) error {
+	for _, line := range lines {
+		if bytes.IndexByte(line, 0) >= 0 {
+			return errors.New("文件包含 NUL 字节，疑似二进制内容")
+		}
+		if !utf8.Valid(line) {
+			return errors.New("文件内容不是有效的 UTF-8 文本")
+		}
+	}
+	return nil
 }
 
 func readFileLine(ctx context.Context, reader *bufio.Reader, maximum int) ([]byte, bool, bool, error) {
