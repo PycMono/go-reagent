@@ -39,6 +39,13 @@ func validateActionResponse(response *schema.Message) error {
 	if response.ToolCallID != "" {
 		return errors.New("response must not contain tool_call_id")
 	}
+	content, err := schema.TextContent(response.Content)
+	if err != nil {
+		return fmt.Errorf("response content: %w", err)
+	}
+	if content == "" && len(response.ToolCalls) == 0 {
+		return errors.New("assistant message contains no content or tool calls")
+	}
 	return nil
 }
 
