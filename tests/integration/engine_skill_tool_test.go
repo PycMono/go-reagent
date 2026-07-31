@@ -35,7 +35,7 @@ func (p *scriptedProvider) Generate(
 	return p.responses[index], nil
 }
 
-func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
+func TestAgentRuntimeProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 	workDir := t.TempDir()
 	skillDir := filepath.Join(workDir, "skills", "git-workflow")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -76,16 +76,14 @@ func TestAgentEngineProgressivelyReadsSkillWithRealReadFile(t *testing.T) {
 		{Role: schema.RoleAssistant, Content: blocks("技能已完整读取，可以执行。")},
 		{Role: schema.RoleAssistant, Content: blocks("done")},
 	}}
-	agentEngine := engine.NewAgentEngine(
-		provider,
-		registry,
+	factory := ctxpkg.NewRunContextFactory(
 		ctxpkg.NewPromptComposer(workDir),
 		ctxpkg.NewSkillLoader(workDir),
-		workDir,
-		true,
 	)
+	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 4), true)
+	runtime := engine.NewAgentRuntime(factory, loop, registry, nil)
 
-	if err := agentEngine.Run(context.Background(), "提交代码", nil); err != nil {
+	if err := runtime.Run(context.Background(), "提交代码"); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 6 {

@@ -47,7 +47,7 @@ func TestMultiReporterSortsAndIsolatesPanic(t *testing.T) {
 	}
 }
 
-func TestAgentEngineReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
+func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 	provider := &fakeProvider{responses: []*schema.Message{
 		{Role: schema.RoleAssistant, Content: blocks("plan one")},
 		{
@@ -69,7 +69,7 @@ func TestAgentEngineReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		},
 	}
 	reporter := &recordingReporter{}
-	agentEngine := newAgentEngineForTest(provider, registry, t.TempDir(), true)
+	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), true)
 
 	if err := agentEngine.Run(context.Background(), "read a", reporter); err != nil {
 		t.Fatalf("Run() error = %v", err)
