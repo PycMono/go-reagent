@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -74,6 +75,39 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 		if requests[index].MsgType != "markdown" || requests[index].Markdown.Content != want {
 			t.Fatalf("request %d = %#v, want markdown %q", index, requests[index], want)
 		}
+	}
+}
+
+func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer server.Close()
+
+	reporter, err := dispatch.NewWeComReporter(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewWeComReporter() error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name string
+		role schema.Role
+	}{
+		{name: "user", role: schema.RoleUser},
+		{name: "system", role: schema.RoleSystem},
+		{name: "tool", role: schema.RoleTool},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reporter.Report(context.Background(), schema.NewMessageEvent(schema.Message{
+				Role:    test.role,
+				Content: []schema.ContentBlock{schema.TextBlock("must not send")},
+			}))
+			if got := requestCount.Load(); got != 0 {
+				t.Fatalf("request count = %d, want 0", got)
+			}
+		})
 	}
 }
 
