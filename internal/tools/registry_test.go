@@ -167,6 +167,25 @@ func TestRegistryNormalizesOrdinaryAndContextErrors(t *testing.T) {
 	}
 }
 
+func TestRegistryUsesConcreteToolErrorTextWhenAdapterOutputIsEmpty(t *testing.T) {
+	tool := testTool("concrete", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+		return textToolOutput(""), errors.New("concrete operation failed")
+	})
+	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+
+	result, err := registry.Execute(context.Background(), schema.ToolCall{
+		ID:        "call-concrete",
+		Name:      "concrete",
+		Arguments: json.RawMessage(`{"text":"x"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !result.IsError || toolResultText(t, result) != "concrete operation failed" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestRegistryPreCanceledContextSkipsToolAndEvents(t *testing.T) {
 	var calls atomic.Int32
 	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
