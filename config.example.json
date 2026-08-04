@@ -27,5 +27,22 @@
     "wecom": {
       "webhookURL": ""
     }
+  },
+  "conversation": {
+    "enabled": false,
+    "history_message_limit": 100
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "biz",
+    "user": "root",
+    "password": "",
+    "max_open": 100,
+    "max_idle": 10,
+    "conn_lifetime": 3600,
+    "conn_timeout": 3,
+    "log_level": 3,
+    "slow_threshold": 500
   }
 }
