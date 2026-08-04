@@ -1,22 +1,25 @@
 package context
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-const corePrompt = `# 核心身份
-你名叫 go-reagent，是一名经验丰富、注重事实与简洁表达的研发助手。你可以通过当前请求实际提供的工具定义读取、修改和检查工作区内容。
+const corePrompt = `# Agent Runtime 核心纪律
 
-# 核心纪律 (CRITICAL)
-1. 只能调用当前请求中实际提供定义的工具，不得虚构或模拟工具调用。
-2. 当没有提供工具定义时，你正处于 Thinking 阶段：只能制定计划，不得声称工具已执行，也不得编造文件内容。
-3. 修改文件前必须先读取并理解现有内容。
-4. 工具执行失败时，应根据真实错误信息修正操作后重试。
-5. 获得真实工具结果后，必须以这些 Observation 为依据完成面向用户的回答。
-6. 始终使用中文回复，以便清晰传达进展和结论。
+1. 必须遵守工作区 AGENTS.md 中定义的身份、职责和行为边界。
+2. 必须根据当前任务判断是否存在匹配的 Skill；使用 Skill 前，必须通过 read 完整读取对应的 SKILL.md。
+3. 只能调用当前请求中实际提供定义的工具，不得虚构或模拟工具调用。
+4. 当没有提供工具定义时，你正处于 Thinking 阶段：只能分析和规划，不得声称工具已执行，也不得编造外部事实。
+5. 工具执行失败时，必须依据真实错误处理，不得声称操作成功。
+6. 最终回答必须以当前上下文、Skill 指令和真实工具结果为依据。
 `
 
 // PromptComposer builds one System Prompt from the current workspace state.
@@ -32,20 +35,17 @@ func NewPromptComposer(workDir string) *PromptComposer {
 
 // Build 将内置核心指令、工作区 AGENTS.md 和传入的 Skill 目录组合成系统消息，
 // 同时返回 Skill Prompt 的收录、截断和省略统计。
-func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPromptReport) {
+func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPromptReport, error) {
+	agentsInstructions, err := c.loadAgentsInstructions()
+	if err != nil {
+		return schema.Message{}, SkillPromptReport{}, err
+	}
+
 	var builder strings.Builder
 	builder.WriteString(corePrompt)
-
-	if root, err := os.OpenRoot(c.workDir); err == nil {
-		defer root.Close()
-		if content, err := readRootRegularFile(root, "AGENTS.md"); err == nil {
-			builder.WriteString("\n# 项目专属指南 (来自 AGENTS.md)\n")
-			builder.WriteString("以下是当前工作区特有的架构规范与注意事项，你的行为必须符合以下要求：\n")
-			builder.WriteString("```markdown\n")
-			_, _ = builder.Write(content)
-			builder.WriteString("\n```\n")
-		}
-	}
+	builder.WriteString("\n# Agent 定义（来自 AGENTS.md）\n\n")
+	builder.Write(agentsInstructions)
+	builder.WriteString("\n")
 
 	skillPrompt, report := renderSkillPrompt(snapshot)
 	if skillPrompt != "" {
@@ -55,5 +55,31 @@ func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPr
 	return schema.Message{
 		Role:    schema.RoleSystem,
 		Content: []schema.ContentBlock{schema.TextBlock(builder.String())},
-	}, report
+	}, report, nil
+}
+
+func (c *PromptComposer) loadAgentsInstructions() ([]byte, error) {
+	if c == nil || strings.TrimSpace(c.workDir) == "" {
+		return nil, errors.New("agent workspace: workDir is required")
+	}
+	root, err := os.OpenRoot(c.workDir)
+	if err != nil {
+		return nil, fmt.Errorf("agent workspace: open workDir: %w", err)
+	}
+	defer root.Close()
+
+	content, err := readRootRegularFile(root, "AGENTS.md")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, errors.New("agent workspace: AGENTS.md is required")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent workspace: read AGENTS.md: %w", err)
+	}
+	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		return nil, errors.New("agent workspace: AGENTS.md must be valid UTF-8 text")
+	}
+	if strings.TrimSpace(string(content)) == "" {
+		return nil, errors.New("agent workspace: AGENTS.md must not be empty")
+	}
+	return content, nil
 }

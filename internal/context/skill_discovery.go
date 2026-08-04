@@ -55,9 +55,6 @@ type discoveredSkill struct {
 // 过滤格式无效或不满足运行环境要求的 Skill，再按来源优先级处理同名项，
 // 最终返回排序稳定的 Skill 摘要和诊断信息快照。
 func (s *SkillLoader) Discover(env SkillEnvironment) (*SkillSnapshot, error) {
-	if s == nil {
-		return nil, errors.New("SkillLoader 不能为空")
-	}
 	absoluteWorkDir, err := filepath.Abs(s.workDir)
 	if err != nil {
 		return nil, fmt.Errorf("解析技能工作区失败: %w", err)

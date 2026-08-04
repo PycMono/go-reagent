@@ -35,32 +35,28 @@ func (f *RunContextFactory) Create(
 	request schema.RunRequest,
 	definitions []schema.ToolDefinition,
 ) (RunContext, error) {
-	if ctx == nil {
-		return RunContext{}, errors.New("run context: context is required")
-	}
-	if f == nil || f.composer == nil || f.skillLoader == nil {
-		return RunContext{}, errors.New("run context: composer and skill loader are required")
-	}
-	if err := ctx.Err(); err != nil {
-		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
-	}
 	if err := validateRunRequest(request); err != nil {
 		return RunContext{}, err
+	}
+	if !hasToolDefinition(definitions, "read") {
+		return RunContext{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
 	snapshot, err := f.skillLoader.Discover(DefaultSkillEnvironment())
 	if err != nil {
 		return RunContext{}, fmt.Errorf("发现 Agent Skills 失败: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
-	}
+
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
-	if len(snapshot.Skills()) > 0 && !hasToolDefinition(definitions, "read") {
-		return RunContext{}, errors.New("发现可用 Agent Skills，但 Registry 未挂载 read")
+	if len(snapshot.Skills()) == 0 {
+		return RunContext{}, errors.New("agent workspace: at least one eligible Skill is required")
 	}
 
-	systemMessage, promptReport := f.composer.Build(snapshot)
+	systemMessage, promptReport, err := f.composer.Build(snapshot)
+	if err != nil {
+		return RunContext{}, err
+	}
+
 	if promptReport.Truncated {
 		logsdk.Warn(ctx, "[Context] Agent Skill Prompt 已截断",
 			logsdk.Any("component", "context"),
@@ -70,12 +66,14 @@ func (f *RunContextFactory) Create(
 			logsdk.Any("shortened_descriptions", promptReport.ShortenedDescriptions),
 		)
 	}
+
 	messages := make([]schema.Message, 0, 2+len(request.Context)+len(request.History))
 	messages = append(messages, systemMessage)
 	contextBlocks := append([]schema.ContextBlock(nil), request.Context...)
 	sort.SliceStable(contextBlocks, func(i, j int) bool {
 		return contextBlocks[i].Priority > contextBlocks[j].Priority
 	})
+
 	for _, block := range contextBlocks {
 		messages = append(messages, schema.Message{
 			Role: schema.RoleSystem,
@@ -98,6 +96,7 @@ func validateRunRequest(request schema.RunRequest) error {
 	if request.Input.Role != schema.RoleUser {
 		return fmt.Errorf("run context: input role must be user, got %q", request.Input.Role)
 	}
+
 	inputText, err := schema.TextContent(request.Input.Content)
 	if err != nil {
 		return fmt.Errorf("run context: input content: %w", err)
@@ -105,6 +104,7 @@ func validateRunRequest(request schema.RunRequest) error {
 	if strings.TrimSpace(inputText) == "" {
 		return errors.New("run context: input content must not be empty")
 	}
+
 	if len(request.Input.ToolCalls) != 0 || request.Input.ToolCallID != "" ||
 		request.Input.ToolName != "" || request.Input.IsError {
 		return errors.New("run context: input must not contain tool fields")
@@ -117,6 +117,7 @@ func validateRunRequest(request schema.RunRequest) error {
 			return fmt.Errorf("run context: context block %d content must not be empty", index)
 		}
 	}
+
 	return nil
 }
 
