@@ -117,7 +117,7 @@ It enriches the returned message and emits one structured success log with compo
 
 The tracker does not own a Session, database connection, mutable aggregate, or phase detection. This keeps it concurrency-safe and reusable. The engine owns phase and sequence because only the engine knows why a provider call was made.
 
-The Fx provider constructor wraps the real configured provider before exposing it as `provider.LLMProvider`. The rest of the engine remains unaware of the concrete provider and pricing source.
+The `observability` Fx module decorates the configured `provider.LLMProvider` after the provider module constructs it and before the engine consumes it. This keeps package dependencies one-way (`observability` may import `provider`; `provider` never imports `observability`) and avoids an import cycle. The rest of the engine remains unaware of the concrete provider and pricing source.
 
 ## Engine Data Flow
 
