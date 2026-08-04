@@ -35,6 +35,15 @@ func (f *RunContextFactory) Create(
 	request schema.RunRequest,
 	definitions []schema.ToolDefinition,
 ) (RunContext, error) {
+	if ctx == nil {
+		return RunContext{}, errors.New("run context: context is required")
+	}
+	if f == nil || f.composer == nil || f.skillLoader == nil {
+		return RunContext{}, errors.New("run context: composer and skill loader are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
+	}
 	if err := validateRunRequest(request); err != nil {
 		return RunContext{}, err
 	}
@@ -45,6 +54,9 @@ func (f *RunContextFactory) Create(
 	snapshot, err := f.skillLoader.Discover(DefaultSkillEnvironment())
 	if err != nil {
 		return RunContext{}, fmt.Errorf("发现 Agent Skills 失败: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
