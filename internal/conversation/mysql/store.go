@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/schema"
@@ -115,6 +117,66 @@ func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int
 	}, nil
 }
 
-func (s *Store) AppendTurn(context.Context, conversation.AppendRequest) error {
-	return errors.New("mysql conversation: append turn is not implemented")
+func (s *Store) AppendTurn(ctx context.Context, request conversation.AppendRequest) error {
+	if ctx == nil {
+		return errors.New("mysql conversation: context is required")
+	}
+	if s == nil || s.provider == nil || s.transactions == nil {
+		return errors.New("mysql conversation: database provider and transaction manager are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mysql conversation: append canceled: %w", err)
+	}
+	if request.ConversationPK == 0 {
+		return errors.New("mysql conversation: conversation primary key is required")
+	}
+	if request.ExpectedVersion == math.MaxUint64 {
+		return errors.New("mysql conversation: expected version is too large")
+	}
+	if len(request.Messages) == 0 {
+		return errors.New("mysql conversation: append messages are required")
+	}
+
+	turnVersion := request.ExpectedVersion + 1
+	rows := make([]messageRow, len(request.Messages))
+	var runID *string
+	if request.RunID != "" {
+		value := request.RunID
+		runID = &value
+	}
+	for index := range request.Messages {
+		row, err := encodeMessage(request.Messages[index])
+		if err != nil {
+			return fmt.Errorf("mysql conversation: encode appended message %d: %w", index, err)
+		}
+		row.ConversationPK = request.ConversationPK
+		row.TurnVersion = turnVersion
+		row.Ordinal = uint32(index)
+		row.RunID = runID
+		rows[index] = row
+	}
+
+	err := s.transactions.Transaction(ctx, func(txCtx context.Context) error {
+		db := s.provider.UseDB(txCtx)
+		result := db.Model(&conversationRow{}).
+			Where("id = ? AND version = ?", request.ConversationPK, request.ExpectedVersion).
+			Updates(map[string]any{
+				"version":    gorm.Expr("version + 1"),
+				"updated_at": time.Now().UTC(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return conversation.ErrConflict
+		}
+		if err := db.Create(&rows).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("mysql conversation: append transaction: %w", err)
+	}
+	return nil
 }

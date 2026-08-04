@@ -49,6 +49,138 @@ func TestStoreLoadOrCreateLoadsOwnedHistory(t *testing.T) {
 	}
 }
 
+func TestStoreAppendTurnCommitsMessagesAndVersion(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE .*agent_conversations.*SET .*version.*WHERE id = .*version =").
+		WithArgs(sqlmock.AnyArg(), 11, 7).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO .*agent_messages").
+		WithArgs(
+			11, 8, 0, "run-8", "user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			11, 8, 1, "run-8", "assistant", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectCommit()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), conversation.AppendRequest{
+		ConversationPK:  11,
+		ExpectedVersion: 7,
+		RunID:           "run-8",
+		Messages: []schema.Message{
+			{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
+			{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnReturnsConflictAndRollsBack(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	expectVersionUpdate(mock, 11, 7).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), validAppendRequest())
+	if !errors.Is(err, conversation.ErrConflict) {
+		t.Fatalf("AppendTurn() error = %v, want ErrConflict", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnRollsBackWhenInsertFails(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	insertErr := errors.New("insert messages failed")
+	mock.ExpectBegin()
+	expectVersionUpdate(mock, 11, 7).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO .*agent_messages").
+		WithArgs(
+			11, 8, 0, "run-8", "user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			11, 8, 1, "run-8", "assistant", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnError(insertErr)
+	mock.ExpectRollback()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), validAppendRequest())
+	if !errors.Is(err, insertErr) {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnRollsBackWhenVersionUpdateFails(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	updateErr := errors.New("update failed")
+	mock.ExpectBegin()
+	expectVersionUpdate(mock, 11, 7).WillReturnError(updateErr)
+	mock.ExpectRollback()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), validAppendRequest())
+	if !errors.Is(err, updateErr) {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnRejectsInvalidRequestBeforeTransaction(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	tests := []struct {
+		name   string
+		mutate func(*conversation.AppendRequest)
+	}{
+		{name: "zero conversation primary key", mutate: func(r *conversation.AppendRequest) { r.ConversationPK = 0 }},
+		{name: "empty messages", mutate: func(r *conversation.AppendRequest) { r.Messages = nil }},
+		{name: "unknown role", mutate: func(r *conversation.AppendRequest) { r.Messages[1].Role = schema.RoleSystem }},
+		{name: "invalid JSON", mutate: func(r *conversation.AppendRequest) {
+			r.Messages[1].ToolCalls = []schema.ToolCall{{ID: "call", Name: "read", Arguments: []byte(`{"path":`)}}
+		}},
+	}
+	store := NewStore(provider, provider)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := validAppendRequest()
+			tt.mutate(&request)
+			if err := store.AppendTurn(context.Background(), request); err == nil {
+				t.Fatal("AppendTurn() error = nil")
+			}
+		})
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnPreservesTransactionManagerError(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	transactionErr := errors.New("transaction unavailable")
+	store := NewStore(provider, transactionManagerFake{err: transactionErr})
+
+	err := store.AppendTurn(context.Background(), validAppendRequest())
+	if !errors.Is(err, transactionErr) {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStoreLoadOrCreateCreatesMissingConversation(t *testing.T) {
 	provider, mock, cleanup := newStoreTestProvider(t)
 	defer cleanup()
@@ -286,6 +418,31 @@ func expectOwnedConversation(mock sqlmock.Sqlmock, userID, conversationID string
 func expectMessages(mock sqlmock.Sqlmock, conversationPK any) *sqlmock.ExpectedQuery {
 	return mock.ExpectQuery("SELECT .*agent_messages.*conversation_pk.*turn_version DESC, ordinal DESC.*LIMIT").
 		WithArgs(conversationPK)
+}
+
+func expectVersionUpdate(mock sqlmock.Sqlmock, conversationPK, version any) *sqlmock.ExpectedExec {
+	return mock.ExpectExec("UPDATE .*agent_conversations.*SET .*version.*WHERE id = .*version =").
+		WithArgs(sqlmock.AnyArg(), conversationPK, version)
+}
+
+func validAppendRequest() conversation.AppendRequest {
+	return conversation.AppendRequest{
+		ConversationPK:  11,
+		ExpectedVersion: 7,
+		RunID:           "run-8",
+		Messages: []schema.Message{
+			{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
+			{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+		},
+	}
+}
+
+type transactionManagerFake struct {
+	err error
+}
+
+func (f transactionManagerFake) Transaction(context.Context, func(context.Context) error) error {
+	return f.err
 }
 
 func messageJSON(role, text string) string {
