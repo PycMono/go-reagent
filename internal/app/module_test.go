@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestAgentLifecycleShutsDownWithZeroExitCodeAfterSuccess(t *testing.T) {
-	app := newLifecycleTestApp(t, nil)
+	app := newLifecycleTestApp(t, false, nil)
 	app.RequireStart()
 	defer app.RequireStop()
 
@@ -30,7 +31,7 @@ func TestAgentLifecycleShutsDownWithZeroExitCodeAfterSuccess(t *testing.T) {
 }
 
 func TestAgentLifecycleShutsDownWithExitCodeOneAfterFailure(t *testing.T) {
-	app := newLifecycleTestApp(t, errors.New("agent failed"))
+	app := newLifecycleTestApp(t, false, errors.New("agent failed"))
 	app.RequireStart()
 	defer app.RequireStop()
 
@@ -44,8 +45,38 @@ func TestAgentLifecycleShutsDownWithExitCodeOneAfterFailure(t *testing.T) {
 	}
 }
 
-func newLifecycleTestApp(t *testing.T, runError error) *fxtest.App {
+func TestAgentLifecycleUsesPersistedRunnerExitCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		runError error
+		exitCode int
+	}{
+		{name: "success", exitCode: 0},
+		{name: "failure", runError: errors.New("conversation failed"), exitCode: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newLifecycleTestApp(t, true, tt.runError)
+			app.RequireStart()
+			defer app.RequireStop()
+			select {
+			case signal := <-app.Wait():
+				if signal.ExitCode != tt.exitCode {
+					t.Fatalf("exit code = %d, want %d", signal.ExitCode, tt.exitCode)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Fx app did not shut down after persisted Agent run")
+			}
+		})
+	}
+}
+
+func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) *fxtest.App {
 	t.Helper()
+	if persistenceEnabled {
+		t.Setenv("AGENT_USER_ID", "user")
+		t.Setenv("AGENT_CONVERSATION_ID", "conversation")
+	}
 	return fxtest.New(t,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
 		fx.Provide(func() engine.AgentRuntime {
@@ -53,6 +84,12 @@ func newLifecycleTestApp(t *testing.T, runError error) *fxtest.App {
 				return schema.RunResult{}, runError
 			})
 		}),
+		fx.Provide(func() conversation.Runner {
+			return conversationFunc(func(context.Context, conversation.RunRequest, engine.Reporter) (schema.RunResult, error) {
+				return schema.RunResult{}, runError
+			})
+		}),
+		fx.Supply(&config.Config{Conversation: config.ConversationConfig{Enabled: persistenceEnabled}}),
 		fx.Supply(config.Prompt("test")),
 		fx.Provide(func() engine.Reporter { return nil }),
 		Register,

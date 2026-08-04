@@ -3,10 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
@@ -14,9 +18,13 @@ import (
 
 // AgentRunner executes the configured Agent task exactly once.
 type AgentRunner struct {
-	runtime  engine.AgentRuntime
-	prompt   config.Prompt
-	reporter engine.Reporter
+	runtime            engine.AgentRuntime
+	conversationRunner conversation.Runner
+	persistenceEnabled bool
+	userID             string
+	conversationID     string
+	prompt             config.Prompt
+	reporter           engine.Reporter
 
 	mu       sync.Mutex
 	started  bool
@@ -26,8 +34,37 @@ type AgentRunner struct {
 }
 
 // NewAgentRunner creates the one-shot application runner.
-func NewAgentRunner(runtime engine.AgentRuntime, prompt config.Prompt, reporter engine.Reporter) *AgentRunner {
-	return &AgentRunner{runtime: runtime, prompt: prompt, reporter: reporter}
+func NewAgentRunner(
+	runtime engine.AgentRuntime,
+	conversationRunner conversation.Runner,
+	cfg *config.Config,
+	prompt config.Prompt,
+	reporter engine.Reporter,
+) (*AgentRunner, error) {
+	if runtime == nil {
+		return nil, errors.New("agent runner: runtime is required")
+	}
+	if cfg == nil {
+		return nil, errors.New("agent runner: config is required")
+	}
+	runner := &AgentRunner{runtime: runtime, prompt: prompt, reporter: reporter}
+	if !cfg.Conversation.Enabled {
+		return runner, nil
+	}
+	if conversationRunner == nil {
+		return nil, errors.New("agent runner: conversation runner is required")
+	}
+	runner.persistenceEnabled = true
+	runner.conversationRunner = conversationRunner
+	runner.userID = strings.TrimSpace(os.Getenv("AGENT_USER_ID"))
+	if runner.userID == "" {
+		return nil, fmt.Errorf("agent runner: %s is required", "AGENT_USER_ID")
+	}
+	runner.conversationID = strings.TrimSpace(os.Getenv("AGENT_CONVERSATION_ID"))
+	if runner.conversationID == "" {
+		return nil, fmt.Errorf("agent runner: %s is required", "AGENT_CONVERSATION_ID")
+	}
+	return runner, nil
 }
 
 // Start launches the Agent without blocking the Fx OnStart hook.
@@ -45,10 +82,20 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 	r.mu.Unlock()
 
 	go func() {
-		_, err := r.runtime.Run(ctx, schema.RunRequest{Input: schema.Message{
+		input := schema.Message{
 			Role:    schema.RoleUser,
 			Content: []schema.ContentBlock{schema.TextBlock(string(r.prompt))},
-		}}, r.reporter)
+		}
+		var err error
+		if r.persistenceEnabled {
+			_, err = r.conversationRunner.Run(ctx, conversation.RunRequest{
+				UserID:         r.userID,
+				ConversationID: r.conversationID,
+				Input:          input,
+			}, r.reporter)
+		} else {
+			_, err = r.runtime.Run(ctx, schema.RunRequest{Input: input}, r.reporter)
+		}
 
 		r.mu.Lock()
 		stopping := r.stopping
