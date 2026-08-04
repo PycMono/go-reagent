@@ -37,6 +37,9 @@ func (p *scriptedProvider) Generate(
 
 func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a Git workflow Agent."), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	skillDir := filepath.Join(workDir, "skills", "git-workflow")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
 		t.Fatal(err)

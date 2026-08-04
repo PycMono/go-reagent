@@ -66,12 +66,60 @@ func newAgentLoopForTest(
 	workDir string,
 	enableThinking bool,
 ) *loopTestRuntime {
+	writeValidAgentWorkspace(workDir)
+	return newAgentLoopRuntimeForTest(llmProvider, registryWithRequiredRead{Registry: registry}, workDir, enableThinking)
+}
+
+func newAgentLoopRuntimeForTest(
+	llmProvider provider.LLMProvider,
+	registry tools.Registry,
+	workDir string,
+	enableThinking bool,
+) *loopTestRuntime {
 	return &loopTestRuntime{
 		provider:         llmProvider,
 		registry:         registry,
 		factory:          ctxpkg.NewRunContextFactory(ctxpkg.NewPromptComposer(workDir), ctxpkg.NewSkillLoader(workDir)),
 		enableThinking:   enableThinking,
 		MaxParallelTools: 4,
+	}
+}
+
+type registryWithRequiredRead struct {
+	tools.Registry
+}
+
+func (r registryWithRequiredRead) GetAvailableTools() []schema.ToolDefinition {
+	definitions := r.Registry.GetAvailableTools()
+	for _, definition := range definitions {
+		if definition.Name == "read" {
+			return definitions
+		}
+	}
+	return append(definitions, schema.ToolDefinition{Name: "read", Description: "read workspace files", ParallelSafe: true})
+}
+
+func writeValidAgentWorkspace(workDir string) {
+	agentsPath := filepath.Join(workDir, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(agentsPath, []byte("You are a test Agent."), 0o600); err != nil {
+			panic(err)
+		}
+	} else if err != nil {
+		panic(err)
+	}
+	skillDir := filepath.Join(workDir, "skills", "test-skill")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		panic(err)
+	}
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	if _, err := os.Stat(skillPath); errors.Is(err, os.ErrNotExist) {
+		content := "---\nname: test-skill\ndescription: Test workspace behavior\n---\nFollow the test workflow."
+		if err := os.WriteFile(skillPath, []byte(content), 0o600); err != nil {
+			panic(err)
+		}
+	} else if err != nil {
+		panic(err)
 	}
 }
 
@@ -267,7 +315,7 @@ func TestAgentLoopPassesContextAndAvailableToolsToProvider(t *testing.T) {
 	if len(request) != 2 || request[0].Role != schema.RoleSystem || messageText(t, request[1]) != "hello" {
 		t.Fatalf("initial context = %#v", request)
 	}
-	if len(provider.availableTools[0]) != 1 || provider.availableTools[0][0].Name != "bash" {
+	if len(provider.availableTools[0]) != 2 || provider.availableTools[0][0].Name != "bash" || provider.availableTools[0][1].Name != "read" {
 		t.Fatalf("available tools = %#v", provider.availableTools[0])
 	}
 	if calls := registry.Calls(); len(calls) != 0 {
@@ -360,10 +408,11 @@ func TestAgentLoopRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: blocks("unused")}}}
-	agentEngine := newAgentLoopForTest(provider, &fakeRegistry{}, workDir, false)
+	writeValidAgentWorkspace(workDir)
+	agentEngine := newAgentLoopRuntimeForTest(provider, &fakeRegistry{}, workDir, false)
 
 	err := agentEngine.Run(context.Background(), "review", nil)
-	if err == nil || !strings.Contains(err.Error(), "Registry 未挂载 read") || strings.Contains(err.Error(), "read_file") {
+	if err == nil || err.Error() != "agent runtime: required tool read is not registered" {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(provider.requests) != 0 {
@@ -889,8 +938,8 @@ func TestAgentLoopCarriesThinkingIntoActionContext(t *testing.T) {
 	if len(provider.availableTools[0]) != 0 {
 		t.Fatalf("thinking tools = %#v, want none", provider.availableTools[0])
 	}
-	if len(provider.availableTools[1]) != 1 || provider.availableTools[1][0].Name != "bash" {
-		t.Fatalf("action tools = %#v, want bash", provider.availableTools[1])
+	if len(provider.availableTools[1]) != 2 || provider.availableTools[1][0].Name != "bash" || provider.availableTools[1][1].Name != "read" {
+		t.Fatalf("action tools = %#v, want bash and required read", provider.availableTools[1])
 	}
 	actionContext := provider.requests[1]
 	if len(actionContext) != 4 || actionContext[2].Role != schema.RoleAssistant ||
@@ -1029,7 +1078,7 @@ func TestAgentLoopRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	if len(provider.requests) != 4 {
 		t.Fatalf("provider calls = %d, want 4", len(provider.requests))
 	}
-	for index, wantToolCount := range []int{0, 1, 0, 1} {
+	for index, wantToolCount := range []int{0, 2, 0, 2} {
 		if got := len(provider.availableTools[index]); got != wantToolCount {
 			t.Fatalf("provider call %d tool count = %d, want %d", index+1, got, wantToolCount)
 		}

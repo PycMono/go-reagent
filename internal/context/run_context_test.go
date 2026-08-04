@@ -64,7 +64,9 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 }
 
 func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
-	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
+	workDir := t.TempDir()
+	writeValidAgentWorkspace(t, workDir)
+	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 	history := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("previous answer")}}}
 	contextBlocks := []schema.ContextBlock{
 		{Name: "preferences", Content: "prefers concise replies", Priority: 10},
@@ -82,7 +84,7 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 		Metadata: metadata,
 	}
 
-	runContext, err := factory.Create(context.Background(), request, nil)
+	runContext, err := factory.Create(context.Background(), request, []schema.ToolDefinition{{Name: "read"}})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -213,7 +215,7 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 
 	_, err := factory.Create(context.Background(), runRequest("review"), []schema.ToolDefinition{{Name: "read_file"}})
-	if err == nil || err.Error() != "发现可用 Agent Skills，但 Registry 未挂载 read" {
+	if err == nil || err.Error() != "agent runtime: required tool read is not registered" {
 		t.Fatalf("Create() error = %v", err)
 	}
 }
@@ -234,6 +236,19 @@ func runRequest(input string) schema.RunRequest {
 		Role:    schema.RoleUser,
 		Content: []schema.ContentBlock{schema.TextBlock(input)},
 	}}
+}
+
+func writeValidAgentWorkspace(t *testing.T, workDir string) {
+	t.Helper()
+	writeAgentsInstructions(t, workDir, "You are a test Agent.")
+	skillDir := filepath.Join(workDir, "skills", "test-skill")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: test-skill\ndescription: Test workspace behavior\n---\nFollow the test workflow."
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runContextMessageText(t *testing.T, message schema.Message) string {

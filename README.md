@@ -59,10 +59,41 @@ result, err := runtime.Run(ctx, schema.RunRequest{
 
 Runtime 不持有跨 `Run` 的 Conversation、Session、用户长期记忆或业务数据库状态。下一次运行所需的历史和外部上下文必须由调用方重新传入。当前协议仍位于 `internal` 包；公共 SDK 包迁移将在后续单独完成。
 
+## Agent Workspace 契约
+
+每个 Agent 都必须绑定一个 Workspace。Workspace 不是 Coding 项目的同义词，而是该 Agent 的身份、能力说明和可读取资源所在的受限空间；客服、售后、数字员工训练等 Agent 同样使用这套契约：
+
+```text
+workspace/
+├── AGENTS.md                  # 必需：Agent 身份、职责和行为边界
+├── skills/                    # 三种 Skill 根目录至少存在一种
+│   └── <skill>/SKILL.md       # 必需：至少一个格式有效且环境匹配的 Skill
+└── resources/                 # 可选：业务方准备的知识或其他只读资源
+```
+
+Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开始时，Runtime 都会重新读取 `AGENTS.md` 并发现当前可用 Skills；缺少或不安全的 `AGENTS.md`、没有有效 Skill，或者 Registry 没有注册受限 `read`，都会在首次 Provider 调用前直接返回错误。
+
+`read` 是所有 Agent 的基础工具，用于按需完整读取选中的 `SKILL.md` 及 Workspace 资源。`write`、`edit`、`apply_patch`、`exec` 和 `process` 只适用于确实需要这些能力的 Agent，可以不注册。SDK 核心不会根据业务类型动态挑选工具，也不会内置客服、订单等业务 Tool；业务封装决定固定注册哪些领域工具。
+
+模型上下文按固定顺序组装：
+
+```text
+通用 Runtime 纪律
++ AGENTS.md
++ Skills Catalog
++ 外部 Context Blocks
++ History
++ 当前 Input
+```
+
+仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 仅服务于自带 CLI 示例。业务系统应提供自己的 Workspace，例如把客服身份写入 `AGENTS.md`，把售后流程、训练规范等分别做成领域 Skill，而无需修改 Runtime 核心。
+
 ## 项目布局
 
 ```text
 go-reagent/
+├── AGENTS.md                  # 仓库 CLI 的默认 Agent 定义
+├── skills/                    # 仓库 CLI 的默认 Skills
 ├── config.example.json          # 不含真实密钥的平台配置模板
 ├── config.json                  # 本地平台配置（已被 Git 忽略）
 ├── cmd/
