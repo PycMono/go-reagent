@@ -7,6 +7,99 @@ import (
 	"testing"
 )
 
+func TestLoadParsesConversationAndMySQLConfiguration(t *testing.T) {
+	path := writeConfig(t, `{
+		"currentPlatform":"deepseek",
+		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model"}],
+		"conversation":{"enabled":true,"history_message_limit":100},
+		"mysql":{
+			"host":"127.0.0.1","port":3306,"database":"biz","user":"root","password":"123456",
+			"max_open":100,"max_idle":10,"conn_lifetime":3600,"conn_timeout":3,
+			"log_level":3,"slow_threshold":500
+		}
+	}`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Conversation.Enabled || cfg.Conversation.HistoryMessageLimit != 100 {
+		t.Fatalf("Conversation = %#v", cfg.Conversation)
+	}
+	if cfg.MySQL.Host != "127.0.0.1" || cfg.MySQL.Port != 3306 || cfg.MySQL.Database != "biz" ||
+		cfg.MySQL.User != "root" || cfg.MySQL.Password != "123456" || cfg.MySQL.MaxOpen != 100 ||
+		cfg.MySQL.MaxIdle != 10 || cfg.MySQL.ConnLifetime != 3600 || cfg.MySQL.ConnTimeout != 3 ||
+		cfg.MySQL.LogLevel != 3 || cfg.MySQL.SlowThreshold != 500 {
+		t.Fatalf("MySQL = %#v", cfg.MySQL)
+	}
+}
+
+func TestLoadDefaultsConversationHistoryLimit(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Conversation.HistoryMessageLimit != DefaultHistoryMessageLimit {
+		t.Fatalf("HistoryMessageLimit = %d", cfg.Conversation.HistoryMessageLimit)
+	}
+}
+
+func TestLoadRejectsInvalidConversationAndMySQLConfiguration(t *testing.T) {
+	const (
+		credential = "never-print-mysql-password"
+		validMySQL = `"host":"127.0.0.1","port":3306,"database":"biz","user":"root","password":"` + credential + `",` +
+			`"max_open":100,"max_idle":10,"conn_lifetime":3600,"conn_timeout":3,"log_level":3,"slow_threshold":500`
+	)
+	tests := []struct {
+		name         string
+		oldValue     string
+		invalidValue string
+		want         string
+	}{
+		{name: "negative history limit", oldValue: `"history_message_limit":100`, invalidValue: `"history_message_limit":-1`, want: "history_message_limit"},
+		{name: "empty host", oldValue: `"host":"127.0.0.1"`, invalidValue: `"host":" "`, want: "mysql.host"},
+		{name: "zero port", oldValue: `"port":3306`, invalidValue: `"port":0`, want: "mysql.port"},
+		{name: "port above maximum", oldValue: `"port":3306`, invalidValue: `"port":65536`, want: "mysql.port"},
+		{name: "empty database", oldValue: `"database":"biz"`, invalidValue: `"database":" "`, want: "mysql.database"},
+		{name: "empty user", oldValue: `"user":"root"`, invalidValue: `"user":" "`, want: "mysql.user"},
+		{name: "empty password", oldValue: `"password":"` + credential + `"`, invalidValue: `"password":""`, want: "mysql.password"},
+		{name: "zero max open", oldValue: `"max_open":100`, invalidValue: `"max_open":0`, want: "mysql.max_open"},
+		{name: "negative max idle", oldValue: `"max_idle":10`, invalidValue: `"max_idle":-1`, want: "mysql.max_idle"},
+		{name: "max idle above max open", oldValue: `"max_idle":10`, invalidValue: `"max_idle":101`, want: "mysql.max_idle"},
+		{name: "zero connection lifetime", oldValue: `"conn_lifetime":3600`, invalidValue: `"conn_lifetime":0`, want: "mysql.conn_lifetime"},
+		{name: "zero connection timeout", oldValue: `"conn_timeout":3`, invalidValue: `"conn_timeout":0`, want: "mysql.conn_timeout"},
+		{name: "log level below range", oldValue: `"log_level":3`, invalidValue: `"log_level":0`, want: "mysql.log_level"},
+		{name: "log level above range", oldValue: `"log_level":3`, invalidValue: `"log_level":5`, want: "mysql.log_level"},
+		{name: "negative slow threshold", oldValue: `"slow_threshold":500`, invalidValue: `"slow_threshold":-1`, want: "mysql.slow_threshold"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conversation := `"conversation":{"enabled":true,"history_message_limit":100}`
+			mysql := validMySQL
+			if strings.Contains(tt.oldValue, "history_message_limit") {
+				conversation = strings.Replace(conversation, tt.oldValue, tt.invalidValue, 1)
+			} else {
+				mysql = strings.Replace(mysql, tt.oldValue, tt.invalidValue, 1)
+			}
+			document := `{"currentPlatform":"x","platforms":[` +
+				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}],` +
+				conversation + `,"mysql":{` + mysql + `}}`
+
+			_, err := Load(writeConfig(t, document))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+			}
+			if strings.Contains(errorText(err), credential) {
+				t.Fatalf("Load() error leaks MySQL password: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform": " deepseek ",

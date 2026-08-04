@@ -18,6 +18,9 @@ func (c *Config) normalizeAndValidate() error {
 	if err := c.Bot.normalizeAndValidate(); err != nil {
 		return err
 	}
+	if err := c.Conversation.normalizeAndValidate(&c.MySQL); err != nil {
+		return err
+	}
 
 	ids := make(map[string]struct{}, len(c.Platforms))
 	for index := range c.Platforms {
@@ -41,6 +44,51 @@ func (c *Config) normalizeAndValidate() error {
 	}
 
 	return nil
+}
+
+func (c *ConversationConfig) normalizeAndValidate(mysql *MySQLConfig) error {
+	if c.HistoryMessageLimit == 0 {
+		c.HistoryMessageLimit = DefaultHistoryMessageLimit
+	}
+	if c.HistoryMessageLimit < 1 {
+		return errors.New("conversation.history_message_limit 必须大于 0")
+	}
+	if !c.Enabled {
+		return nil
+	}
+	return mysql.normalizeAndValidate()
+}
+
+func (m *MySQLConfig) normalizeAndValidate() error {
+	m.Host = strings.TrimSpace(m.Host)
+	m.Database = strings.TrimSpace(m.Database)
+	m.User = strings.TrimSpace(m.User)
+	switch {
+	case m.Host == "":
+		return errors.New("mysql.host 不能为空")
+	case m.Port < 1 || m.Port > 65535:
+		return errors.New("mysql.port 必须在 1 到 65535 之间")
+	case m.Database == "":
+		return errors.New("mysql.database 不能为空")
+	case m.User == "":
+		return errors.New("mysql.user 不能为空")
+	case m.Password == "":
+		return errors.New("mysql.password 不能为空")
+	case m.MaxOpen < 1:
+		return errors.New("mysql.max_open 必须大于 0")
+	case m.MaxIdle < 0 || m.MaxIdle > m.MaxOpen:
+		return errors.New("mysql.max_idle 必须在 0 到 mysql.max_open 之间")
+	case m.ConnLifetime < 1:
+		return errors.New("mysql.conn_lifetime 必须大于 0")
+	case m.ConnTimeout < 1:
+		return errors.New("mysql.conn_timeout 必须大于 0")
+	case m.LogLevel < 1 || m.LogLevel > 4:
+		return errors.New("mysql.log_level 必须在 1 到 4 之间")
+	case m.SlowThreshold < 0:
+		return errors.New("mysql.slow_threshold 不能小于 0")
+	default:
+		return nil
+	}
 }
 
 func (c *BotConfig) normalizeAndValidate() error {

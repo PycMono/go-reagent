@@ -10,15 +10,39 @@ import (
 )
 
 const (
-	ProtocolOpenAI    = "openai"
-	ProtocolAnthropic = "anthropic"
+	ProtocolOpenAI             = "openai"
+	ProtocolAnthropic          = "anthropic"
+	DefaultHistoryMessageLimit = 100
 )
 
 // Config describes all configured model platforms and the active selection.
 type Config struct {
-	CurrentPlatform string           `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
-	Platforms       []PlatformConfig `json:"platforms" yaml:"platforms" toml:"platforms"`
-	Bot             BotConfig        `json:"bot" yaml:"bot" toml:"bot"`
+	CurrentPlatform string             `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
+	Platforms       []PlatformConfig   `json:"platforms" yaml:"platforms" toml:"platforms"`
+	Bot             BotConfig          `json:"bot" yaml:"bot" toml:"bot"`
+	Conversation    ConversationConfig `json:"conversation" yaml:"conversation" toml:"conversation"`
+	MySQL           MySQLConfig        `json:"mysql" yaml:"mysql" toml:"mysql"`
+}
+
+// ConversationConfig controls optional durable conversation history.
+type ConversationConfig struct {
+	Enabled             bool `json:"enabled" yaml:"enabled" toml:"enabled"`
+	HistoryMessageLimit int  `json:"history_message_limit" yaml:"history_message_limit" toml:"history_message_limit"`
+}
+
+// MySQLConfig describes the conversation persistence connection pool.
+type MySQLConfig struct {
+	Host          string `json:"host" yaml:"host" toml:"host"`
+	Port          int    `json:"port" yaml:"port" toml:"port"`
+	Database      string `json:"database" yaml:"database" toml:"database"`
+	User          string `json:"user" yaml:"user" toml:"user"`
+	Password      string `json:"password" yaml:"password" toml:"password"`
+	MaxOpen       int    `json:"max_open" yaml:"max_open" toml:"max_open"`
+	MaxIdle       int    `json:"max_idle" yaml:"max_idle" toml:"max_idle"`
+	ConnLifetime  int    `json:"conn_lifetime" yaml:"conn_lifetime" toml:"conn_lifetime"`
+	ConnTimeout   int    `json:"conn_timeout" yaml:"conn_timeout" toml:"conn_timeout"`
+	LogLevel      int    `json:"log_level" yaml:"log_level" toml:"log_level"`
+	SlowThreshold int    `json:"slow_threshold" yaml:"slow_threshold" toml:"slow_threshold"`
 }
 
 // BotConfig describes optional external notification channels.
