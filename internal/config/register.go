@@ -42,7 +42,7 @@ func NewPrompt() Prompt {
 	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
 		return Prompt(prompt)
 	}
-	return Prompt(`你好，老板，你看下明天天气怎么样？。`)
+	return Prompt(`我需要在当前目录下新建一个 ping.go，提供一个简单的 http ping 接口。 写完之后，帮我把代码用 git 提交一下。`)
 }
 
 func configurationPath() string {
