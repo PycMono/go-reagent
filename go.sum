@@ -5,6 +5,8 @@ github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7Oputl
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/PycMono/go-logger-sdk v1.0.5 h1:ePApt9/Fp6NmDErGLcEhAXXMnxKp0pcY5Bc8Dm7R6/8=
 github.com/PycMono/go-logger-sdk v1.0.5/go.mod h1:vrxYp3DaD8yDI1q2W393Nd/CcJDuOWS7yrady7GlLfI=
+github.com/PycMono/go-mysql-sdk v1.0.2 h1:1wGLTD9YMpuS8vIizOgvt29sAvaw9NI0h7HKBTwf9rU=
+github.com/PycMono/go-mysql-sdk v1.0.2/go.mod h1:l11jt5oBjpjCVT0PAtiNxuvwtTN+mYO158O6F0Udb9k=
 github.com/anthropics/anthropic-sdk-go v1.61.0 h1:JRTnm1tPqn5xo1xd1zfrcFDlcoWXVMvV1K68YmhpZKw=
 github.com/anthropics/anthropic-sdk-go v1.61.0/go.mod h1:3EfIfmFqxH6rbiLcIP4tPFyXL/IHakx2wDG4OU+TIEI=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
