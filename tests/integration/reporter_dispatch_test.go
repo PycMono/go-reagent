@@ -14,8 +14,7 @@ import (
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/dispatch"
-	"github.com/PycMono/go-reagent/internal/engine"
+	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 )
 
 func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
@@ -45,7 +44,7 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	}
 	originalStdout := os.Stdout
 	os.Stdout = writeEnd
-	terminal := engine.NewTerminalReporter()
+	terminal := dispatch.NewTerminalReporter()
 	os.Stdout = originalStdout
 	registrations = append(registrations, agent.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
 	reporter := agent.NewMultiReporter(registrations)

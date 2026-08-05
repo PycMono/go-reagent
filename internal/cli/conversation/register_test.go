@@ -7,9 +7,9 @@ import (
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/conversation"
-	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
-	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
+	drivermysql "github.com/PycMono/go-reagent/internal/cli/driver/mysql"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -24,9 +24,9 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	app := fxtest.New(t,
 		fx.Supply(cfg),
 		fx.Provide(func() agent.Runner { return &registeredRuntimeFake{} }),
-		drivermysql.Register,
-		conversationmysql.Register,
-		conversation.Register,
+		drivermysql.Module,
+		conversationmysql.Module,
+		conversation.Module,
 		fx.Populate(&connection, &store, &runner),
 	)
 	app.RequireStart()
@@ -49,7 +49,7 @@ func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 			func() agent.Runner { return runtime },
 			func() conversation.Store { return store },
 		),
-		conversation.Register,
+		conversation.Module,
 		fx.Populate(&runner),
 	)
 	app.RequireStart()

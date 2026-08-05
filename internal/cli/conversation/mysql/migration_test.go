@@ -7,7 +7,7 @@ import (
 )
 
 func TestConversationMigrationDefinesRequiredSchema(t *testing.T) {
-	content, err := os.ReadFile("../../../migrations/0001_conversation_persistence.up.sql")
+	content, err := os.ReadFile("../../../../migrations/0001_conversation_persistence.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

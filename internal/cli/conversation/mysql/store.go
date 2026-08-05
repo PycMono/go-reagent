@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	"gorm.io/gorm"
 )
 

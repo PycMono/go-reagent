@@ -11,8 +11,7 @@ import (
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 )
 
 type runtimeFunc func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error)
@@ -49,7 +48,7 @@ func TestAgentRunnerUsesStatelessRuntimeWhenPersistenceDisabled(t *testing.T) {
 		t.Error("ConversationRunner.Run should not be called")
 		return agent.RunResult{}, nil
 	})
-	runner, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{}, config.Prompt("test prompt"), nil)
+	runner, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{}, Prompt("test prompt"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +91,7 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 	})
 	runner, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{
 		Conversation: reagent.ConversationConfig{Enabled: true},
-	}, config.Prompt("test prompt"), reporter)
+	}, Prompt("test prompt"), reporter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +221,7 @@ func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 		called <- struct{}{}
 		return agent.RunResult{}, nil
 	})
-	runner := newStatelessAgentRunner(t, runtime, config.Prompt("test prompt"), reporter)
+	runner := newStatelessAgentRunner(t, runtime, Prompt("test prompt"), reporter)
 	completed := make(chan error, 1)
 
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
@@ -247,7 +246,7 @@ func TestAgentRunnerReportsRuntimeError(t *testing.T) {
 	want := errors.New("runtime failed")
 	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
 		return agent.RunResult{}, want
-	}), config.Prompt("test"), nil)
+	}), Prompt("test"), nil)
 	completed := make(chan error, 1)
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -269,7 +268,7 @@ func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 		calls.Add(1)
 		<-release
 		return agent.RunResult{}, nil
-	}), config.Prompt("test"), nil)
+	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("first Start() error = %v", err)
 	}
@@ -291,7 +290,7 @@ func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 		<-ctx.Done()
 		close(canceled)
 		return agent.RunResult{}, ctx.Err()
-	}), config.Prompt("test"), nil)
+	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -310,7 +309,7 @@ func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
 		<-release
 		return agent.RunResult{}, nil
-	}), config.Prompt("test"), nil)
+	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -325,7 +324,7 @@ func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	}
 }
 
-func newStatelessAgentRunner(t *testing.T, runtime agent.Runner, prompt config.Prompt, reporter agent.Reporter) *AgentRunner {
+func newStatelessAgentRunner(t *testing.T, runtime agent.Runner, prompt Prompt, reporter agent.Reporter) *AgentRunner {
 	t.Helper()
 	runner, err := NewAgentRunner(runtime, nil, &reagent.Config{}, prompt, reporter)
 	if err != nil {

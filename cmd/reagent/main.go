@@ -2,7 +2,8 @@ package main
 
 import (
 	logsdk "github.com/PycMono/go-logger-sdk"
-	reagentinternal "github.com/PycMono/go-reagent/internal"
+	"github.com/PycMono/go-reagent/internal/bootstrap"
+	"github.com/PycMono/go-reagent/internal/cli"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -11,7 +12,8 @@ func main() {
 	logsdk.SetLogger(newApplicationLogger())
 
 	fx.New(
-		reagentinternal.Register,
+		bootstrap.Module,
+		cli.Module,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
 	).Run()
 }

@@ -13,7 +13,7 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/dispatch"
+	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 )
 
 type webhookRequest struct {
