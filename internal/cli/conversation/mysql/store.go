@@ -155,6 +155,20 @@ func (s *Store) AppendTurn(ctx context.Context, request conversation.AppendReque
 		row.RunID = runID
 		rows[index] = row
 	}
+	invocationRows := make([]invocationRow, len(request.Invocations))
+	var previousSequence uint32
+	for index := range request.Invocations {
+		invocation := request.Invocations[index]
+		if index > 0 && invocation.Sequence <= previousSequence {
+			return fmt.Errorf("mysql conversation: invocation sequence %d must be greater than %d", invocation.Sequence, previousSequence)
+		}
+		row, err := encodeInvocation(invocation, request.ConversationPK, turnVersion, runID)
+		if err != nil {
+			return fmt.Errorf("mysql conversation: encode invocation %d: %w", index, err)
+		}
+		invocationRows[index] = row
+		previousSequence = invocation.Sequence
+	}
 
 	err := s.transactions.Transaction(ctx, func(txCtx context.Context) error {
 		db := s.provider.UseDB(txCtx)
@@ -172,6 +186,11 @@ func (s *Store) AppendTurn(ctx context.Context, request conversation.AppendReque
 		}
 		if err := db.Create(&rows).Error; err != nil {
 			return err
+		}
+		if len(invocationRows) > 0 {
+			if err := db.Create(&invocationRows).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

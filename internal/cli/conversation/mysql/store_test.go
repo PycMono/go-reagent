@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	gormmysql "gorm.io/driver/mysql"
@@ -75,6 +76,90 @@ func TestStoreAppendTurnCommitsMessagesAndVersion(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnCommitsMessagesAndInvocations(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	expectVersionUpdate(mock, 11, 7).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO .*agent_messages").
+		WithArgs(
+			11, 8, 0, "run-8", "user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			11, 8, 1, "run-8", "assistant", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectExec("INSERT INTO .*agent_model_invocations").
+		WithArgs(
+			11, 8, "run-8", 1, "thinking", "zhipu", "glm-4.5-air", 120, 30,
+			"0.150000000000", "0.600000000000", "0.000036000000", 245, sqlmock.AnyArg(),
+			11, 8, "run-8", 2, "action", "zhipu", "glm-4.5-air", 120, 30,
+			"0.150000000000", "0.600000000000", "0.000036000000", 245, sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectCommit()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), requestWithInvocations())
+	if err != nil {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnRollsBackWhenInvocationInsertFails(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	insertErr := errors.New("insert invocations failed")
+	mock.ExpectBegin()
+	expectVersionUpdate(mock, 11, 7).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO .*agent_messages").WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectExec("INSERT INTO .*agent_model_invocations").WillReturnError(insertErr)
+	mock.ExpectRollback()
+
+	err := NewStore(provider, provider).AppendTurn(context.Background(), requestWithInvocations())
+	if !errors.Is(err, insertErr) {
+		t.Fatalf("AppendTurn() error = %v, want invocation insert error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreAppendTurnRejectsInvalidInvocationsBeforeTransaction(t *testing.T) {
+	provider, mock, cleanup := newStoreTestProvider(t)
+	defer cleanup()
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*conversation.AppendRequest)
+	}{
+		{name: "descending sequence", want: "sequence", mutate: func(r *conversation.AppendRequest) {
+			r.Invocations[0].Sequence = 2
+			r.Invocations[1].Sequence = 1
+		}},
+		{name: "duplicate sequence", want: "sequence", mutate: func(r *conversation.AppendRequest) {
+			r.Invocations[1].Sequence = r.Invocations[0].Sequence
+		}},
+		{name: "malformed usage", want: "input tokens", mutate: func(r *conversation.AppendRequest) {
+			r.Invocations[1].Usage.InputTokens = -1
+		}},
+	}
+	store := NewStore(provider, provider)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := requestWithInvocations()
+			tt.mutate(&request)
+			err := store.AppendTurn(context.Background(), request)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("AppendTurn() error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -435,6 +520,18 @@ func validAppendRequest() conversation.AppendRequest {
 			{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 		},
 	}
+}
+
+func requestWithInvocations() conversation.AppendRequest {
+	request := validAppendRequest()
+	thinking := validInvocation()
+	thinking.Sequence = 1
+	thinking.Phase = agent.ModelInvocationPhaseThinking
+	action := validInvocation()
+	action.Sequence = 2
+	action.Phase = agent.ModelInvocationPhaseAction
+	request.Invocations = []agent.ModelInvocation{thinking, action}
+	return request
 }
 
 type transactionManagerFake struct {
