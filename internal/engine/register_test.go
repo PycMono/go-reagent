@@ -8,7 +8,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
@@ -36,7 +35,7 @@ func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
 		loop      *AgentLoop
 	)
 	app := fxtest.New(t,
-		fx.Provide(func() provider.LLMProvider { return &registerProvider{} }),
+		fx.Provide(func() ai.Client { return &registerProvider{} }),
 		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
 		fx.Supply(config.WorkDir(t.TempDir())),
 		ctxpkg.Register,
@@ -70,7 +69,7 @@ func TestRegisterSortsReversedReporterGroupByOrderThenName(t *testing.T) {
 	}
 	var reporter Reporter
 	app := fxtest.New(t,
-		fx.Provide(func() provider.LLMProvider { return &registerProvider{} }),
+		fx.Provide(func() ai.Client { return &registerProvider{} }),
 		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
 		fx.Supply(config.WorkDir(t.TempDir())),
 		ctxpkg.Register,

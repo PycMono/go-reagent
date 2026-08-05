@@ -1,4 +1,4 @@
-package provider
+package anthropic
 
 import (
 	"context"
@@ -10,14 +10,14 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 )
 
-func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
+func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	requestBody := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Errorf("request path = %q, want %q", r.URL.Path, "/v1/chat/completions")
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("request path = %q, want %q", r.URL.Path, "/v1/messages")
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("Authorization = %q", got)
+		if got := r.Header.Get("X-Api-Key"); got != "test-key" {
+			t.Errorf("X-Api-Key = %q", got)
 		}
 
 		var body map[string]any
@@ -28,29 +28,22 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"id":"chatcmpl-1",
-			"object":"chat.completion",
-			"created":1,
+			"id":"msg-1",
+			"type":"message",
+			"role":"assistant",
 			"model":"test-model",
-			"choices":[{
-				"index":0,
-				"message":{
-					"role":"assistant",
-					"content":"",
-					"tool_calls":[{
-						"id":"call-new",
-						"type":"function",
-						"function":{"name":"get_weather","arguments":"{\"city\":\"北京\"}"}
-					}]
-				},
-				"finish_reason":"tool_calls"
-			}],
-			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+			"content":[
+				{"type":"text","text":"checking"},
+				{"type":"tool_use","id":"call-new","name":"get_weather","input":{"city":"北京"}}
+			],
+			"stop_reason":"tool_use",
+			"stop_sequence":null,
+			"usage":{"input_tokens":1,"output_tokens":1}
 		}`))
 	}))
 	defer server.Close()
 
-	p := newOpenAICompatibleProvider("test-key", server.URL+"/v1/", "test-model", "test")
+	p := New(ai.PlatformConfig{ID: "test", APIKey: "test-key", BaseURL: server.URL + "/", Model: "test-model"})
 	messages := []ai.Message{
 		{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock("system prompt")}},
 		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("weather")}},
@@ -80,8 +73,8 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if len(result.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %#v", result.ToolCalls)
+	if text, err := ai.TextContent(result.Content); err != nil || text != "checking" || len(result.ToolCalls) != 1 {
+		t.Fatalf("result = %#v", result)
 	}
 	call := result.ToolCalls[0]
 	if call.ID != "call-new" || call.Name != "get_weather" || string(call.Arguments) != `{"city":"北京"}` {
@@ -89,22 +82,24 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 	}
 
 	body := <-requestBody
-	if body["model"] != "test-model" {
-		t.Fatalf("model = %#v", body["model"])
+	if body["model"] != "test-model" || body["max_tokens"] != float64(4096) {
+		t.Fatalf("request model/tokens = %#v / %#v", body["model"], body["max_tokens"])
+	}
+	system := body["system"].([]any)
+	if got := system[0].(map[string]any)["text"]; got != "system prompt" {
+		t.Fatalf("system prompt = %#v", got)
 	}
 	requestMessages := body["messages"].([]any)
-	if got := requestMessages[3].(map[string]any)["role"]; got != "tool" {
-		t.Fatalf("tool result role = %#v", got)
-	}
-	if got := requestMessages[3].(map[string]any)["tool_call_id"]; got != "call-old" {
-		t.Fatalf("tool_call_id = %#v", got)
+	toolResultContent := requestMessages[2].(map[string]any)["content"].([]any)
+	if got := toolResultContent[0].(map[string]any)["type"]; got != "tool_result" {
+		t.Fatalf("tool result block type = %#v", got)
 	}
 	if tools, ok := body["tools"].([]any); !ok || len(tools) != 1 {
 		t.Fatalf("tools = %#v", body["tools"])
 	}
 }
 
-func TestOpenAICompatibleProviderOmitsToolsDuringThinking(t *testing.T) {
+func TestClaudeProviderOmitsToolsDuringThinking(t *testing.T) {
 	requestBody := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -112,14 +107,15 @@ func TestOpenAICompatibleProviderOmitsToolsDuringThinking(t *testing.T) {
 		requestBody <- body
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"id":"chatcmpl-2","object":"chat.completion","created":1,"model":"test-model",
-			"choices":[{"index":0,"message":{"role":"assistant","content":"plan"},"finish_reason":"stop"}],
-			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+			"id":"msg-2","type":"message","role":"assistant","model":"test-model",
+			"content":[{"type":"text","text":"plan"}],
+			"stop_reason":"end_turn","stop_sequence":null,
+			"usage":{"input_tokens":1,"output_tokens":1}
 		}`))
 	}))
 	defer server.Close()
 
-	p := newOpenAICompatibleProvider("test-key", server.URL+"/v1/", "test-model", "test")
+	p := New(ai.PlatformConfig{ID: "test", APIKey: "test-key", BaseURL: server.URL + "/", Model: "test-model"})
 	_, err := p.Generate(context.Background(), []ai.Message{{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("plan")}}}, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -129,7 +125,7 @@ func TestOpenAICompatibleProviderOmitsToolsDuringThinking(t *testing.T) {
 	}
 }
 
-func TestOpenAIMessagesMapNativeToolResults(t *testing.T) {
+func TestClaudeMessagesMapNativeToolResults(t *testing.T) {
 	message := ai.Message{
 		Role:       ai.RoleTool,
 		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
@@ -138,9 +134,9 @@ func TestOpenAIMessagesMapNativeToolResults(t *testing.T) {
 		IsError:    true,
 	}
 
-	messages, err := toOpenAIMessages([]ai.Message{message})
+	messages, _, err := toClaudeMessages([]ai.Message{message})
 	if err != nil {
-		t.Fatalf("toOpenAIMessages() error = %v", err)
+		t.Fatalf("toClaudeMessages() error = %v", err)
 	}
 	encoded, err := json.Marshal(messages)
 	if err != nil {
@@ -150,23 +146,22 @@ func TestOpenAIMessagesMapNativeToolResults(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if got := decoded[0]["role"]; got != "tool" {
-		t.Fatalf("role = %#v", got)
+	content := decoded[0]["content"].([]any)
+	block := content[0].(map[string]any)
+	if block["type"] != "tool_result" || block["tool_use_id"] != "call-1" || block["is_error"] != true {
+		t.Fatalf("tool result block = %#v", block)
 	}
-	if got := decoded[0]["tool_call_id"]; got != "call-1" {
-		t.Fatalf("tool_call_id = %#v", got)
-	}
-	if _, exists := decoded[0]["details"]; exists {
-		t.Fatalf("tool result serialized Details: %#v", decoded[0])
+	if _, exists := block["details"]; exists {
+		t.Fatalf("tool result serialized Details: %#v", block)
 	}
 }
 
-func TestOpenAIMessagesRejectToolResultWithoutCallID(t *testing.T) {
-	_, err := toOpenAIMessages([]ai.Message{{
+func TestClaudeMessagesRejectToolResultWithoutCallID(t *testing.T) {
+	_, _, err := toClaudeMessages([]ai.Message{{
 		Role:    ai.RoleTool,
 		Content: []ai.ContentBlock{ai.TextBlock("permission denied")},
 	}})
 	if err == nil {
-		t.Fatal("toOpenAIMessages() error = nil")
+		t.Fatal("toClaudeMessages() error = nil")
 	}
 }

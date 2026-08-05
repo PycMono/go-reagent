@@ -15,7 +15,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 )
@@ -54,7 +53,7 @@ type fakeRegistry struct {
 }
 
 type loopTestRuntime struct {
-	provider         provider.LLMProvider
+	provider         ai.Client
 	registry         tools.Registry
 	factory          *ctxpkg.RunContextFactory
 	enableThinking   bool
@@ -62,7 +61,7 @@ type loopTestRuntime struct {
 }
 
 func newAgentLoopForTest(
-	llmProvider provider.LLMProvider,
+	llmProvider ai.Client,
 	registry tools.Registry,
 	workDir string,
 	enableThinking bool,
@@ -72,7 +71,7 @@ func newAgentLoopForTest(
 }
 
 func newAgentLoopRuntimeForTest(
-	llmProvider provider.LLMProvider,
+	llmProvider ai.Client,
 	registry tools.Registry,
 	workDir string,
 	enableThinking bool,

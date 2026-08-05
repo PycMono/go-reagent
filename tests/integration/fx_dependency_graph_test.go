@@ -10,7 +10,6 @@ import (
 	reagentinternal "github.com/PycMono/go-reagent/internal"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
@@ -41,7 +40,7 @@ func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {
 		fx.NopLogger,
 		reagentinternal.Register,
 		fx.Replace(config.WorkDir(workDir), config.Prompt("test")),
-		fx.Replace(fx.Annotate(&dependencyGraphProvider{}, fx.As(new(provider.LLMProvider)))),
+		fx.Replace(fx.Annotate(&dependencyGraphProvider{}, fx.As(new(ai.Client)))),
 		fx.Populate(&runtime, &registry, &workspace, &supervisor),
 	)
 	if err := app.Err(); err != nil {
