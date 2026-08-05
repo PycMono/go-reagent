@@ -163,7 +163,7 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 	}
 }
 
-func TestRunnerValidatesDependenciesAndCancellation(t *testing.T) {
+func TestRunnerValidatesHistoryLimitAndCancellation(t *testing.T) {
 	request := validConversationRunRequest()
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -173,9 +173,6 @@ func TestRunnerValidatesDependenciesAndCancellation(t *testing.T) {
 		runner Runner
 		want   error
 	}{
-		{name: "nil context", runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100)},
-		{name: "nil runtime", ctx: context.Background(), runner: NewRunner(nil, &runnerStoreFake{}, 100)},
-		{name: "nil store", ctx: context.Background(), runner: NewRunner(&runnerRuntimeFake{}, nil, 100)},
 		{name: "invalid history limit", ctx: context.Background(), runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 0)},
 		{name: "canceled context", ctx: canceled, runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100), want: context.Canceled},
 	}

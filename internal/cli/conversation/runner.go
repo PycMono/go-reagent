@@ -22,12 +22,6 @@ func NewRunner(runtime agent.Runner, store Store, historyLimit int) Runner {
 
 func (r *runner) Run(ctx context.Context, request RunRequest, reporter agent.Reporter) (agent.RunResult, error) {
 	result := agent.RunResult{RunID: request.RunID}
-	if ctx == nil {
-		return result, errors.New("conversation runner: context is required")
-	}
-	if r == nil || r.runtime == nil || r.store == nil {
-		return result, errors.New("conversation runner: runtime and store are required")
-	}
 	if r.historyLimit < 1 {
 		return result, errors.New("conversation runner: history limit must be positive")
 	}

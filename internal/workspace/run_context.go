@@ -29,15 +29,6 @@ func (f *RunContextFactory) Create(
 	request agent.RunRequest,
 	definitions []ai.ToolDefinition,
 ) (agent.RunContext, error) {
-	if ctx == nil {
-		return agent.RunContext{}, errors.New("run context: context is required")
-	}
-	if f == nil || f.composer == nil || f.skillLoader == nil {
-		return agent.RunContext{}, errors.New("run context: composer and skill loader are required")
-	}
-	if err := ctx.Err(); err != nil {
-		return agent.RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
-	}
 	if !hasToolDefinition(definitions, "read") {
 		return agent.RunContext{}, errors.New("agent runtime: required tool read is not registered")
 	}
