@@ -12,6 +12,7 @@ import (
 	workspacepkg "github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 	"github.com/PycMono/go-reagent/pi/tools"
 	"go.uber.org/fx/fxtest"
 )
@@ -82,7 +83,7 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	}}
 	factory := workspacepkg.NewRunContextFactory(
 		workspacepkg.NewPromptComposer(workDir),
-		workspacepkg.NewSkillLoader(workDir),
+		skills.NewLoader(workDir),
 	)
 	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 4), true)
 	runtime, err := agent.New(factory, loop, registry)

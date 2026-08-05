@@ -16,6 +16,19 @@ func TestPublicPackageDependencyBoundaries(t *testing.T) {
 		forbidden func(string) bool
 	}{
 		{
+			pkg: modulePath + "/pi/skills",
+			forbidden: func(dependency string) bool {
+				return dependency == modulePath ||
+					dependency == modulePath+"/pi" ||
+					strings.HasPrefix(dependency, modulePath+"/pi/") ||
+					strings.HasPrefix(dependency, modulePath+"/application") ||
+					strings.HasPrefix(dependency, modulePath+"/config") ||
+					strings.HasPrefix(dependency, modulePath+"/conversation") ||
+					strings.HasPrefix(dependency, modulePath+"/persistence") ||
+					strings.HasPrefix(dependency, modulePath+"/transport")
+			},
+		},
+		{
 			pkg: modulePath + "/pi/ai",
 			forbidden: func(dependency string) bool {
 				return dependency == modulePath ||

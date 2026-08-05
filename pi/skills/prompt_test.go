@@ -1,4 +1,4 @@
-package pi
+package skills
 
 import (
 	"encoding/xml"
@@ -10,7 +10,7 @@ import (
 
 // TestRenderSkillPromptContainsEscapedCatalogMetadata 验证 Skill 目录排序正确、元数据完成 XML 转义且包含渐进读取指令。
 func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
-	snapshot := newSkillSnapshot([]SkillSummary{
+	snapshot := newSnapshot([]Summary{
 		{
 			Name:        "zeta",
 			Description: `Use <code> & "tests" with 'care'`,
@@ -25,7 +25,7 @@ func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
 		},
 	}, nil)
 
-	prompt, report := renderSkillPrompt(snapshot)
+	prompt, report := RenderPrompt(snapshot)
 	for _, want := range []string{
 		"<available_skills>", "<name>alpha</name>", "<name>zeta</name>",
 		`Use &lt;code&gt; &amp; &quot;tests&quot; with &apos;care&apos;`,
@@ -47,19 +47,19 @@ func TestRenderSkillPromptContainsEscapedCatalogMetadata(t *testing.T) {
 
 // TestRenderSkillPromptOmitsEmptyCatalog 验证 nil 或空快照不会生成 Skill Prompt。
 func TestRenderSkillPromptOmitsEmptyCatalog(t *testing.T) {
-	for _, snapshot := range []*SkillSnapshot{nil, newSkillSnapshot(nil, nil)} {
-		prompt, report := renderSkillPrompt(snapshot)
-		if prompt != "" || report != (SkillPromptReport{}) {
-			t.Fatalf("renderSkillPrompt() = %q, %#v", prompt, report)
+	for _, snapshot := range []*Snapshot{nil, newSnapshot(nil, nil)} {
+		prompt, report := RenderPrompt(snapshot)
+		if prompt != "" || report != (PromptReport{}) {
+			t.Fatalf("RenderPrompt() = %q, %#v", prompt, report)
 		}
 	}
 }
 
 // TestRenderSkillPromptHonorsCountAndRuneBudgets 验证渲染结果遵守技能数量和 Unicode 字符预算。
 func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
-	skills := make([]SkillSummary, 0, maxSkillsInPrompt+10)
+	skills := make([]Summary, 0, maxSkillsInPrompt+10)
 	for index := 0; index < maxSkillsInPrompt+10; index++ {
-		skills = append(skills, SkillSummary{
+		skills = append(skills, Summary{
 			Name:        fmt.Sprintf("skill-%03d", index),
 			Description: strings.Repeat("说明", 512),
 			Location:    fmt.Sprintf("skills/skill-%03d/SKILL.md", index),
@@ -67,7 +67,7 @@ func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
 		})
 	}
 
-	prompt, report := renderSkillPrompt(newSkillSnapshot(skills, nil))
+	prompt, report := RenderPrompt(newSnapshot(skills, nil))
 	if got := utf8.RuneCountInString(prompt); got > maxSkillsPromptChars {
 		t.Fatalf("prompt runes = %d, want <= %d", got, maxSkillsPromptChars)
 	}
@@ -81,9 +81,9 @@ func TestRenderSkillPromptHonorsCountAndRuneBudgets(t *testing.T) {
 
 // TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions 验证预算不足时优先保留 Skill 身份，再缩短描述。
 func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *testing.T) {
-	skills := make([]SkillSummary, 0, 10)
+	skills := make([]Summary, 0, 10)
 	for index := 0; index < 10; index++ {
-		skills = append(skills, SkillSummary{
+		skills = append(skills, Summary{
 			Name:        fmt.Sprintf("skill-%02d", index),
 			Description: strings.Repeat("very-long-description-", 100),
 			Location:    fmt.Sprintf("skills/skill-%02d/SKILL.md", index),
@@ -91,7 +91,7 @@ func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *tes
 		})
 	}
 
-	prompt, report := renderSkillPrompt(newSkillSnapshot(skills, nil))
+	prompt, report := RenderPrompt(newSnapshot(skills, nil))
 	if report.IncludedSkills != 10 || report.OmittedSkills != 0 {
 		t.Fatalf("report = %#v", report)
 	}
@@ -105,14 +105,14 @@ func TestRenderSkillPromptPrioritizesAllFittingIdentitiesOverDescriptions(t *tes
 
 // TestRenderSkillPromptProducesWellFormedXMLForControlCharacters 验证非法控制字符被清理后仍能生成合法 XML。
 func TestRenderSkillPromptProducesWellFormedXMLForControlCharacters(t *testing.T) {
-	snapshot := newSkillSnapshot([]SkillSummary{{
+	snapshot := newSnapshot([]Summary{{
 		Name:        "control",
 		Description: "bad\x00description",
 		Location:    "skills/\x01control/SKILL.md",
 		Version:     "sha256:0123456789abcdef",
 	}}, nil)
 
-	prompt, _ := renderSkillPrompt(snapshot)
+	prompt, _ := RenderPrompt(snapshot)
 	start := strings.Index(prompt, "<available_skills>")
 	end := strings.Index(prompt, "</available_skills>")
 	if start < 0 || end < start {

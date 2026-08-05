@@ -10,18 +10,17 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 func TestPromptComposerBuildsGenericServicePrompt(t *testing.T) {
 	workDir := t.TempDir()
 	writeAgentsInstructions(t, workDir, "你是一名售后客服数字员工。使用简洁、自然的中文回复。")
-	snapshot := newSkillSnapshot([]SkillSummary{{
-		Name:        "refund-policy",
-		Description: "处理退款政策问题",
-		Location:    "skills/refund-policy/SKILL.md",
-		Version:     "sha256:0123456789abcdef",
-		Source:      SkillSourceWorkspace,
-	}}, nil)
+	writeTestSkill(t, workDir, "refund-policy/SKILL.md", "---\nname: refund-policy\ndescription: 处理退款政策问题\n---\nFollow the refund policy.")
+	snapshot, err := skills.NewLoader(workDir).Discover(skills.DefaultEnvironment())
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
 
 	message, report, err := NewPromptComposer(workDir).Build(snapshot)
 	if err != nil {
@@ -36,7 +35,7 @@ func TestPromptComposerBuildsGenericServicePrompt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"必须遵守工作区 AGENTS.md", "必须通过 read 完整读取", "售后客服数字员工",
-		"退款政策", "skills/refund-policy/SKILL.md",
+		"退款政策", ".claw/skills/refund-policy/SKILL.md",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("prompt missing %q: %q", want, content)
@@ -55,7 +54,7 @@ func TestPromptComposerBuildsGenericServicePrompt(t *testing.T) {
 func TestRunContextFactoryRequiresReadForEveryAgent(t *testing.T) {
 	workDir := t.TempDir()
 	writeAgentsInstructions(t, workDir, "You are a service Agent.")
-	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
 
 	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), nil)
 	if err == nil || err.Error() != "agent runtime: required tool read is not registered" {
@@ -66,11 +65,24 @@ func TestRunContextFactoryRequiresReadForEveryAgent(t *testing.T) {
 func TestRunContextFactoryRequiresEligibleSkill(t *testing.T) {
 	workDir := t.TempDir()
 	writeAgentsInstructions(t, workDir, "You are a service Agent.")
-	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
 
 	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), []ai.ToolDefinition{{Name: "read"}})
 	if err == nil || !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "at least one eligible Skill") {
 		t.Fatalf("Create() error = %v", err)
+	}
+}
+
+func TestRunContextFactoryPreservesSkillsAndPiInvalidErrors(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "missing")
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
+
+	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), []ai.ToolDefinition{{Name: "read"}})
+	if !errors.Is(err, skills.ErrInvalid) {
+		t.Fatalf("Create() error = %v, want skills.ErrInvalid", err)
+	}
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Create() error = %v, want pi.ErrInvalid", err)
 	}
 }
 
@@ -83,7 +95,7 @@ func validWorkspaceRunRequest() agent.RunRequest {
 
 func TestRunContextFactoryImplementsAgentContract(t *testing.T) {
 	var _ agent.ContextFactory = NewRunContextFactory(
-		NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()),
+		NewPromptComposer(t.TempDir()), skills.NewLoader(t.TempDir()),
 	)
 }
 
@@ -127,6 +139,17 @@ func TestPromptComposerRequiresAgentsFile(t *testing.T) {
 func writeAgentsInstructions(t *testing.T, workDir, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTestSkill(t *testing.T, workDir, relativePath, content string) {
+	t.Helper()
+	path := filepath.Join(workDir, ".claw", "skills", filepath.FromSlash(relativePath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

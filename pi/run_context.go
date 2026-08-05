@@ -10,16 +10,17 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 // RunContextFactory prepares workspace-specific context for one Agent run.
 type RunContextFactory struct {
 	composer    *PromptComposer
-	skillLoader *SkillLoader
+	skillLoader *skills.Loader
 }
 
 // NewRunContextFactory creates a preparation boundary from workspace prompt and Skill components.
-func NewRunContextFactory(composer *PromptComposer, skillLoader *SkillLoader) *RunContextFactory {
+func NewRunContextFactory(composer *PromptComposer, skillLoader *skills.Loader) *RunContextFactory {
 	return &RunContextFactory{composer: composer, skillLoader: skillLoader}
 }
 
@@ -33,9 +34,9 @@ func (f *RunContextFactory) Create(
 		return agent.RunContext{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
-	snapshot, err := f.skillLoader.Discover(DefaultSkillEnvironment())
+	snapshot, err := f.skillLoader.Discover(skills.DefaultEnvironment())
 	if err != nil {
-		return agent.RunContext{}, fmt.Errorf("发现 Agent Skills 失败: %w", err)
+		return agent.RunContext{}, fmt.Errorf("%w: 发现 Agent Skills 失败: %w", ErrInvalid, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return agent.RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
@@ -106,7 +107,7 @@ func hasToolDefinition(definitions []ai.ToolDefinition, name string) bool {
 	return false
 }
 
-func logSkillDiagnostics(ctx context.Context, diagnostics []SkillDiagnostic) {
+func logSkillDiagnostics(ctx context.Context, diagnostics []skills.Diagnostic) {
 	for _, diagnostic := range diagnostics {
 		fields := []logsdk.Fields{
 			logsdk.Any("component", "context"),
@@ -116,9 +117,9 @@ func logSkillDiagnostics(ctx context.Context, diagnostics []SkillDiagnostic) {
 			logsdk.Any("detail", diagnostic.Message),
 		}
 		switch diagnostic.Severity {
-		case DiagnosticSeverityError:
+		case skills.SeverityError:
 			logsdk.Error(ctx, "[Context] Agent Skill 诊断", fields...)
-		case DiagnosticSeverityWarning:
+		case skills.SeverityWarning:
 			logsdk.Warn(ctx, "[Context] Agent Skill 诊断", fields...)
 		default:
 			logsdk.Info(ctx, "[Context] Agent Skill 诊断", fields...)

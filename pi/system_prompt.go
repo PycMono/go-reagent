@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 const corePrompt = `# Agent Runtime 核心纪律
@@ -35,10 +36,10 @@ func NewPromptComposer(workDir string) *PromptComposer {
 
 // Build 将内置核心指令、工作区 AGENTS.md 和传入的 Skill 目录组合成系统消息，
 // 同时返回 Skill Prompt 的收录、截断和省略统计。
-func (c *PromptComposer) Build(snapshot *SkillSnapshot) (ai.Message, SkillPromptReport, error) {
+func (c *PromptComposer) Build(snapshot *skills.Snapshot) (ai.Message, skills.PromptReport, error) {
 	agentsInstructions, err := c.loadAgentsInstructions()
 	if err != nil {
-		return ai.Message{}, SkillPromptReport{}, err
+		return ai.Message{}, skills.PromptReport{}, err
 	}
 
 	var builder strings.Builder
@@ -47,7 +48,7 @@ func (c *PromptComposer) Build(snapshot *SkillSnapshot) (ai.Message, SkillPrompt
 	builder.Write(agentsInstructions)
 	builder.WriteString("\n")
 
-	skillPrompt, report := renderSkillPrompt(snapshot)
+	skillPrompt, report := skills.RenderPrompt(snapshot)
 	if skillPrompt != "" {
 		builder.WriteString(skillPrompt)
 	}
@@ -82,4 +83,15 @@ func (c *PromptComposer) loadAgentsInstructions() ([]byte, error) {
 		return nil, fmt.Errorf("%w: AGENTS.md must not be empty", ErrInvalid)
 	}
 	return content, nil
+}
+
+func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	return root.ReadFile(name)
 }

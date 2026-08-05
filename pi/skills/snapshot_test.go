@@ -1,23 +1,23 @@
-package pi
+package skills
 
 import "testing"
 
-// TestSkillSnapshotReturnsCopies 验证快照在构造和读取时都会复制切片，避免外部修改内部状态。
-func TestSkillSnapshotReturnsCopies(t *testing.T) {
-	originalSkills := []SkillSummary{{
+// TestSnapshotReturnsCopies 验证快照在构造和读取时都会复制切片，避免外部修改内部状态。
+func TestSnapshotReturnsCopies(t *testing.T) {
+	originalSkills := []Summary{{
 		Name:        "review",
 		Description: "Review changes",
 		Location:    "skills/review/SKILL.md",
 		Version:     "sha256:0123456789abcdef",
-		Source:      SkillSourceWorkspace,
+		Source:      SourceWorkspace,
 	}}
-	originalDiagnostics := []SkillDiagnostic{{
+	originalDiagnostics := []Diagnostic{{
 		Path:     "skills/review/SKILL.md",
-		Severity: DiagnosticSeverityInfo,
+		Severity: SeverityInfo,
 		Code:     "sample",
 		Message:  "sample diagnostic",
 	}}
-	snapshot := newSkillSnapshot(originalSkills, originalDiagnostics)
+	snapshot := newSnapshot(originalSkills, originalDiagnostics)
 
 	originalSkills[0].Name = "mutated-original"
 	originalDiagnostics[0].Code = "mutated-original"
@@ -34,9 +34,9 @@ func TestSkillSnapshotReturnsCopies(t *testing.T) {
 	}
 }
 
-// TestNilSkillSnapshotAccessorsReturnNil 验证空快照接收者的访问方法安全返回 nil。
-func TestNilSkillSnapshotAccessorsReturnNil(t *testing.T) {
-	var snapshot *SkillSnapshot
+// TestNilSnapshotAccessorsReturnNil 验证空快照接收者的访问方法安全返回 nil。
+func TestNilSnapshotAccessorsReturnNil(t *testing.T) {
+	var snapshot *Snapshot
 	if snapshot.Skills() != nil || snapshot.Diagnostics() != nil {
 		t.Fatalf("nil snapshot accessors returned values")
 	}
