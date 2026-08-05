@@ -77,6 +77,10 @@ func cloneMessages(messages []ai.Message) []ai.Message {
 }
 
 func cloneMessage(message ai.Message) ai.Message {
+	if message.Usage != nil {
+		usage := *message.Usage
+		message.Usage = &usage
+	}
 	message.Content = append([]ai.ContentBlock(nil), message.Content...)
 	if message.ToolCalls != nil {
 		calls := make([]ai.ToolCall, len(message.ToolCalls))

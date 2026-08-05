@@ -58,7 +58,7 @@ func (c *agentClientFake) Generate(
 	if index >= len(c.responses) {
 		return nil, fmt.Errorf("unexpected client call %d", index+1)
 	}
-	return c.responses[index], nil
+	return withTestUsage(c.responses[index]), nil
 }
 
 type agentRegistryFake struct {
@@ -96,6 +96,87 @@ func validAgentRequest(runID, input string) agent.RunRequest {
 			Content: []ai.ContentBlock{ai.TextBlock(input)},
 		},
 	}
+}
+
+func TestAgentRunReturnsEveryCostedInvocationInCallOrder(t *testing.T) {
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"AGENTS.md"}`)}
+	client := &agentClientFake{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("private thinking one")}, Usage: costedUsage(1)},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{call}, Usage: costedUsage(2)},
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("private thinking two")}, Usage: costedUsage(3)},
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}, Usage: costedUsage(4)},
+	}}
+	registry := &agentRegistryFake{definitions: []ai.ToolDefinition{{Name: "read"}}}
+	factory := &agentFactoryFake{runContext: agent.RunContext{
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("run")}}},
+		Tools:    registry.definitions,
+	}}
+	loop := agent.NewLoop(client, agent.NewScheduler(registry, 1), true)
+	runtime, err := agent.New(factory, loop, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &recordingReporter{}
+	result, err := runtime.Run(context.Background(), validAgentRequest("run-cost", "run"), reporter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantPhases := []agent.ModelInvocationPhase{
+		agent.ModelInvocationPhaseThinking,
+		agent.ModelInvocationPhaseAction,
+		agent.ModelInvocationPhaseThinking,
+		agent.ModelInvocationPhaseAction,
+	}
+	if len(result.Invocations) != 4 {
+		t.Fatalf("Invocations = %#v", result.Invocations)
+	}
+	for index, invocation := range result.Invocations {
+		if invocation.Sequence != uint32(index+1) || invocation.Phase != wantPhases[index] ||
+			invocation.Usage.InputTokens != int64(index+1) {
+			t.Fatalf("invocation %d = %#v", index, invocation)
+		}
+	}
+	if len(result.NewMessages) != 3 {
+		t.Fatalf("NewMessages = %#v", result.NewMessages)
+	}
+	for _, message := range result.NewMessages {
+		text, _ := ai.TextContent(message.Content)
+		if text == "private thinking one" || text == "private thinking two" {
+			t.Fatalf("Thinking leaked: %#v", result.NewMessages)
+		}
+	}
+	messageEventCount := 0
+	for _, event := range reporter.Events() {
+		if event.Type == agent.AgentEventMessage {
+			messageEventCount++
+			if event.Message == nil || event.Message.Content[0].Text != "done" {
+				t.Fatalf("message event = %#v", event)
+			}
+		}
+	}
+	if messageEventCount != 1 {
+		t.Fatalf("message event count = %d, want 1", messageEventCount)
+	}
+}
+
+func costedUsage(inputTokens int64) *ai.Usage {
+	return &ai.Usage{
+		InputTokens:                   inputTokens,
+		InputPriceUSDPerMillionTokens: 1,
+		CostUSD:                       float64(inputTokens) / 1_000_000,
+		PlatformID:                    "test",
+		Model:                         "model",
+	}
+}
+
+func withTestUsage(message *ai.Message) *ai.Message {
+	if message == nil || message.Usage != nil {
+		return message
+	}
+	cloned := *message
+	cloned.Usage = costedUsage(0)
+	return &cloned
 }
 
 func TestAgentRunPreparesRequestAndReturnsNewMessages(t *testing.T) {
@@ -153,6 +234,10 @@ func TestAgentRunPreservesPartialMessagesOnClientFailure(t *testing.T) {
 	if result.NewMessages[0].ToolCalls[0].ID != "call-1" || result.NewMessages[1].ToolCallID != "call-1" {
 		t.Fatalf("partial messages = %#v", result.NewMessages)
 	}
+	if len(result.Invocations) != 1 || result.Invocations[0].Sequence != 1 ||
+		result.Invocations[0].Phase != agent.ModelInvocationPhaseAction {
+		t.Fatalf("partial invocations = %#v, want completed first Action call", result.Invocations)
+	}
 }
 
 func TestAgentRunClonesCallerAndProviderOwnedValues(t *testing.T) {
@@ -160,6 +245,7 @@ func TestAgentRunClonesCallerAndProviderOwnedValues(t *testing.T) {
 	response := &ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("done")},
+		Usage:   costedUsage(1),
 	}
 	client := &agentClientFake{responses: []*ai.Message{response}}
 	runtime := newPublicAgent(t, factory, client, &agentRegistryFake{})
@@ -182,6 +268,7 @@ func TestAgentRunClonesCallerAndProviderOwnedValues(t *testing.T) {
 	request.Context[0].Content = "changed"
 	request.Metadata["tenant"] = "changed"
 	response.Content[0].Text = "changed"
+	response.Usage.PlatformID = "changed"
 
 	captured := factory.requests[0]
 	if string(captured.History[0].ToolCalls[0].Arguments) != `{"path":"history"}` ||
@@ -191,6 +278,9 @@ func TestAgentRunClonesCallerAndProviderOwnedValues(t *testing.T) {
 	}
 	if result.NewMessages[0].Content[0].Text != "done" {
 		t.Fatalf("result mutated = %#v", result.NewMessages)
+	}
+	if result.NewMessages[0].Usage == nil || result.NewMessages[0].Usage.PlatformID != "test" {
+		t.Fatalf("result Usage mutated = %#v", result.NewMessages[0].Usage)
 	}
 }
 
@@ -234,5 +324,7 @@ func (*echoAgentClient) Generate(_ context.Context, messages []ai.Message, _ []a
 	if err != nil {
 		return nil, err
 	}
-	return &ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done:" + text)}}, nil
+	return &ai.Message{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done:" + text)}, Usage: costedUsage(0),
+	}, nil
 }
