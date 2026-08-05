@@ -6,6 +6,10 @@ type Protocol string
 const (
 	ProtocolOpenAI    Protocol = "openai"
 	ProtocolAnthropic Protocol = "anthropic"
+
+	// MaxUsageDecimalExclusive is the exclusive upper bound for prices and
+	// per-invocation costs stored as DECIMAL(20,12).
+	MaxUsageDecimalExclusive = 100_000_000
 )
 
 // PlatformConfig is one self-contained model platform profile.

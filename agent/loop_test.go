@@ -38,6 +38,7 @@ func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
 		{name: "negative latency", usage: &ai.Usage{PlatformID: "p", Model: "m", LatencyMS: -1}},
 		{name: "NaN price", usage: &ai.Usage{PlatformID: "p", Model: "m", InputPriceUSDPerMillionTokens: math.NaN()}},
 		{name: "infinite cost", usage: &ai.Usage{PlatformID: "p", Model: "m", CostUSD: math.Inf(1)}},
+		{name: "price outside ledger range", usage: &ai.Usage{PlatformID: "p", Model: "m", InputPriceUSDPerMillionTokens: 100_000_000}},
 		{name: "incorrect cost", usage: &ai.Usage{
 			PlatformID: "p", Model: "m", InputTokens: 1_000_000,
 			InputPriceUSDPerMillionTokens: 0.25, CostUSD: 0.20,

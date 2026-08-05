@@ -139,12 +139,12 @@ func validatePricing(pricing *ai.PricingConfig, prefix string) error {
 		return fmt.Errorf("%s.pricing 不能为空", prefix)
 	}
 	if math.IsNaN(pricing.InputUSDPerMillionTokens) || math.IsInf(pricing.InputUSDPerMillionTokens, 0) ||
-		pricing.InputUSDPerMillionTokens < 0 {
-		return fmt.Errorf("%s.pricing.input_usd_per_million_tokens 必须是有限非负数", prefix)
+		pricing.InputUSDPerMillionTokens < 0 || pricing.InputUSDPerMillionTokens >= ai.MaxUsageDecimalExclusive {
+		return fmt.Errorf("%s.pricing.input_usd_per_million_tokens 必须是小于 %.0f 的有限非负数", prefix, float64(ai.MaxUsageDecimalExclusive))
 	}
 	if math.IsNaN(pricing.OutputUSDPerMillionTokens) || math.IsInf(pricing.OutputUSDPerMillionTokens, 0) ||
-		pricing.OutputUSDPerMillionTokens < 0 {
-		return fmt.Errorf("%s.pricing.output_usd_per_million_tokens 必须是有限非负数", prefix)
+		pricing.OutputUSDPerMillionTokens < 0 || pricing.OutputUSDPerMillionTokens >= ai.MaxUsageDecimalExclusive {
+		return fmt.Errorf("%s.pricing.output_usd_per_million_tokens 必须是小于 %.0f 的有限非负数", prefix, float64(ai.MaxUsageDecimalExclusive))
 	}
 	return nil
 }

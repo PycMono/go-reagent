@@ -109,6 +109,8 @@ func TestClaudeProviderTracksUsagePresence(t *testing.T) {
 		wantNil   bool
 	}{
 		{name: "omitted", wantNil: true},
+		{name: "missing output tokens", usageJSON: `,"usage":{"input_tokens":0}`, wantNil: true},
+		{name: "missing input tokens", usageJSON: `,"usage":{"output_tokens":0}`, wantNil: true},
 		{name: "explicit zero", usageJSON: `,"usage":{"input_tokens":0,"output_tokens":0}`},
 	}
 	for _, tt := range tests {

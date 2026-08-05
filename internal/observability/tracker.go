@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -41,16 +42,16 @@ func newCostTracker(
 	platformID = strings.TrimSpace(platformID)
 	model = strings.TrimSpace(model)
 	switch {
-	case next == nil:
+	case isNilClient(next):
 		return nil, errors.New("model cost tracker: client is required")
 	case platformID == "":
 		return nil, errors.New("model cost tracker: platform ID is required")
 	case model == "":
 		return nil, errors.New("model cost tracker: model is required")
 	case invalidPrice(pricing.InputUSDPerMillionTokens):
-		return nil, errors.New("model cost tracker: input price must be finite and non-negative")
+		return nil, errors.New("model cost tracker: input price is outside the supported range")
 	case invalidPrice(pricing.OutputUSDPerMillionTokens):
-		return nil, errors.New("model cost tracker: output price must be finite and non-negative")
+		return nil, errors.New("model cost tracker: output price is outside the supported range")
 	case now == nil:
 		return nil, errors.New("model cost tracker: clock is required")
 	}
@@ -101,8 +102,19 @@ func (t *CostTracker) Generate(
 	usage := *response.Usage
 	usage.InputPriceUSDPerMillionTokens = t.pricing.InputUSDPerMillionTokens
 	usage.OutputPriceUSDPerMillionTokens = t.pricing.OutputUSDPerMillionTokens
-	usage.CostUSD = (float64(usage.InputTokens)*t.pricing.InputUSDPerMillionTokens +
+	cost := (float64(usage.InputTokens)*t.pricing.InputUSDPerMillionTokens +
 		float64(usage.OutputTokens)*t.pricing.OutputUSDPerMillionTokens) / 1_000_000
+	if invalidUsageDecimal(cost) {
+		logsdk.Warn(ctx, "model invocation cost invalid",
+			logsdk.Any("component", "model_cost"),
+			logsdk.Any("event", "usage_invalid"),
+			logsdk.Any("platform", t.platformID),
+			logsdk.Any("model", t.model),
+			logsdk.Any("latency_ms", latencyMS),
+		)
+		return nil, ai.WrapGeneration("model cost tracking", errors.New("calculated model cost is outside the supported range"))
+	}
+	usage.CostUSD = cost
 	usage.LatencyMS = latencyMS
 	usage.PlatformID = t.platformID
 	usage.Model = t.model
@@ -123,7 +135,24 @@ func (t *CostTracker) Generate(
 }
 
 func invalidPrice(value float64) bool {
-	return value < 0 || math.IsNaN(value) || math.IsInf(value, 0)
+	return invalidUsageDecimal(value)
+}
+
+func invalidUsageDecimal(value float64) bool {
+	return value < 0 || value >= ai.MaxUsageDecimalExclusive || math.IsNaN(value) || math.IsInf(value, 0)
+}
+
+func isNilClient(value ai.Client) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 var _ ai.Client = (*CostTracker)(nil)

@@ -42,9 +42,11 @@ func TestEncodeInvocationRejectsInvalidMetrics(t *testing.T) {
 		{name: "negative output tokens", mutate: func(v *agent.ModelInvocation) { v.Usage.OutputTokens = -1 }},
 		{name: "negative latency", mutate: func(v *agent.ModelInvocation) { v.Usage.LatencyMS = -1 }},
 		{name: "negative input price", mutate: func(v *agent.ModelInvocation) { v.Usage.InputPriceUSDPerMillionTokens = -1 }},
+		{name: "input price outside decimal range", mutate: func(v *agent.ModelInvocation) { v.Usage.InputPriceUSDPerMillionTokens = 100_000_000 }},
 		{name: "NaN output price", mutate: func(v *agent.ModelInvocation) { v.Usage.OutputPriceUSDPerMillionTokens = math.NaN() }},
 		{name: "infinite cost", mutate: func(v *agent.ModelInvocation) { v.Usage.CostUSD = math.Inf(1) }},
 		{name: "negative cost", mutate: func(v *agent.ModelInvocation) { v.Usage.CostUSD = -1 }},
+		{name: "cost outside decimal range", mutate: func(v *agent.ModelInvocation) { v.Usage.CostUSD = 100_000_000 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

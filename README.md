@@ -202,10 +202,10 @@ go run ./cmd/reagent
 | `baseURL` | 兼容 API 的基础地址 |
 | `apiKey` | 与该平台和模型配套的密钥 |
 | `model` | 该平台实例使用的模型 ID |
-| `pricing.input_usd_per_million_tokens` | 输入 Token 单价，单位 USD/1M tokens，必须为有限非负数 |
-| `pricing.output_usd_per_million_tokens` | 输出 Token 单价，单位 USD/1M tokens，必须为有限非负数 |
+| `pricing.input_usd_per_million_tokens` | 输入 Token 单价，单位 USD/1M tokens，必须为小于 100,000,000 的有限非负数 |
+| `pricing.output_usd_per_million_tokens` | 输出 Token 单价，单位 USD/1M tokens，必须为小于 100,000,000 的有限非负数 |
 
-`pricing` 是每个平台的必填配置，允许两个价格均为 `0` 表示免费模型。示例中的 `0.15`/`0.60` 只演示格式，不代表厂商官方或实时价格；部署时必须按实际模型账单填写并维护。
+`pricing` 是每个平台的必填配置，允许两个价格均为 `0` 表示免费模型。单价和计算后的单次调用成本都必须小于 100,000,000 USD，以匹配总账 `DECIMAL(20,12)` 的可表示范围。示例中的 `0.15`/`0.60` 只演示格式，不代表厂商官方或实时价格；部署时必须按实际模型账单填写并维护。
 
 配置文件由 Configor 加载，支持环境叠加、example 回退和 Shell 环境变量覆盖：
 

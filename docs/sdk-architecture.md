@@ -69,7 +69,7 @@ func (a *Agent) Close(context.Context) error
 
 `New` 会复制并校验 Config。调用方在构造完成后修改原 Config，不会改变已经运行的 Agent。
 
-每个平台都必须配置 `pricing.input_usd_per_million_tokens` 和 `pricing.output_usd_per_million_tokens`，单位为 USD/1M tokens。价格必须是有限非负数，允许 `0` 表示免费模型；价格是构造 SDK 时的快照。
+每个平台都必须配置 `pricing.input_usd_per_million_tokens` 和 `pricing.output_usd_per_million_tokens`，单位为 USD/1M tokens。价格必须是小于 100,000,000 的有限非负数，允许 `0` 表示免费模型；计算后的单次成本采用相同上界，以匹配 `DECIMAL(20,12)` 总账。价格是构造 SDK 时的快照。
 
 ## Run 数据流
 

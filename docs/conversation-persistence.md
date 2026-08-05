@@ -40,6 +40,8 @@ LoadOrCreate -> agent.Run -> AppendTurn
 
 `agent_model_invocations` 是 Token、成本与耗时聚合的唯一权威来源。可见 Assistant 消息 JSON 中的 Usage 仅用于检查单条消息，不能再与流水表相加，否则会重复计费。按会话聚合可使用：
 
+单价和单次调用成本以 `DECIMAL(20,12)` 保存，应用层要求它们是小于 100,000,000 的有限非负数；超出范围会在 Run 或事务开始前被拒绝。
+
 ```sql
 SELECT
     SUM(input_tokens) AS input_tokens,

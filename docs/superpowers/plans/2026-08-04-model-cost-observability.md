@@ -14,7 +14,7 @@
 - Every successful provider response accepted by Thinking or Action, including repeated Action calls in tool loops, has exactly one invocation with valid Usage and calculated cost.
 - Missing, partial, negative, NaN, infinite, or incorrectly calculated Usage terminates the Run; do not return an uncosted response as successful.
 - A provider transport/API error has no fabricated token or cost record because no trustworthy Usage exists.
-- Platform pricing is required, finite, non-negative, and may be zero for a free model.
+- Platform pricing is required, finite, non-negative, less than `100,000,000`, and may be zero for a free model. Calculated per-call cost uses the same exclusive upper bound required by `DECIMAL(20,12)`.
 - Preserve the public `Loop.Run(context.Context, RunContext, Reporter) ([]ai.Message, error)` signature.
 - Preserve the public dependency direction `ai <- agent <- reagent`; do not restore legacy `internal/schema`, `internal/provider`, `internal/engine`, or `internal/conversation` packages.
 - Persist customer input and visible Action/tool messages only; never persist Thinking text, complete provider requests, tool definitions, API keys, or authorization headers.
