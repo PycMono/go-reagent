@@ -1,7 +1,8 @@
-package context
+package workspace
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,7 +69,7 @@ func TestRunContextFactoryRequiresEligibleSkill(t *testing.T) {
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 
 	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), []ai.ToolDefinition{{Name: "read"}})
-	if err == nil || err.Error() != "agent workspace: at least one eligible Skill is required" {
+	if err == nil || !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "at least one eligible Skill") {
 		t.Fatalf("Create() error = %v", err)
 	}
 }
@@ -78,6 +79,12 @@ func validWorkspaceRunRequest() agent.RunRequest {
 		Role:    ai.RoleUser,
 		Content: []ai.ContentBlock{ai.TextBlock("hello")},
 	}}
+}
+
+func TestRunContextFactoryImplementsAgentContract(t *testing.T) {
+	var _ agent.ContextFactory = NewRunContextFactory(
+		NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()),
+	)
 }
 
 func TestPromptComposerRequiresAgentsFile(t *testing.T) {
@@ -110,7 +117,7 @@ func TestPromptComposerRequiresAgentsFile(t *testing.T) {
 			workDir := t.TempDir()
 			test.prepare(t, workDir)
 			_, _, err := NewPromptComposer(workDir).Build(nil)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
+			if err == nil || !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Build() error = %v, want containing %q", err, test.want)
 			}
 		})

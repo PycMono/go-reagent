@@ -11,9 +11,8 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
-	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/tools"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -51,7 +50,7 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := tools.NewWorkspace(lifecycle, config.WorkDir(workDir))
+	workspace, err := tools.NewWorkspace(lifecycle, workspacepkg.WorkDir(workDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +78,9 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 		{Role: ai.RoleAssistant, Content: blocks("技能已完整读取，可以执行。")},
 		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
-	factory := ctxpkg.NewRunContextFactory(
-		ctxpkg.NewPromptComposer(workDir),
-		ctxpkg.NewSkillLoader(workDir),
+	factory := workspacepkg.NewRunContextFactory(
+		workspacepkg.NewPromptComposer(workDir),
+		workspacepkg.NewSkillLoader(workDir),
 	)
 	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 4), true)
 	runtime, err := agent.New(factory, loop, registry)

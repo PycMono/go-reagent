@@ -1,4 +1,4 @@
-package context
+package workspace
 
 import (
 	"crypto/sha256"
@@ -57,11 +57,11 @@ type discoveredSkill struct {
 func (s *SkillLoader) Discover(env SkillEnvironment) (*SkillSnapshot, error) {
 	absoluteWorkDir, err := filepath.Abs(s.workDir)
 	if err != nil {
-		return nil, fmt.Errorf("解析技能工作区失败: %w", err)
+		return nil, fmt.Errorf("%w: 解析技能工作区失败: %w", ErrInvalid, err)
 	}
 	root, err := os.OpenRoot(absoluteWorkDir)
 	if err != nil {
-		return nil, fmt.Errorf("打开技能工作区失败: %w", err)
+		return nil, fmt.Errorf("%w: 打开技能工作区失败: %w", ErrInvalid, err)
 	}
 	defer root.Close()
 
@@ -70,7 +70,7 @@ func (s *SkillLoader) Discover(env SkillEnvironment) (*SkillSnapshot, error) {
 	for _, source := range skillSources {
 		candidates, sourceDiagnostics, err := discoverSkillSource(root, source, env)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: 发现 Agent Skills 失败: %w", ErrInvalid, err)
 		}
 		bySource[source.Source] = candidates
 		diagnostics = append(diagnostics, sourceDiagnostics...)

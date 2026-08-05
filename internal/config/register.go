@@ -5,11 +5,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 )
-
-// WorkDir is the Agent workspace path injected through Fx.
-type WorkDir string
 
 // Prompt is the one-shot task injected into the application runner.
 type Prompt string
@@ -29,12 +27,12 @@ func NewConfig() (*Config, error) {
 }
 
 // NewWorkDir resolves the current process directory as the Agent workspace.
-func NewWorkDir() (WorkDir, error) {
+func NewWorkDir() (workspace.WorkDir, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("获取工作区失败: %w", err)
 	}
-	return WorkDir(workDir), nil
+	return workspace.WorkDir(workDir), nil
 }
 
 // NewPrompt returns the process override or the default one-shot task.

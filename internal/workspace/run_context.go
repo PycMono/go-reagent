@@ -1,4 +1,4 @@
-package context
+package workspace
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func (f *RunContextFactory) Create(
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
 	if len(snapshot.Skills()) == 0 {
-		return agent.RunContext{}, errors.New("agent workspace: at least one eligible Skill is required")
+		return agent.RunContext{}, fmt.Errorf("%w: at least one eligible Skill is required", ErrInvalid)
 	}
 
 	systemMessage, promptReport, err := f.composer.Build(snapshot)
