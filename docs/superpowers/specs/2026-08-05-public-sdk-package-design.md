@@ -68,9 +68,9 @@ go-reagent/
 │   ├── message.go
 │   ├── model.go
 │   ├── client.go
-│   ├── factory.go
 │   ├── errors.go
 │   ├── providers/
+│   │   ├── factory.go
 │   │   ├── openai/
 │   │   │   ├── client.go
 │   │   │   ├── convert.go
@@ -213,6 +213,9 @@ Rules:
 - model-facing errors without Agent, workspace, or persistence policy.
 
 The existing OpenAI and Anthropic implementations move without replacing their official SDK clients.
+Protocol selection lives in `ai/providers/factory.go`: the parent `ai` package cannot import
+`ai/providers/openai` or `ai/providers/anthropic`, because those adapters already import `ai` and
+would create a Go import cycle.
 
 ### `agent`
 

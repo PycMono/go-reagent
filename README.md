@@ -10,13 +10,13 @@
 用户消息
    │
    ▼
-Engine Main Loop
+Agent Loop
    │
    ├── 从 Registry 获取 Tool Definition
    │
    ├── Thinking 开启时：隐藏工具，生成规划 Trace
    │
-   ├── Action 阶段：恢复工具，调用 LLMProvider.Generate
+   ├── Action 阶段：恢复工具，调用 ai.Client.Generate
    │
    ├── 没有 Tool Call ──────────────► 输出最终响应并结束运行
    │
@@ -31,33 +31,41 @@ Engine Main Loop
           ▼
        按原 Tool Call 顺序聚合结果
           │
-          └─────────────────────────► 再次调用 Provider
+          └─────────────────────────► 再次调用 AI Client
 ```
 
-## 结构化运行协议
+## SDK 快速开始
 
-当前 Runtime 以一次 `Run` 为状态边界。调用方传入历史消息、当前用户输入、外部上下文和不透明业务元数据；框架只在本次运行期间维护有效消息与工具循环状态，并返回新产生的 Assistant/Tool 消息：
+上层业务读取配置并创建一个可长期复用的 `Agent`。历史加载和消息持久化由业务负责；根 SDK 的 `Run` 只同步执行一次无状态运行：
 
 ```go
-result, err := runtime.Run(ctx, schema.RunRequest{
-	RunID:   "run-001",
+config, err := reagent.LoadConfig("config.json")
+if err != nil {
+	return err
+}
+
+sdk, err := reagent.New(config)
+if err != nil {
+	return err
+}
+defer sdk.Close(context.Background())
+
+result, err := sdk.Run(ctx, reagent.RunRequest{
+	RunID:   "run-123",
 	History: history,
-	Input: schema.Message{
-		Role:    schema.RoleUser,
-		Content: []schema.ContentBlock{schema.TextBlock("这个订单为什么还没发货？")},
-	},
-	Context: []schema.ContextBlock{
+	Input:   reagent.UserMessage("Review the current workspace"),
+	Context: []reagent.ContextBlock{
 		{Name: "customer-profile", Content: customerProfile, Priority: 100},
 	},
-	Metadata: map[string]string{
-		"conversationId": conversationID,
-	},
-}, reporter)
+	Metadata: map[string]string{"conversation_id": conversationID},
+})
+// 业务事务负责持久化 Input 和 result.NewMessages；err 非 nil 时，
+// 如果 NewMessages 非空，业务可按自身策略保留已经完成的部分结果。
 ```
 
-`RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的消息，不重复返回 System Prompt、外部上下文、历史、当前用户输入或内部 Thinking 脚手架。运行中途失败时，`RunResult` 仍会携带失败前已经完成的消息增量，业务方可以自行决定是否持久化。
+`RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的 Assistant/Tool 消息，不重复返回 System Prompt、外部 Context、History、Input 或内部 Thinking 脚手架。一个 `Agent` 支持并发调用；取消一个 Run 不会取消其他 Run。
 
-Runtime 不持有跨 `Run` 的 Conversation、Session、用户长期记忆或业务数据库状态。下一次运行所需的历史和外部上下文必须由调用方重新传入。当前协议仍位于 `internal` 包；公共 SDK 包迁移将在后续单独完成。
+根 `reagent` 包不开放 Store、Reporter、Provider、Tool、Registry 或 Fx 注入。需要底层协议和运行机制时可以直接使用公共 `ai`、`agent` 包，但完整默认 SDK 的组件组合保持私有。
 
 ## Agent Workspace 契约
 
@@ -92,94 +100,42 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 
 ```text
 go-reagent/
-├── AGENTS.md                  # 仓库 CLI 的默认 Agent 定义
-├── skills/                    # 仓库 CLI 的默认 Skills
-├── config.example.json          # 不含真实密钥的平台配置模板
-├── config.json                  # 本地平台配置（已被 Git 忽略）
-├── cmd/
-│   ├── main.go                  # 初始化日志并运行 Fx App
-│   ├── main_test.go             # 应用日志测试
-│   └── ping/main.go             # 独立 HTTP ping 示例
+├── ai/                        # 消息协议、模型 Client 与官方 SDK 适配器
+│   └── providers/             # OpenAI、Anthropic 和协议工厂
+├── agent/                     # Run、Loop、Registry、Tool、Scheduler、Event
+├── reagent.go                # 公共 Agent、New、Run、Close
+├── config.go                 # 公共 Configor 配置入口
+├── types.go                  # 根包常用消息与运行类型
+├── error_code.go             # 稳定错误码枚举
+├── bootstrap.go              # 根 SDK 的私有 Fx 启动
 ├── internal/
-│   ├── register.go          # 聚合各包 Register 的根 Fx 入口
-│   ├── app/                 # 一次性进程生命周期
-│   │   ├── register.go      # AgentRunner 与生命周期注册
-│   │   ├── runner.go        # AgentRunner 和 Fx 启停钩子
-│   │   └── *_test.go        # 取消、退出码与生命周期测试
-│   ├── config/              # 启动配置层
-│   │   ├── config.go        # 配置结构、加载与当前平台选择
-│   │   ├── register.go      # Config、WorkDir 与 Prompt 注册
-│   │   ├── validate.go      # 配置规范化与数据校验
-│   │   └── config_test.go   # 配置解析与错误处理测试
-│   ├── context/             # 工作区 Prompt 与 Skill 上下文
-│   │   └── register.go      # PromptComposer 与 SkillLoader 注册
-│   ├── dispatch/            # 外部消息渠道输出适配层
-│   │   ├── register.go      # Terminal/WeCom Reporter 注册
-│   │   ├── wecom.go         # 企业微信群机器人 Reporter
-│   │   └── wecom_test.go    # Webhook 协议、长度与并发测试
-│   ├── engine/              # 核心引擎层
-│   │   ├── engine.go        # AgentRuntime、AgentLoop 与调度构造
-│   │   ├── register.go      # Engine Agent 注册
-│   │   ├── run_*.go         # ReAct Main Loop、校验、执行与诊断
-│   │   ├── reporter.go      # Agent 生命周期 Reporter 与广播实现
-│   │   ├── terminal_reporter.go # 终端输出 Reporter
-│   │   └── loop_test.go     # 生命周期、并发上限、屏障与取消测试
-│   ├── provider/            # 模型适配层
-│   │   ├── interface.go     # LLM Provider 接口
-│   │   ├── register.go      # 当前平台 Provider 注册
-│   │   ├── factory.go       # 根据协议创建 Provider
-│   │   ├── openai.go        # OpenAI Chat Completions 兼容适配器
-│   │   └── claude.go        # Anthropic Messages 兼容适配器
-│   ├── schema/              # 公共数据结构
-│   │   └── message.go       # 消息、角色与工具调用类型
-│   └── tools/               # 工具与执行层
-│       ├── register.go      # 六个工具、Registry 与资源生命周期注册
-│       ├── registry.go      # 线程安全的工具注册、发现与执行
-│       ├── registry_test.go # Registry 生命周期与错误隔离测试
-│       ├── read.go           # WorkDir 内受限文本文件读取工具
-│       ├── read_test.go      # 路径与输出预算安全测试
-│       ├── edit.go           # WorkDir 内受限的批量唯一匹配编辑工具
-│       ├── write.go          # 创建或完整覆盖 UTF-8 文本文件
-│       ├── apply_patch*.go   # 结构化多文件补丁解析与应用
-│       ├── exec.go           # 有界输出的 shell 命令执行工具
-│       └── process*.go       # 后台进程会话与进程组管理
-├── tests/
-│   └── integration/          # 跨包协作、生命周期和组合根集成测试
-├── go.mod
-└── README.md
+│   ├── bootstrap/            # SDK 与 CLI 共用的私有 Fx 图
+│   ├── workspace/            # AGENTS、Skills、Context 和 Workspace 策略
+│   ├── tools/                # 六个默认工具和进程监督器
+│   └── cli/                  # CLI 生命周期、会话、MySQL、Terminal、WeCom
+├── cmd/
+│   ├── reagent/              # 自带 CLI 入口
+│   └── ping/                 # 独立 HTTP ping 示例
+├── AGENTS.md                 # 自带 CLI 的默认 Agent 定义
+├── skills/                   # 自带 CLI 的默认 Skills
+├── config.example.json       # 不含真实密钥的配置模板
+├── migrations/               # CLI MySQL 会话迁移
+└── tests/integration/        # 跨包组合与边界测试
 ```
 
-每个业务包通过自己的 `Register` 声明 Fx 对象，根 `internal.Register` 只负责统一聚合：
+公共依赖方向固定为：
 
 ```text
-cmd ──► internal.Register
-          ├── config / context / provider / tools / dispatch / engine
-          └── app（AgentRunner 与 Fx 生命周期）
+ai <- agent <- reagent
+              |-- internal/bootstrap
+              |-- internal/workspace
+              `-- internal/tools
 
-engine ──► provider ──► schema
-   ├─────► context
-   └─────► tools ─────► schema
+internal/cli -> reagent/agent + internal/bootstrap
+cmd/reagent  -> internal/cli + internal/bootstrap
 ```
 
-一次运行内部按以下边界协作：
-
-```text
-RunContextFactory -> AgentLoop -> LLMProvider
-                         |
-                         v
-                   ToolScheduler -> Registry -> Middleware -> Tool
-                                                   |
-ToolUpdate -> ToolEvent -> AgentEvent -> MultiReporter -> Terminal / WeCom
-```
-
-- `schema` 不依赖其他业务包，统一各层交换的数据结构。
-- `config` 通过 Configor 加载 JSON、YAML 或 TOML 平台配置，并返回 `currentPlatform` 选中的完整配置。
-- `provider` 通过 `LLMProvider.Generate` 隔离协议调用细节，通过工厂选择 OpenAI 或 Anthropic 适配器。
-- `tools` 通过 `Tool`、`Registry` 和有序 `Middleware` 分离工具实现、发现、执行与横切策略。
-- `engine` 通过 `AgentRuntime` 编排运行上下文、模型推理、工具调度和事件路由，不关心具体厂商和工具实现。
-- 各包的 `register.go` 构造本包运行时对象；`schema` 只有纯数据结构，因此不依赖 Fx。
-- `app` 只注册 AgentRunner 和进程启停钩子；工具资源生命周期由 `tools.Register` 管理。
-- `cmd` 只初始化项目日志并运行 Fx App，不承载依赖组装和业务逻辑。
+`ai` 只定义模型协议和适配；`agent` 只定义可复用运行机制；根 `reagent` 组合完整默认 Agent。Workspace、默认工具和 CLI 产品策略保持私有，CLI 的会话存储与消息渠道不会进入 SDK `Run` 路径。详见 [SDK 架构](docs/sdk-architecture.md)。
 
 ## 环境要求
 
@@ -221,7 +177,7 @@ chmod 600 config.json
 然后启动：
 
 ```bash
-go run ./cmd
+go run ./cmd/reagent
 ```
 
 切换到其他已配置平台时只需修改 `currentPlatform`：
@@ -252,13 +208,13 @@ go run ./cmd
 例如使用另一份配置：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.json go run ./cmd
+CONFIG_PATH=/secure/reagent/config.json go run ./cmd/reagent
 ```
 
 例如加载 YAML 基础配置及其 `production` 叠加文件：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd
+CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd/reagent
 ```
 
 Configor 会先加载基础文件，再加载同目录下的环境文件，例如 `config.production.yaml`。如果基础文件和环境文件都不存在，则尝试同扩展名的 example 文件，例如 `config.example.yaml`。字段也可以通过 `CONFIGOR_` 前缀的环境变量覆盖；数组内字段按结构路径命名，例如 `CONFIGOR_PLATFORMS_0_APIKEY`。
@@ -291,15 +247,17 @@ Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地�
 
 ### Fx 启动与退出
 
-启动依赖链由根 `internal.Register` 聚合各包注册项后统一提供：
+SDK 与 CLI 复用 `internal/bootstrap.Module` 提供的私有 Fx 图：
 
 ```text
-Config -> WorkDir -> LLMProvider / RunContextFactory / Registry / Reporter -> AgentRuntime -> AgentRunner
+PlatformConfig -> ai.Client -> agent.Loop / Registry / Runner
+WorkDir        -> Workspace / AGENTS / Skills / 默认工具
 ```
 
-AgentRunner 在 Fx `OnStart` 中异步执行一次任务，避免模型请求阻塞启动钩子。任务完成后主动关闭 Fx：
-成功退出码为 0，Agent 错误退出码为 1。收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待 Agent，
-随后按 Fx 逆序生命周期关闭文件工具和后台进程管理器，避免运行中的 Tool 使用已释放资源。
+根 SDK 通过 `New` 创建这一图，并由 `Close` 等待已接纳的 Run 后停止资源。自带 CLI 在同一个 Fx App
+中组合 `internal/bootstrap.Module` 与 `internal/cli.Module`，不会嵌套创建 SDK App。CLI 的 AgentRunner
+在 `OnStart` 中异步执行一次任务；收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待运行，再按 Fx
+逆序生命周期关闭后台进程管理器。
 
 当前入口开启慢思考模式，挂载六个真实本地工具，默认要求模型新建 `ping.go`、验证代码并完成 Git 提交。
 
@@ -381,9 +339,10 @@ go test ./...
 ## 当前能力
 
 - 统一的 `system`、`user`、`assistant` 和 `tool` 消息角色；最终工具观察通过原生 `tool` 消息和 `tool_call_id` 关联。
-- Provider 无关的消息、Tool Call、Tool Update、Tool Result、Agent Event 和带调度元数据的 Tool Definition 数据结构。
+- 公共 `ai`、`agent` 和根 `reagent` 三层 API，以及同步、无状态、并发安全的默认 SDK。
+- 模型无关的消息、Tool Call、Tool Update、Tool Result、Agent Event 和带调度元数据的 Tool Definition 数据结构。
 - 使用 `json.RawMessage` 保留工具调用参数，并由具体工具延迟解析。
-- 可替换的 `LLMProvider` 接口，每轮接收上下文和可用工具定义。
+- `ai.Client` 每轮接收上下文和可用工具定义；根 SDK 固定使用配置选择的官方 SDK 适配器。
 - Configor 驱动的 JSON/YAML/TOML 平台配置加载，以及项目级规范化与启动前校验。
 - 配置驱动的 OpenAI Chat Completions 兼容 Provider。
 - 配置驱动的 Anthropic Messages 兼容 Provider。
@@ -393,17 +352,17 @@ go test ./...
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。
 - 支持超时、后台化、有界输出和进程组终止的 `exec` 与 `process` 工具。
-- 由 `RunContextFactory`、`AgentLoop`、`ToolScheduler` 和 `AgentRuntime` 分层驱动的运行时。
+- 由 `ContextFactory`、`Loop`、`Scheduler` 和 `agent.Agent` 分层驱动的运行时。
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
 - 通过 Reporter 广播统一 Agent Event；增量更新只到 Terminal，不进入模型历史或 WeCom。
 - 支持配置化企业微信群机器人 Webhook，将工具开始、失败和最终回复发送为 Markdown 通知。
-- 基于 Uber Fx 的完整启动依赖注入，以及一次性 Runner 的取消、退出码和资源关闭生命周期。
-- Provider 错误和空响应防护。
+- 基于 Uber Fx 的私有默认图、SDK `Close` 生命周期，以及 CLI 一次性 Runner 的取消和退出码处理。
+- 模型生成错误和空响应防护，并保留官方 SDK 错误解包链。
 - 工具调用 ID 的整批前置校验。
 - 取消信号的 Provider 与工具执行前置检查。
-- 可直接运行的真实 Provider、Registry 与文件工具示例。
+- 可直接运行的真实 AI Client、Registry 与文件工具示例。
 
 ## 开发路线图
 
@@ -418,7 +377,8 @@ go test ./...
 - [x] 增加按工具安全等级分波的有界并发调度器。
 - [ ] 增加可配置的轮次、Token、时间与成本预算。
 - [x] 增加支持多格式、环境叠加和字段覆盖的平台启动配置。
-- [ ] 增加上下文管理和持久化记忆。
+- [x] 发布 `ai -> agent -> reagent` 公共 SDK 包结构。
+- [x] 在自带 CLI 中增加可选 MySQL 会话持久化。
 - [ ] 增加飞书等外部消息渠道适配。
 - [x] 增加企业微信群机器人单向生命周期通知。
 - [ ] 增加企业微信和飞书的双向消息接入。

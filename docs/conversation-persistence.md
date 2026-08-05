@@ -17,12 +17,32 @@ export AGENT_CONVERSATION_ID="conversation-1"
 
 ## 历史窗口
 
-MySQL 保存每条完整消息。每次运行只将最近 `conversation.history_message_limit` 条安全消息传给 Runtime，默认值为 `100`。如果窗口边界落在一个 turn 中间，该不完整 turn 会被整体排除。当前版本不做摘要或 token 压缩。
+MySQL 保存每条完整消息。每次运行只将最近 `conversation.history_message_limit` 条安全消息传给 `agent.Run`，默认值为 `100`。如果窗口边界落在一个 turn 中间，该不完整 turn 会被整体排除。当前版本不做摘要或 token 压缩。
 
 `mysql.conn_lifetime` 的单位是分钟，因此 `3600` 表示 60 小时。
 
 ## 并发与冲突
 
-每轮使用乐观 `version` 条件更新，并在同一事务内写入本轮所有消息。`conversation.ErrConflict` 是安全失败，当前实现不会自动重试、重排或排队；调用方应保证同一会话串行执行。
+CLI 会话路径固定为：
 
-Redis 队列、摘要压缩和公共 SDK API 不在本期范围内。如果暂时不需要持久化，将 `conversation.enabled` 设为 `false` 即可保留旧的无 MySQL 路径。
+```text
+LoadOrCreate -> agent.Run -> AppendTurn
+```
+
+每轮使用乐观 `version` 条件更新，并在同一事务内写入当前 Input 和本轮 `RunResult.NewMessages`。内部 `conversation.ErrConflict` 是安全失败，当前实现不会自动重试、重排或排队；调用方应保证同一会话串行执行。
+
+如果 `agent.Run` 在已经产生部分结果后失败，CLI 仍会尝试保存 Input 和非空 `NewMessages`，并使用 `errors.Join` 同时返回运行错误与持久化错误。运行在产生任何新消息前失败时不会追加 turn。
+
+## 业务 SDK 调用方
+
+根 `reagent` SDK 不读取或保存会话。业务系统应在 SDK 外部实现同样的事务边界：
+
+```text
+业务 Store 加载 History
+    -> reagent.Agent.Run(History, Input)
+    -> 业务 Store 保存 Input + RunResult.NewMessages
+```
+
+UserID、ConversationID、并发串行化、冲突重试和是否保存部分结果都属于业务策略。根 `RunRequest` 不增加这些专用字段；需要追踪时可由业务放入 `Metadata`。
+
+Redis 队列、摘要压缩和自动重试不在当前实现范围内。如果 CLI 暂时不需要持久化，将 `conversation.enabled` 设为 `false` 即可使用无 MySQL 路径。
