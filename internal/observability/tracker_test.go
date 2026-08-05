@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 type clientFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)

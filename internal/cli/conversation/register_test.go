@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/cli/driver/mysql"

@@ -10,8 +10,8 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	"go.uber.org/fx"
 )

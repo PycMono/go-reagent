@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 func (c *Config) normalizeAndValidate() error {

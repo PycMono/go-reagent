@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"errors"
 
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/ai/providers"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/internal/observability"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"github.com/PycMono/go-reagent/internal/workspace"

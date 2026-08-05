@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"

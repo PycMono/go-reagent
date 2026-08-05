@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/bootstrap"
 	"github.com/PycMono/go-reagent/internal/cli"
 	cliapp "github.com/PycMono/go-reagent/internal/cli/app"

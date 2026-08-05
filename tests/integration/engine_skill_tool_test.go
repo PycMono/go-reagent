@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/tools"
 	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx/fxtest"

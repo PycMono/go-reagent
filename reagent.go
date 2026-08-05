@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	agentcore "github.com/PycMono/go-reagent/agent"
+	agentcore "github.com/PycMono/go-reagent/pi/agent"
 	"go.uber.org/fx"
 )
 

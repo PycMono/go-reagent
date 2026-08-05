@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PycMono/go-reagent/agent"
+	"github.com/PycMono/go-reagent/pi/agent"
 )
 
 func TestFindUniqueTextMatchExact(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 const corePrompt = `# Agent Runtime 核心纪律
