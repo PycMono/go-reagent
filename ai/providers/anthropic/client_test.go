@@ -38,7 +38,7 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 			],
 			"stop_reason":"tool_use",
 			"stop_sequence":null,
-			"usage":{"input_tokens":1,"output_tokens":1}
+			"usage":{"input_tokens":123,"output_tokens":45}
 		}`))
 	}))
 	defer server.Close()
@@ -76,6 +76,9 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	if text, err := ai.TextContent(result.Content); err != nil || text != "checking" || len(result.ToolCalls) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
+	if result.Usage == nil || result.Usage.InputTokens != 123 || result.Usage.OutputTokens != 45 {
+		t.Fatalf("Usage = %#v, want input=123 output=45", result.Usage)
+	}
 	call := result.ToolCalls[0]
 	if call.ID != "call-new" || call.Name != "get_weather" || string(call.Arguments) != `{"city":"北京"}` {
 		t.Fatalf("tool call = %#v", call)
@@ -96,6 +99,42 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	}
 	if tools, ok := body["tools"].([]any); !ok || len(tools) != 1 {
 		t.Fatalf("tools = %#v", body["tools"])
+	}
+}
+
+func TestClaudeProviderTracksUsagePresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		usageJSON string
+		wantNil   bool
+	}{
+		{name: "omitted", wantNil: true},
+		{name: "explicit zero", usageJSON: `,"usage":{"input_tokens":0,"output_tokens":0}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"msg-usage","type":"message","role":"assistant","model":"test-model",` +
+					`"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","stop_sequence":null` +
+					tt.usageJSON + `}`))
+			}))
+			defer server.Close()
+
+			client := New(ai.PlatformConfig{ID: "test", APIKey: "test-key", BaseURL: server.URL + "/", Model: "test-model"})
+			result, err := client.Generate(context.Background(), []ai.Message{{
+				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")},
+			}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantNil && result.Usage != nil {
+				t.Fatalf("Usage = %#v, want nil", result.Usage)
+			}
+			if !tt.wantNil && (result.Usage == nil || result.Usage.InputTokens != 0 || result.Usage.OutputTokens != 0) {
+				t.Fatalf("Usage = %#v, want present zero usage", result.Usage)
+			}
+		})
 	}
 }
 

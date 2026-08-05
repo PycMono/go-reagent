@@ -79,6 +79,12 @@ func (p *Client) Generate(
 			Arguments: json.RawMessage(toolCall.Function.Arguments),
 		})
 	}
+	if response.JSON.Usage.Valid() {
+		result.Usage = &ai.Usage{
+			InputTokens:  response.Usage.PromptTokens,
+			OutputTokens: response.Usage.CompletionTokens,
+		}
+	}
 
 	return result, nil
 }
