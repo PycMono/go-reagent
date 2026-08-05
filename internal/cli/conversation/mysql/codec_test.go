@@ -13,7 +13,7 @@ import (
 func TestMessageCodecRoundTripsSupportedMessages(t *testing.T) {
 	messages := []ai.Message{
 		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}},
-		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}}},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}}, Usage: &ai.Usage{PlatformID: "test", Model: "model"}},
 		{Role: ai.RoleTool, ToolCallID: "call-1", ToolName: "read", IsError: true, Content: []ai.ContentBlock{ai.TextBlock("failed")}},
 	}
 
@@ -29,6 +29,19 @@ func TestMessageCodecRoundTripsSupportedMessages(t *testing.T) {
 		if !reflect.DeepEqual(decoded, message) {
 			t.Fatalf("decoded = %#v, want %#v", decoded, message)
 		}
+	}
+}
+
+func TestMessageCodecDecodesLegacyPayloadWithoutUsage(t *testing.T) {
+	message, err := decodeMessage(messageRow{
+		Role:    string(ai.RoleAssistant),
+		Payload: jsonPayload(`{"role":"assistant","content":[{"type":"text","text":"legacy"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Usage != nil || len(message.Content) != 1 || message.Content[0].Text != "legacy" {
+		t.Fatalf("decoded legacy message = %#v", message)
 	}
 }
 
