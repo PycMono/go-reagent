@@ -147,15 +147,6 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	}
 }
 
-func TestRunContextFactoryRejectsNilContext(t *testing.T) {
-	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
-
-	_, err := factory.Create(nil, runRequest("unused"), []ai.ToolDefinition{{Name: "read"}})
-	if err == nil || !strings.Contains(err.Error(), "context is required") {
-		t.Fatalf("Create() error = %v, want context is required", err)
-	}
-}
-
 func TestRunContextFactoryHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

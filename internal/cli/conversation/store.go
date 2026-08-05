@@ -38,11 +38,11 @@ type Store interface {
 }
 
 type RunRequest struct {
-	UserID         string
-	ConversationID string
-	RunID          string
-	Input          ai.Message
-	Context        []agent.ContextBlock
+	UserID         string               // 用户ID
+	ConversationID string               // 会话ID
+	RunID          string               // 运行ID
+	Input          ai.Message           // 用户输入
+	Context        []agent.ContextBlock //
 	Metadata       map[string]string
 }
 
