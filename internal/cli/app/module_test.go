@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	"github.com/PycMono/go-reagent/pi/agent"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
@@ -88,7 +88,7 @@ func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) 
 				return agent.RunResult{}, runError
 			})
 		}),
-		fx.Supply(&reagent.Config{Conversation: reagent.ConversationConfig{Enabled: persistenceEnabled}}),
+		fx.Supply(&config.Config{Conversation: config.ConversationConfig{Enabled: persistenceEnabled}}),
 		fx.Supply(Prompt("test")),
 		fx.Provide(func() agent.Reporter { return nil }),
 		Module,

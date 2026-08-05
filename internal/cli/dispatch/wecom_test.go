@@ -11,9 +11,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 )
 
 type webhookRequest struct {

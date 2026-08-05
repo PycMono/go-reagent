@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/config"
 	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
-	"github.com/PycMono/go-reagent/internal/workspace"
+	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -22,7 +22,7 @@ func TestNewConfigLoadsTrimmedConfigurationPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
 	}
-	current, err := cfg.Current()
+	current, err := cfg.Pi.Current()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -72,9 +72,9 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 	t.Setenv("CONFIG_PATH", path)
 	t.Setenv("AGENT_PROMPT", "registered prompt")
 	var (
-		cfg      *reagent.Config
+		cfg      *config.Config
 		platform ai.PlatformConfig
-		workDir  workspace.WorkDir
+		workDir  pi.WorkDir
 		prompt   cliapp.Prompt
 	)
 	app := fxtest.New(t,

@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
+	workspacepkg "github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
-	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 )
 
 type rawClientFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)

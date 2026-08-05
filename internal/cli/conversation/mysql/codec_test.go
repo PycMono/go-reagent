@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 func TestMessageCodecRoundTripsSupportedMessages(t *testing.T) {

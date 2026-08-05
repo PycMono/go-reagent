@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"gorm.io/gorm"
 )
 
