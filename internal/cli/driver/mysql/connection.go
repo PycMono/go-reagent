@@ -7,7 +7,7 @@ import (
 
 	sqlsdk "github.com/PycMono/go-mysql-sdk"
 	"github.com/PycMono/go-mysql-sdk/transaction"
-	"github.com/PycMono/go-reagent"
+	"github.com/PycMono/go-reagent/config"
 	"go.uber.org/fx"
 	"gorm.io/gorm"
 )
@@ -25,11 +25,11 @@ type Connection struct {
 	provider sdkProvider
 }
 
-func NewConnection(lifecycle fx.Lifecycle, cfg *reagent.Config) (*Connection, error) {
+func NewConnection(lifecycle fx.Lifecycle, cfg *config.Config) (*Connection, error) {
 	return newConnection(lifecycle, cfg, openSDKProvider)
 }
 
-func newConnection(lifecycle fx.Lifecycle, cfg *reagent.Config, open opener) (*Connection, error) {
+func newConnection(lifecycle fx.Lifecycle, cfg *config.Config, open opener) (*Connection, error) {
 	if cfg == nil {
 		return nil, errors.New("初始化 MySQL 连接失败: 配置不能为空")
 	}
@@ -50,7 +50,7 @@ func newConnection(lifecycle fx.Lifecycle, cfg *reagent.Config, open opener) (*C
 	return connection, nil
 }
 
-func toSDKOptions(cfg reagent.MySQLConfig) *sqlsdk.Options {
+func toSDKOptions(cfg config.MySQLConfig) *sqlsdk.Options {
 	return &sqlsdk.Options{
 		DB:            "mysql",
 		Host:          cfg.Host,

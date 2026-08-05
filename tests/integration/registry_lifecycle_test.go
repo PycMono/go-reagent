@@ -14,11 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/internal/bootstrap"
-	"github.com/PycMono/go-reagent/internal/tools"
-	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
+	"github.com/PycMono/go-reagent/pi/tools"
 	"go.uber.org/fx"
 )
 
@@ -31,10 +30,10 @@ func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 	app := fx.New(
 		fx.NopLogger,
 		fx.Supply(
-			workspacepkg.WorkDir(t.TempDir()),
+			pi.WorkDir(t.TempDir()),
 			ai.PlatformConfig{ID: "test", Protocol: ai.ProtocolOpenAI, BaseURL: "http://127.0.0.1/v1/", APIKey: "key", Model: "model", Pricing: &ai.PricingConfig{}},
 		),
-		bootstrap.Module,
+		pi.Module,
 		fx.Populate(&registry, &workspace, &supervisor),
 	)
 	if err := app.Start(context.Background()); err != nil {

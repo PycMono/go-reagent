@@ -5,28 +5,28 @@ import (
 	"os"
 	"strings"
 
-	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/internal/cli/app"
-	"github.com/PycMono/go-reagent/internal/workspace"
+	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 // NewConfig loads the process configuration selected by CONFIG_PATH.
-func NewConfig() (*reagent.Config, error) {
-	return reagent.LoadConfig(configurationPath())
+func NewConfig() (*config.Config, error) {
+	return config.Load(configurationPath())
 }
 
-func NewPlatform(config *reagent.Config) (ai.PlatformConfig, error) {
-	return config.Current()
+func NewPlatform(cfg *config.Config) (ai.PlatformConfig, error) {
+	return cfg.Pi.Current()
 }
 
 // NewWorkDir resolves the current process directory as the Agent workspace.
-func NewWorkDir() (workspace.WorkDir, error) {
+func NewWorkDir() (pi.WorkDir, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("获取工作区失败: %w", err)
 	}
-	return workspace.WorkDir(workDir), nil
+	return pi.WorkDir(workDir), nil
 }
 
 // NewPrompt returns the process override or the default one-shot task.

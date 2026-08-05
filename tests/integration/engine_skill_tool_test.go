@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	workspacepkg "github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/internal/tools"
-	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
+	"github.com/PycMono/go-reagent/pi/tools"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -52,7 +52,7 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := tools.NewWorkspace(lifecycle, workspacepkg.WorkDir(workDir))
+	workspace, err := tools.NewWorkspace(lifecycle, tools.Root(workDir))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/PycMono/go-reagent"
+	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -27,7 +27,7 @@ func TestModuleSortsReversedReporterGroupByOrderThenName(t *testing.T) {
 	}
 	var reporter agent.Reporter
 	app := fxtest.New(t,
-		fx.Supply(&reagent.Config{}),
+		fx.Supply(&config.Config{}),
 		Module,
 		fx.Provide(
 			fx.Annotate(func() agent.ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),

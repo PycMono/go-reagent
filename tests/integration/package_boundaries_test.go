@@ -16,15 +16,15 @@ func TestPublicPackageDependencyBoundaries(t *testing.T) {
 		forbidden func(string) bool
 	}{
 		{
-			pkg: modulePath + "/ai",
+			pkg: modulePath + "/pi/ai",
 			forbidden: func(dependency string) bool {
 				return dependency == modulePath ||
-					strings.HasPrefix(dependency, modulePath+"/agent") ||
+					strings.HasPrefix(dependency, modulePath+"/pi/agent") ||
 					strings.HasPrefix(dependency, modulePath+"/internal/")
 			},
 		},
 		{
-			pkg: modulePath + "/agent",
+			pkg: modulePath + "/pi/agent",
 			forbidden: func(dependency string) bool {
 				return dependency == modulePath || strings.HasPrefix(dependency, modulePath+"/internal/")
 			},
@@ -39,6 +39,23 @@ func TestPublicPackageDependencyBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPiDoesNotImportServicePackages(t *testing.T) {
+	forbidden := []string{
+		modulePath + "/application",
+		modulePath + "/config",
+		modulePath + "/conversation",
+		modulePath + "/persistence",
+		modulePath + "/transport",
+	}
+	for _, dependency := range goListDependencies(t, modulePath+"/pi/...") {
+		for _, prefix := range forbidden {
+			if dependency == prefix || strings.HasPrefix(dependency, prefix+"/") {
+				t.Fatalf("pi imports service dependency %s", dependency)
+			}
+		}
 	}
 }
 

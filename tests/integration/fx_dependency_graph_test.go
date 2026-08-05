@@ -6,13 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi/agent"
-	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/internal/bootstrap"
 	"github.com/PycMono/go-reagent/internal/cli"
 	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
-	"github.com/PycMono/go-reagent/internal/tools"
-	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
+	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/tools"
 	"go.uber.org/fx"
 )
 
@@ -40,9 +39,9 @@ func TestCLIModulesPopulateStructuredRuntimeGraph(t *testing.T) {
 	)
 	app := fx.New(
 		fx.NopLogger,
-		bootstrap.Module,
+		pi.Module,
 		cli.Module,
-		fx.Replace(workspacepkg.WorkDir(workDir), cliapp.Prompt("test")),
+		fx.Replace(pi.WorkDir(workDir), cliapp.Prompt("test")),
 		fx.Replace(fx.Annotate(&dependencyGraphProvider{}, fx.As(new(ai.Client)))),
 		fx.Populate(&runtime, &registry, &workspace, &supervisor),
 	)
