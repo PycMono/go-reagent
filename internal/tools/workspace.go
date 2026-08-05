@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/PycMono/go-reagent/internal/config"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 )
 
@@ -23,32 +23,32 @@ type Workspace struct {
 }
 
 // NewWorkspace opens workDir once and closes it with the application lifecycle.
-func NewWorkspace(lifecycle fx.Lifecycle, workDir config.WorkDir) (*Workspace, error) {
+func NewWorkspace(lifecycle fx.Lifecycle, workDir workspacepkg.WorkDir) (*Workspace, error) {
 	path := strings.TrimSpace(string(workDir))
 	if path == "" {
-		return nil, errors.New("workDir 不能为空")
+		return nil, fmt.Errorf("%w: workDir 不能为空", workspacepkg.ErrInvalid)
 	}
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("解析工作区失败: %w", err)
+		return nil, fmt.Errorf("%w: 解析工作区失败: %w", workspacepkg.ErrInvalid, err)
 	}
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("解析工作区真实路径失败: %w", err)
+		return nil, fmt.Errorf("%w: 解析工作区真实路径失败: %w", workspacepkg.ErrInvalid, err)
 	}
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("检查工作区失败: %w", err)
+		return nil, fmt.Errorf("%w: 检查工作区失败: %w", workspacepkg.ErrInvalid, err)
 	}
 	if !info.IsDir() {
-		return nil, errors.New("workDir 必须是目录")
+		return nil, fmt.Errorf("%w: workDir 必须是目录", workspacepkg.ErrInvalid)
 	}
 
 	root, err := os.OpenRoot(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("打开工作区失败: %w", err)
+		return nil, fmt.Errorf("%w: 打开工作区失败: %w", workspacepkg.ErrInvalid, err)
 	}
 
 	workspace := &Workspace{path: resolvedPath, root: root}

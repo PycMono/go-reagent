@@ -1,4 +1,4 @@
-package context
+package workspace
 
 import (
 	"bytes"
@@ -60,26 +60,26 @@ func (c *PromptComposer) Build(snapshot *SkillSnapshot) (ai.Message, SkillPrompt
 
 func (c *PromptComposer) loadAgentsInstructions() ([]byte, error) {
 	if c == nil || strings.TrimSpace(c.workDir) == "" {
-		return nil, errors.New("agent workspace: workDir is required")
+		return nil, fmt.Errorf("%w: workDir is required", ErrInvalid)
 	}
 	root, err := os.OpenRoot(c.workDir)
 	if err != nil {
-		return nil, fmt.Errorf("agent workspace: open workDir: %w", err)
+		return nil, fmt.Errorf("%w: open workDir: %w", ErrInvalid, err)
 	}
 	defer root.Close()
 
 	content, err := readRootRegularFile(root, "AGENTS.md")
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("agent workspace: AGENTS.md is required")
+		return nil, fmt.Errorf("%w: AGENTS.md is required", ErrInvalid)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("agent workspace: read AGENTS.md: %w", err)
+		return nil, fmt.Errorf("%w: read AGENTS.md: %w", ErrInvalid, err)
 	}
 	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
-		return nil, errors.New("agent workspace: AGENTS.md must be valid UTF-8 text")
+		return nil, fmt.Errorf("%w: AGENTS.md must be valid UTF-8 text", ErrInvalid)
 	}
 	if strings.TrimSpace(string(content)) == "" {
-		return nil, errors.New("agent workspace: AGENTS.md must not be empty")
+		return nil, fmt.Errorf("%w: AGENTS.md must not be empty", ErrInvalid)
 	}
 	return content, nil
 }

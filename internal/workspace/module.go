@@ -1,13 +1,12 @@
-package context
+package workspace
 
 import (
 	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/internal/config"
 	"go.uber.org/fx"
 )
 
-// Register provides workspace-bound prompt and Skill components.
-var Register = fx.Options(
+// Module provides workspace-bound prompt and Skill components.
+var Module = fx.Options(
 	fx.Provide(
 		newPromptComposer,
 		newSkillLoader,
@@ -15,10 +14,10 @@ var Register = fx.Options(
 	),
 )
 
-func newPromptComposer(workDir config.WorkDir) *PromptComposer {
+func newPromptComposer(workDir WorkDir) *PromptComposer {
 	return NewPromptComposer(string(workDir))
 }
 
-func newSkillLoader(workDir config.WorkDir) *SkillLoader {
+func newSkillLoader(workDir WorkDir) *SkillLoader {
 	return NewSkillLoader(string(workDir))
 }

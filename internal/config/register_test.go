@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -68,7 +69,7 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 	t.Setenv("AGENT_PROMPT", "registered prompt")
 	var (
 		cfg     *Config
-		workDir WorkDir
+		workDir workspace.WorkDir
 		prompt  Prompt
 	)
 	app := fxtest.New(t,

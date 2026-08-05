@@ -7,8 +7,7 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
-	ctxpkg "github.com/PycMono/go-reagent/internal/context"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -36,8 +35,8 @@ func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
 	app := fxtest.New(t,
 		fx.Provide(func() ai.Client { return &registerProvider{} }),
 		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
-		fx.Supply(config.WorkDir(t.TempDir())),
-		ctxpkg.Register,
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
+		workspacepkg.Module,
 		Register,
 		fx.Populate(&runtime, &scheduler, &loop),
 	)
@@ -67,8 +66,8 @@ func TestRegisterSortsReversedReporterGroupByOrderThenName(t *testing.T) {
 	app := fxtest.New(t,
 		fx.Provide(func() ai.Client { return &registerProvider{} }),
 		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
-		fx.Supply(config.WorkDir(t.TempDir())),
-		ctxpkg.Register,
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
+		workspacepkg.Module,
 		Register,
 		fx.Provide(
 			fx.Annotate(func() agent.ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),

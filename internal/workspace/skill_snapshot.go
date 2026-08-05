@@ -1,4 +1,4 @@
-package context
+package workspace
 
 type SkillSource string
 

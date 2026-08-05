@@ -1,5 +1,5 @@
 // Package context composes workspace-specific context for Agent runs.
-package context
+package workspace
 
 import (
 	"bytes"

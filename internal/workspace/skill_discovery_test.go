@@ -1,6 +1,7 @@
-package context
+package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -260,8 +261,8 @@ Body`)
 // TestSkillLoaderReturnsErrorForMissingWorkspace 验证工作区不存在时发现流程返回错误。
 func TestSkillLoaderReturnsErrorForMissingWorkspace(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := NewSkillLoader(missing).Discover(testSkillEnvironment()); err == nil {
-		t.Fatal("Discover() error = nil")
+	if _, err := NewSkillLoader(missing).Discover(testSkillEnvironment()); err == nil || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Discover() error = %v, want ErrInvalid", err)
 	}
 }
 

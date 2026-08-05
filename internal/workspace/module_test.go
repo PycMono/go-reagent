@@ -1,15 +1,14 @@
-package context
+package workspace
 
 import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/internal/config"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
 
-func TestRegisterProvidesWorkspaceContextComponents(t *testing.T) {
+func TestModuleProvidesWorkspaceContextComponents(t *testing.T) {
 	workDir := t.TempDir()
 	var (
 		composer *PromptComposer
@@ -17,8 +16,8 @@ func TestRegisterProvidesWorkspaceContextComponents(t *testing.T) {
 		factory  agent.ContextFactory
 	)
 	app := fxtest.New(t,
-		fx.Supply(config.WorkDir(workDir)),
-		Register,
+		fx.Supply(WorkDir(workDir)),
+		Module,
 		fx.Populate(&composer, &loader, &factory),
 	)
 	app.RequireStart()

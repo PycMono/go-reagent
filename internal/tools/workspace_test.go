@@ -1,11 +1,12 @@
 package tools
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/config"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -35,6 +36,13 @@ func TestWorkspaceRejectsNonRelativePathsForEveryFileOperation(t *testing.T) {
 				t.Fatalf("ResolveDir(%q) error = nil", path)
 			}
 		})
+	}
+}
+
+func TestNewWorkspaceClassifiesInvalidWorkDir(t *testing.T) {
+	_, err := NewWorkspace(fxtest.NewLifecycle(t), workspacepkg.WorkDir(""))
+	if !errors.Is(err, workspacepkg.ErrInvalid) {
+		t.Fatalf("NewWorkspace() error = %v, want workspace.ErrInvalid", err)
 	}
 }
 
@@ -112,7 +120,7 @@ func TestWorkspaceUsesLifecycleAndResolvesExistingDirectories(t *testing.T) {
 func newWorkspaceForTest(t *testing.T, workDir string) *Workspace {
 	t.Helper()
 	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, config.WorkDir(workDir))
+	workspace, err := NewWorkspace(lifecycle, workspacepkg.WorkDir(workDir))
 	if err != nil {
 		t.Fatalf("NewWorkspace() error = %v", err)
 	}

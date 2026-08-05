@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PycMono/go-reagent/internal/config"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -176,7 +176,7 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, config.WorkDir(workDir))
+	workspace, err := NewWorkspace(lifecycle, workspacepkg.WorkDir(workDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 func newProcessSupervisorForTest(t *testing.T, workDir string) *ProcessSupervisor {
 	t.Helper()
 	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, config.WorkDir(workDir))
+	workspace, err := NewWorkspace(lifecycle, workspacepkg.WorkDir(workDir))
 	if err != nil {
 		t.Fatalf("NewWorkspace() error = %v", err)
 	}

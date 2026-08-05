@@ -15,7 +15,7 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	ctxpkg "github.com/PycMono/go-reagent/internal/context"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 )
 
 type fakeProvider struct {
@@ -54,7 +54,7 @@ type fakeRegistry struct {
 type loopTestRuntime struct {
 	provider         ai.Client
 	registry         agent.Registry
-	factory          *ctxpkg.RunContextFactory
+	factory          *workspacepkg.RunContextFactory
 	enableThinking   bool
 	MaxParallelTools int
 }
@@ -78,7 +78,7 @@ func newAgentLoopRuntimeForTest(
 	return &loopTestRuntime{
 		provider:         llmProvider,
 		registry:         registry,
-		factory:          ctxpkg.NewRunContextFactory(ctxpkg.NewPromptComposer(workDir), ctxpkg.NewSkillLoader(workDir)),
+		factory:          workspacepkg.NewRunContextFactory(workspacepkg.NewPromptComposer(workDir), workspacepkg.NewSkillLoader(workDir)),
 		enableThinking:   enableThinking,
 		MaxParallelTools: 4,
 	}

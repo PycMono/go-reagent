@@ -8,7 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -20,7 +20,7 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 		supervisor *ProcessSupervisor
 	)
 	app := fxtest.New(t,
-		fx.Supply(config.WorkDir(t.TempDir())),
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
 		Register,
 		fx.Populate(&registry, &workspace, &supervisor),
 	)
@@ -51,7 +51,7 @@ func TestRegisterRejectsDuplicateToolGroupNames(t *testing.T) {
 	}}
 	app := fx.New(
 		fx.NopLogger,
-		fx.Supply(config.WorkDir(t.TempDir())),
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
 		Register,
 		fx.Provide(fx.Annotate(
 			func() agent.Tool { return duplicateRead },
@@ -67,7 +67,7 @@ func TestRegisterRejectsDuplicateToolGroupNames(t *testing.T) {
 func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
 	var registry agent.Registry
 	app := fxtest.New(t,
-		fx.Supply(config.WorkDir(t.TempDir())),
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
 		Register,
 		fx.Populate(&registry),
 	)

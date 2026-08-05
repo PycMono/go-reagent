@@ -16,8 +16,8 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/tools"
+	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 )
 
@@ -29,7 +29,7 @@ func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 	)
 	app := fx.New(
 		fx.NopLogger,
-		fx.Supply(config.WorkDir(t.TempDir())),
+		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
 		tools.Register,
 		fx.Populate(&registry, &workspace, &supervisor),
 	)
