@@ -17,6 +17,7 @@ import (
 	workspacepkg "github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 type rawClientFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)
@@ -125,7 +126,7 @@ func newAgentLoopRuntimeForTest(
 	return &loopTestRuntime{
 		provider:         llmProvider,
 		registry:         registry,
-		factory:          workspacepkg.NewRunContextFactory(workspacepkg.NewPromptComposer(workDir), workspacepkg.NewSkillLoader(workDir)),
+		factory:          workspacepkg.NewRunContextFactory(workspacepkg.NewPromptComposer(workDir), skills.NewLoader(workDir)),
 		enableThinking:   enableThinking,
 		MaxParallelTools: 4,
 	}

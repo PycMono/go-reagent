@@ -10,6 +10,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testing.T) {
@@ -36,7 +37,7 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 		{Name: "write", Description: "write files"},
 		{Name: "read", Description: "read files", ParallelSafe: true},
 	}
-	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
 	runContext, err := factory.Create(context.Background(), runRequest("review this"), definitions)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -67,7 +68,7 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	workDir := t.TempDir()
 	writeValidAgentWorkspace(t, workDir)
-	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
 	history := []ai.Message{{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("previous answer")}}}
 	contextBlocks := []agent.ContextBlock{
 		{Name: "preferences", Content: "prefers concise replies", Priority: 10},
@@ -139,7 +140,7 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: Review changes\n---\nBody"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
+	factory := NewRunContextFactory(NewPromptComposer(workDir), skills.NewLoader(workDir))
 
 	_, err := factory.Create(context.Background(), runRequest("review"), []ai.ToolDefinition{{Name: "read_file"}})
 	if err == nil || err.Error() != "agent runtime: required tool read is not registered" {
@@ -150,7 +151,7 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 func TestRunContextFactoryHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
+	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), skills.NewLoader(t.TempDir()))
 
 	_, err := factory.Create(ctx, runRequest("unused"), []ai.ToolDefinition{{Name: "read"}})
 	if !errors.Is(err, context.Canceled) {

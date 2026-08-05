@@ -1,5 +1,4 @@
-// Package context composes workspace-specific context for Agent runs.
-package pi
+package skills
 
 import (
 	"bytes"
@@ -24,16 +23,6 @@ type parsedSkill struct {
 	RequiredBins           []string
 	RequiredEnv            []string
 	DisableModelInvocation bool
-}
-
-// SkillLoader loads standard Agent Skills from one workspace.
-type SkillLoader struct {
-	workDir string
-}
-
-// NewSkillLoader 创建一个以 workDir 为文件访问边界的 Skill 加载器。
-func NewSkillLoader(workDir string) *SkillLoader {
-	return &SkillLoader{workDir: workDir}
 }
 
 // readRootRegularFile 从受限工作区根目录读取普通文件，

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/skills"
 )
 
 // TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder 验证系统提示词按核心纪律、Agent 定义和 Skill 目录的顺序组合，且不会泄露 Skill Body。
@@ -15,14 +16,11 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("Use project conventions."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeSkill(t, workDir, "review/SKILL.md", "---\nname: review\ndescription: Review changes\n---\nbody-secret-must-not-leak")
-	snapshot := newSkillSnapshot([]SkillSummary{{
-		Name:        "review",
-		Description: "Review changes",
-		Location:    ".claw/skills/review/SKILL.md",
-		Version:     "sha256:0123456789abcdef",
-		Source:      SkillSourceClaw,
-	}}, nil)
+	writeTestSkill(t, workDir, "review/SKILL.md", "---\nname: review\ndescription: Review changes\n---\nbody-secret-must-not-leak")
+	snapshot, err := skills.NewLoader(workDir).Discover(skills.DefaultEnvironment())
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
 
 	message, report, err := NewPromptComposer(workDir).Build(snapshot)
 	if err != nil {
@@ -41,7 +39,7 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 	for _, want := range []string{
 		"AGENTS.md", "Thinking", "必须通过 read 完整读取",
 		"Use project conventions.", "Review changes", ".claw/skills/review/SKILL.md",
-		"sha256:0123456789abcdef", "必须先使用 read",
+		"sha256:", "必须先使用 read",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("prompt missing %q: %q", want, content)
@@ -75,7 +73,7 @@ func TestPromptComposerDoesNotRequireUnavailableTools(t *testing.T) {
 func TestPromptComposerAllowsEmptyCatalog(t *testing.T) {
 	workDir := t.TempDir()
 	writeAgentsInstructions(t, workDir, "General Agent instructions.")
-	message, report, err := NewPromptComposer(workDir).Build(newSkillSnapshot(nil, nil))
+	message, report, err := NewPromptComposer(workDir).Build(nil)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -88,7 +86,7 @@ func TestPromptComposerAllowsEmptyCatalog(t *testing.T) {
 			t.Fatalf("prompt contains absent section %q: %q", absent, content)
 		}
 	}
-	if report != (SkillPromptReport{}) {
+	if report != (skills.PromptReport{}) {
 		t.Fatalf("report = %#v", report)
 	}
 }

@@ -1,4 +1,4 @@
-package pi
+package skills
 
 import (
 	"errors"

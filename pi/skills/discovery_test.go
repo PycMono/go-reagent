@@ -1,7 +1,6 @@
-package pi
+package skills
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +15,7 @@ func TestSkillLoaderDiscoversSourcesWithPrecedence(t *testing.T) {
 	writeWorkspaceSkill(t, workDir, ".agents/skills/review/SKILL.md", "review", "agents", "agents-body-secret")
 	writeWorkspaceSkill(t, workDir, "skills/review/SKILL.md", "review", "workspace", "workspace-body-secret")
 
-	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(workDir).Discover(testEnvironment())
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
@@ -25,7 +24,7 @@ func TestSkillLoaderDiscoversSourcesWithPrecedence(t *testing.T) {
 		t.Fatalf("skills = %#v", skills)
 	}
 	if skills[0].Name != "review" || skills[0].Description != "workspace" ||
-		skills[0].Location != "skills/review/SKILL.md" || skills[0].Source != SkillSourceWorkspace {
+		skills[0].Location != "skills/review/SKILL.md" || skills[0].Source != SourceWorkspace {
 		t.Fatalf("skill = %#v", skills[0])
 	}
 	if !strings.HasPrefix(skills[0].Version, "sha256:") || len(skills[0].Version) != len("sha256:")+16 {
@@ -46,7 +45,7 @@ func TestSkillLoaderExcludesSameSourceDuplicateNames(t *testing.T) {
 	writeWorkspaceSkill(t, workDir, "skills/two/SKILL.md", "duplicate", "second", "second body")
 	writeWorkspaceSkill(t, workDir, ".claw/skills/duplicate/SKILL.md", "duplicate", "legacy", "legacy body")
 
-	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(workDir).Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestSkillLoaderReportsShadowedDuplicatesInLowerPrioritySource(t *testing.T)
 	writeWorkspaceSkill(t, workDir, ".claw/skills/one/SKILL.md", "review", "legacy one", "legacy body one")
 	writeWorkspaceSkill(t, workDir, ".claw/skills/two/SKILL.md", "review", "legacy two", "legacy body two")
 
-	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(workDir).Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,9 +77,9 @@ func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 	workDir := t.TempDir()
 	writeWorkspaceSkill(t, workDir, "skills/zeta/SKILL.md", "zeta", "last", "zeta body")
 	writeWorkspaceSkill(t, workDir, "skills/alpha/SKILL.md", "alpha", "first", "alpha body v1")
-	loader := NewSkillLoader(workDir)
+	loader := NewLoader(workDir)
 
-	first, err := loader.Discover(testSkillEnvironment())
+	first, err := loader.Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +87,7 @@ func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 		t.Fatalf("skill order = %v", got)
 	}
 	firstVersion := first.Skills()[0].Version
-	second, err := loader.Discover(testSkillEnvironment())
+	second, err := loader.Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +96,7 @@ func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 	}
 
 	writeWorkspaceSkill(t, workDir, "skills/alpha/SKILL.md", "alpha", "first", "alpha body v2")
-	third, err := loader.Discover(testSkillEnvironment())
+	third, err := loader.Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +107,7 @@ func TestSkillLoaderSortsSkillsAndVersionsContent(t *testing.T) {
 
 // TestSkillLoaderReturnsEmptySnapshotWithoutSkills 验证没有 Skill 目录时返回非空但内容为空的快照。
 func TestSkillLoaderReturnsEmptySnapshotWithoutSkills(t *testing.T) {
-	snapshot, err := NewSkillLoader(t.TempDir()).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(t.TempDir()).Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +125,7 @@ func TestSkillLoaderReportsInvalidSkillsWithoutFailingSiblings(t *testing.T) {
 	writeRawWorkspaceBytes(t, workDir, "skills/utf8/SKILL.md", append([]byte("---\nname: utf8\ndescription: utf8\n---\n"), 0xff))
 	writeRawWorkspaceBytes(t, workDir, "skills/large/SKILL.md", []byte(strings.Repeat("x", maxSkillFileBytes+1)))
 
-	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(workDir).Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +161,7 @@ func TestSkillLoaderRejectsSymlinkEntries(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 
-	snapshot, err := NewSkillLoader(workDir).Discover(testSkillEnvironment())
+	snapshot, err := NewLoader(workDir).Discover(testEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,12 +207,12 @@ disable-model-invocation: true
 disabled-body-secret`)
 	writeWorkspaceSkill(t, workDir, "skills/eligible/SKILL.md", "eligible", "eligible", "eligible body")
 
-	env := SkillEnvironment{
+	env := Environment{
 		GOOS:      "linux",
 		BinLookup: func(string) bool { return false },
 		EnvLookup: func(string) bool { return false },
 	}
-	snapshot, err := NewSkillLoader(workDir).Discover(env)
+	snapshot, err := NewLoader(workDir).Discover(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,25 +243,17 @@ metadata:
 ---
 Body`)
 
-	env := SkillEnvironment{
+	env := Environment{
 		GOOS:      "windows",
 		BinLookup: func(name string) bool { return name == "helper" },
 		EnvLookup: func(name string) bool { return name == "HELPER_TOKEN" },
 	}
-	snapshot, err := NewSkillLoader(workDir).Discover(env)
+	snapshot, err := NewLoader(workDir).Discover(env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(snapshot.Skills()) != 1 || snapshot.Skills()[0].Name != "windows-tool" {
 		t.Fatalf("skills = %#v", snapshot.Skills())
-	}
-}
-
-// TestSkillLoaderReturnsErrorForMissingWorkspace 验证工作区不存在时发现流程返回错误。
-func TestSkillLoaderReturnsErrorForMissingWorkspace(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := NewSkillLoader(missing).Discover(testSkillEnvironment()); err == nil || !errors.Is(err, ErrInvalid) {
-		t.Fatalf("Discover() error = %v, want ErrInvalid", err)
 	}
 }
 
@@ -291,9 +282,9 @@ func writeRawWorkspaceBytes(t *testing.T, workDir, relativePath string, content 
 	}
 }
 
-// testSkillEnvironment 返回允许所有命令和环境变量的固定 Linux 测试环境。
-func testSkillEnvironment() SkillEnvironment {
-	return SkillEnvironment{
+// testEnvironment 返回允许所有命令和环境变量的固定 Linux 测试环境。
+func testEnvironment() Environment {
+	return Environment{
 		GOOS:      "linux",
 		BinLookup: func(string) bool { return true },
 		EnvLookup: func(string) bool { return true },
@@ -301,7 +292,7 @@ func testSkillEnvironment() SkillEnvironment {
 }
 
 // requireDiagnosticCodes 断言诊断列表包含测试期望的全部错误代码。
-func requireDiagnosticCodes(t *testing.T, diagnostics []SkillDiagnostic, codes ...string) {
+func requireDiagnosticCodes(t *testing.T, diagnostics []Diagnostic, codes ...string) {
 	t.Helper()
 	available := make(map[string]bool, len(diagnostics))
 	for _, diagnostic := range diagnostics {

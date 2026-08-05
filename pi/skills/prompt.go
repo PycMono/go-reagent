@@ -1,4 +1,4 @@
-package pi
+package skills
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ const skillPromptInstructions = `
 
 const skillPromptClosing = "</available_skills>\n"
 
-type SkillPromptReport struct {
+type PromptReport struct {
 	IncludedSkills        int
 	OmittedSkills         int
 	ShortenedDescriptions int
@@ -42,12 +42,12 @@ var xmlTextReplacer = strings.NewReplacer(
 	"'", "&apos;",
 )
 
-// renderSkillPrompt 将 Skill 快照渲染成注入系统提示词的 XML 目录，
+// RenderPrompt 将 Skill 快照渲染成注入系统提示词的 XML 目录，
 // 在技能数量和字符预算内优先保留身份信息，再按剩余空间补充描述。
-func renderSkillPrompt(snapshot *SkillSnapshot) (string, SkillPromptReport) {
+func RenderPrompt(snapshot *Snapshot) (string, PromptReport) {
 	skills := snapshot.Skills()
 	if len(skills) == 0 {
-		return "", SkillPromptReport{}
+		return "", PromptReport{}
 	}
 	sort.Slice(skills, func(i, j int) bool {
 		if skills[i].Name == skills[j].Name {
@@ -58,7 +58,7 @@ func renderSkillPrompt(snapshot *SkillSnapshot) (string, SkillPromptReport) {
 
 	included := selectSkillIdentities(skills)
 	descriptions := make([]string, len(included))
-	report := SkillPromptReport{
+	report := PromptReport{
 		IncludedSkills: len(included),
 		OmittedSkills:  len(skills) - len(included),
 	}
@@ -97,14 +97,14 @@ func renderSkillPrompt(snapshot *SkillSnapshot) (string, SkillPromptReport) {
 
 // selectSkillIdentities 按顺序选择能够完整放入数量及字符预算的 Skill 身份信息，
 // 身份信息包括名称、位置和版本，不为描述占用空间。
-func selectSkillIdentities(skills []SkillSummary) []SkillSummary {
+func selectSkillIdentities(skills []Summary) []Summary {
 	maximum := len(skills)
 	if maximum > maxSkillsInPrompt {
 		maximum = maxSkillsInPrompt
 	}
-	selected := make([]SkillSummary, 0, maximum)
+	selected := make([]Summary, 0, maximum)
 	for index := 0; index < maximum; index++ {
-		candidate := append(append([]SkillSummary(nil), selected...), skills[index])
+		candidate := append(append([]Summary(nil), selected...), skills[index])
 		descriptions := make([]string, len(candidate))
 		omitted := len(skills) - len(candidate)
 		if utf8.RuneCountInString(renderSkillCatalog(candidate, descriptions, omitted)) > maxSkillsPromptChars {
@@ -116,7 +116,7 @@ func selectSkillIdentities(skills []SkillSummary) []SkillSummary {
 }
 
 // longestDescriptionPrefix 使用二分查找计算描述在剩余字符预算内可保留的最长前缀长度。
-func longestDescriptionPrefix(skill SkillSummary, runes []rune, available int) int {
+func longestDescriptionPrefix(skill Summary, runes []rune, available int) int {
 	low, high := 0, len(runes)
 	for low < high {
 		middle := low + (high-low+1)/2
@@ -130,7 +130,7 @@ func longestDescriptionPrefix(skill SkillSummary, runes []rune, available int) i
 }
 
 // descriptionRuneDelta 计算某段描述经过 XML 清理和转义后实际增加的字符数量。
-func descriptionRuneDelta(skill SkillSummary, description string) int {
+func descriptionRuneDelta(skill Summary, description string) int {
 	empty := utf8.RuneCountInString(renderSkillEntry(skill, ""))
 	filled := utf8.RuneCountInString(renderSkillEntry(skill, description))
 	return filled - empty
@@ -138,7 +138,7 @@ func descriptionRuneDelta(skill SkillSummary, description string) int {
 
 // renderSkillCatalog 将选中的 Skill 和对应描述拼接成完整 XML 目录，
 // 并在存在未收录 Skill 时附加省略数量提示。
-func renderSkillCatalog(skills []SkillSummary, descriptions []string, omitted int) string {
+func renderSkillCatalog(skills []Summary, descriptions []string, omitted int) string {
 	var builder strings.Builder
 	builder.WriteString(skillPromptInstructions)
 	for index, skill := range skills {
@@ -156,7 +156,7 @@ func renderSkillCatalog(skills []SkillSummary, descriptions []string, omitted in
 }
 
 // renderSkillEntry 将单个 Skill 摘要清理并转义为安全的 XML <skill> 节点。
-func renderSkillEntry(skill SkillSummary, description string) string {
+func renderSkillEntry(skill Summary, description string) string {
 	return fmt.Sprintf(
 		"  <skill>\n    <name>%s</name>\n    <description>%s</description>\n    <location>%s</location>\n    <version>%s</version>\n  </skill>\n",
 		xmlTextReplacer.Replace(sanitizeXMLText(skill.Name)),
