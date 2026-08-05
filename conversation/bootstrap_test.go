@@ -5,9 +5,8 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/internal/cli/conversation"
-	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
-	drivermysql "github.com/PycMono/go-reagent/internal/cli/driver/mysql"
+	"github.com/PycMono/go-reagent/conversation"
+	persistencemysql "github.com/PycMono/go-reagent/persistence/mysql"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
@@ -17,15 +16,14 @@ import (
 func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
 	var (
-		connection *drivermysql.Connection
+		connection *persistencemysql.Connection
 		store      conversation.Store
 		runner     conversation.Runner
 	)
 	app := fxtest.New(t,
 		fx.Supply(cfg),
 		fx.Provide(func() agent.Runner { return &registeredRuntimeFake{} }),
-		drivermysql.Module,
-		conversationmysql.Module,
+		persistencemysql.Module,
 		conversation.Module,
 		fx.Populate(&connection, &store, &runner),
 	)
