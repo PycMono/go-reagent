@@ -14,11 +14,12 @@ internal/cli -> reagent/agent + internal/bootstrap
 cmd/reagent  -> internal/cli + internal/bootstrap
 ```
 
-- `ai`：公共消息、内容块、工具定义、协议枚举、统一 `Client`，以及 OpenAI/Anthropic 官方 SDK 适配器。
+- `ai`：公共消息、Usage、平台定价、内容块、工具定义、协议枚举、统一 `Client`，以及 OpenAI/Anthropic 官方 SDK 适配器。
 - `agent`：公共 Run 契约、Loop、Scheduler、Registry、Middleware、Tool、Reporter 和底层事件。
 - 根 `reagent`：面向上层业务的完整默认 SDK，负责配置、构造、同步 Run、错误分类和 Close。
 - `internal/workspace`：当前工作目录、AGENTS.md、Skills、Context 组装等产品策略。
 - `internal/tools`：`apply_patch`、`edit`、`exec`、`process`、`read`、`write` 六个默认工具。
+- `internal/observability`：强制校验 Usage，并按平台价格计算每次模型调用的 USD 成本与耗时。
 - `internal/cli`：一次性 CLI 生命周期、会话持久化、MySQL、Terminal 和 WeCom。
 
 `ai` 不依赖 `agent` 或产品包；`agent` 只依赖 `ai`，不依赖根包和 `internal`。集成测试会检查这一依赖方向，并拒绝旧 internal 包重新出现。
@@ -60,11 +61,15 @@ func (a *Agent) Close(context.Context) error
 
 `New` 不接收 Provider、Tool、Registry、Middleware、Reporter、Store 或 Fx Option。默认组件在私有 Fx 图中完成组装，避免上层业务依赖产品内部结构。
 
+根 `RunResult` 是 `agent.RunResult` 的别名；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Action 模型调用及其 Usage、成本与耗时。
+
 ## 配置
 
 业务明确调用 `LoadConfig(path)`，SDK 不猜测配置路径，也不在 `New` 中读取 `CONFIG_PATH`。加载继续只使用 Configor，因此 JSON、YAML、TOML、example 回退、环境叠加和 `CONFIGOR_` 环境变量覆盖保持一致。
 
 `New` 会复制并校验 Config。调用方在构造完成后修改原 Config，不会改变已经运行的 Agent。
+
+每个平台都必须配置 `pricing.input_usd_per_million_tokens` 和 `pricing.output_usd_per_million_tokens`，单位为 USD/1M tokens。价格必须是有限非负数，允许 `0` 表示免费模型；价格是构造 SDK 时的快照。
 
 ## Run 数据流
 
@@ -75,13 +80,15 @@ func (a *Agent) Close(context.Context) error
     -> 重新读取 AGENTS.md 和发现 Skills
     -> 组装 System + Context + History + Input
     -> AI / Tool Loop
-    -> 返回 RunResult.NewMessages
+    -> 返回 RunResult.NewMessages + RunResult.Invocations
     -> 业务按自己的事务策略持久化
 ```
 
 `Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 UserID/ConversationID，也不做会话锁、重试、排队或摘要。业务可把标识放在 `Metadata` 中用于追踪，但 SDK 不解释其含义。
 
 `NewMessages` 只包含当前 Run 新增的 Assistant/Tool 消息，不包含 System、外部 Context、History、Input 或 Thinking 脚手架。运行中途失败时，已经完成的消息仍与错误一起返回；是否持久化部分结果由业务决定。
+
+默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ai.ErrGeneration`，不会把未计量响应作为成功结果。自行直接组合公共 `agent` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Client`；`agent.Loop` 会独立复核这些字段。
 
 根 `Run` 不提供进度事件。底层 `agent.Reporter` 只供自行使用 `agent` 包的调用方和仓库自带 CLI 使用，Terminal/WeCom 事件不会进入根 SDK API。
 
@@ -135,4 +142,4 @@ func (a *Agent) Close(context.Context) error
 LoadOrCreate -> agent.Run -> AppendTurn
 ```
 
-CLI 可以通过 MySQL 加载有界 History，并在同一业务流程中保存 Input 与 `NewMessages`；Terminal 和 WeCom 通过底层 Reporter 接收事件。这些适配都位于 `internal/cli`，不属于根 SDK 的状态或扩展接口。
+CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`；Terminal 和 WeCom 通过底层 Reporter 接收事件。这些适配都位于 `internal/cli`，不属于根 SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。
