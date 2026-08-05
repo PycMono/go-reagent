@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // RunContext is the prepared message history and tool snapshot for one Agent run.
@@ -33,7 +33,7 @@ func NewRunContextFactory(composer *PromptComposer, skillLoader *SkillLoader) *R
 // Create discovers the current Skill snapshot and constructs initial system/user messages.
 func (f *RunContextFactory) Create(
 	ctx context.Context,
-	request schema.RunRequest,
+	request agent.RunRequest,
 	definitions []ai.ToolDefinition,
 ) (RunContext, error) {
 	if ctx == nil {
@@ -44,9 +44,6 @@ func (f *RunContextFactory) Create(
 	}
 	if err := ctx.Err(); err != nil {
 		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
-	}
-	if err := validateRunRequest(request); err != nil {
-		return RunContext{}, err
 	}
 	if !hasToolDefinition(definitions, "read") {
 		return RunContext{}, errors.New("agent runtime: required tool read is not registered")
@@ -82,7 +79,7 @@ func (f *RunContextFactory) Create(
 
 	messages := make([]ai.Message, 0, 2+len(request.Context)+len(request.History))
 	messages = append(messages, systemMessage)
-	contextBlocks := append([]schema.ContextBlock(nil), request.Context...)
+	contextBlocks := append([]agent.ContextBlock(nil), request.Context...)
 	sort.SliceStable(contextBlocks, func(i, j int) bool {
 		return contextBlocks[i].Priority > contextBlocks[j].Priority
 	})
@@ -103,35 +100,6 @@ func (f *RunContextFactory) Create(
 		Tools:    append([]ai.ToolDefinition(nil), definitions...),
 		Metadata: cloneMetadata(request.Metadata),
 	}, nil
-}
-
-func validateRunRequest(request schema.RunRequest) error {
-	if request.Input.Role != ai.RoleUser {
-		return fmt.Errorf("run context: input role must be user, got %q", request.Input.Role)
-	}
-
-	inputText, err := ai.TextContent(request.Input.Content)
-	if err != nil {
-		return fmt.Errorf("run context: input content: %w", err)
-	}
-	if strings.TrimSpace(inputText) == "" {
-		return errors.New("run context: input content must not be empty")
-	}
-
-	if len(request.Input.ToolCalls) != 0 || request.Input.ToolCallID != "" ||
-		request.Input.ToolName != "" || request.Input.IsError {
-		return errors.New("run context: input must not contain tool fields")
-	}
-	for index, block := range request.Context {
-		if strings.TrimSpace(block.Name) == "" {
-			return fmt.Errorf("run context: context block %d name must not be empty", index)
-		}
-		if strings.TrimSpace(block.Content) == "" {
-			return fmt.Errorf("run context: context block %d content must not be empty", index)
-		}
-	}
-
-	return nil
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

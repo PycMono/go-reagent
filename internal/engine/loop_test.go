@@ -12,11 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
-	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 type fakeProvider struct {
@@ -47,14 +46,14 @@ func (p *fakeProvider) Generate(
 type fakeRegistry struct {
 	mu           sync.Mutex
 	definitions  []ai.ToolDefinition
-	results      map[string]schema.ToolResult
+	results      map[string]agent.ToolResult
 	calls        []ai.ToolCall
 	afterExecute func(callCount int)
 }
 
 type loopTestRuntime struct {
 	provider         ai.Client
-	registry         tools.Registry
+	registry         agent.Registry
 	factory          *ctxpkg.RunContextFactory
 	enableThinking   bool
 	MaxParallelTools int
@@ -62,7 +61,7 @@ type loopTestRuntime struct {
 
 func newAgentLoopForTest(
 	llmProvider ai.Client,
-	registry tools.Registry,
+	registry agent.Registry,
 	workDir string,
 	enableThinking bool,
 ) *loopTestRuntime {
@@ -72,7 +71,7 @@ func newAgentLoopForTest(
 
 func newAgentLoopRuntimeForTest(
 	llmProvider ai.Client,
-	registry tools.Registry,
+	registry agent.Registry,
 	workDir string,
 	enableThinking bool,
 ) *loopTestRuntime {
@@ -86,7 +85,7 @@ func newAgentLoopRuntimeForTest(
 }
 
 type registryWithRequiredRead struct {
-	tools.Registry
+	agent.Registry
 }
 
 func (r registryWithRequiredRead) GetAvailableTools() []ai.ToolDefinition {
@@ -123,8 +122,8 @@ func writeValidAgentWorkspace(workDir string) {
 	}
 }
 
-func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter engine.Reporter) error {
-	runContext, err := r.factory.Create(ctx, schema.RunRequest{Input: ai.Message{
+func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter agent.Reporter) error {
+	runContext, err := r.factory.Create(ctx, agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
 		Content: blocks(prompt),
 	}}, r.registry.GetAvailableTools())
@@ -140,7 +139,7 @@ func (r *fakeRegistry) GetAvailableTools() []ai.ToolDefinition {
 	return append([]ai.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *fakeRegistry) Execute(ctx context.Context, call ai.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
+func (r *fakeRegistry) Execute(ctx context.Context, call ai.ToolCall, observer agent.ToolEventObserver) (agent.ToolResult, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	callCount := len(r.calls)
@@ -149,18 +148,18 @@ func (r *fakeRegistry) Execute(ctx context.Context, call ai.ToolCall, observer t
 		r.afterExecute(callCount)
 	}
 	if observer != nil {
-		observer(ctx, schema.NewToolStart(call))
+		observer(ctx, agent.NewToolStart(call))
 	}
-	var result schema.ToolResult
+	var result agent.ToolResult
 	if result, ok := r.results[call.Name]; ok {
 		if observer != nil {
-			observer(ctx, schema.NewToolEnd(call, result))
+			observer(ctx, agent.NewToolEnd(call, result))
 		}
 		return result, nil
 	}
 	result = toolResult(call, "tool is not registered", true)
 	if observer != nil {
-		observer(ctx, schema.NewToolEnd(call, result))
+		observer(ctx, agent.NewToolEnd(call, result))
 	}
 	return result, nil
 }
@@ -176,23 +175,23 @@ type controlledRegistry struct {
 	started     chan ai.ToolCall
 	finished    chan ai.ToolCall
 	gates       map[string]chan struct{}
-	results     map[string]schema.ToolResult
+	results     map[string]agent.ToolResult
 }
 
 func (r *controlledRegistry) GetAvailableTools() []ai.ToolDefinition {
 	return append([]ai.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *controlledRegistry) Execute(ctx context.Context, call ai.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
+func (r *controlledRegistry) Execute(ctx context.Context, call ai.ToolCall, observer agent.ToolEventObserver) (agent.ToolResult, error) {
 	if observer != nil {
-		observer(ctx, schema.NewToolStart(call))
+		observer(ctx, agent.NewToolStart(call))
 	}
 	select {
 	case r.started <- call:
 	case <-ctx.Done():
 		result := canceledToolResult(call, ctx.Err())
 		if observer != nil {
-			observer(ctx, schema.NewToolEnd(call, result))
+			observer(ctx, agent.NewToolEnd(call, result))
 		}
 		return result, ctx.Err()
 	}
@@ -201,7 +200,7 @@ func (r *controlledRegistry) Execute(ctx context.Context, call ai.ToolCall, obse
 	if !exists {
 		result := toolResult(call, fmt.Sprintf("tool %q is not registered", call.Name), true)
 		if observer != nil {
-			observer(ctx, schema.NewToolEnd(call, result))
+			observer(ctx, agent.NewToolEnd(call, result))
 		}
 		return result, nil
 	}
@@ -210,27 +209,27 @@ func (r *controlledRegistry) Execute(ctx context.Context, call ai.ToolCall, obse
 	case <-ctx.Done():
 		result := canceledToolResult(call, ctx.Err())
 		if observer != nil {
-			observer(ctx, schema.NewToolEnd(call, result))
+			observer(ctx, agent.NewToolEnd(call, result))
 		}
 		return result, ctx.Err()
 	}
 
 	r.finished <- call
-	var result schema.ToolResult
+	var result agent.ToolResult
 	if result, ok := r.results[call.ID]; ok {
 		if observer != nil {
-			observer(ctx, schema.NewToolEnd(call, result))
+			observer(ctx, agent.NewToolEnd(call, result))
 		}
 		return result, nil
 	}
 	result = toolResult(call, call.Name, false)
 	if observer != nil {
-		observer(ctx, schema.NewToolEnd(call, result))
+		observer(ctx, agent.NewToolEnd(call, result))
 	}
 	return result, nil
 }
 
-func canceledToolResult(call ai.ToolCall, err error) schema.ToolResult {
+func canceledToolResult(call ai.ToolCall, err error) agent.ToolResult {
 	return toolResult(call, err.Error(), true)
 }
 
@@ -251,7 +250,7 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 	}}
 	registry := &fakeRegistry{
 		definitions: []ai.ToolDefinition{{Name: "zeta"}, {Name: "alpha", ParallelSafe: true}},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"zeta": toolResult(ai.ToolCall{ID: "call-1", Name: "zeta"}, "tool result", false),
 		},
 	}
@@ -285,9 +284,9 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 		t.Fatalf("tool observation = %#v", observation)
 	}
 	events := reporter.Events()
-	messageEvents := make([]schema.AgentEvent, 0)
+	messageEvents := make([]agent.AgentEvent, 0)
 	for _, event := range events {
-		if event.Type == schema.AgentEventMessage {
+		if event.Type == agent.AgentEventMessage {
 			messageEvents = append(messageEvents, event)
 		}
 	}
@@ -430,7 +429,7 @@ func TestAgentLoopAppendsToolObservationAndContinues(t *testing.T) {
 		},
 		{Role: ai.RoleAssistant, Content: blocks("tool finished")},
 	}}
-	registry := &fakeRegistry{results: map[string]schema.ToolResult{
+	registry := &fakeRegistry{results: map[string]agent.ToolResult{
 		"echo": toolResult(ai.ToolCall{ID: "call-1", Name: "echo"}, "hello", false),
 	}}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -737,7 +736,7 @@ func newControlledRegistry(
 		started:     make(chan ai.ToolCall, len(calls)),
 		finished:    make(chan ai.ToolCall, len(calls)),
 		gates:       gates,
-		results:     make(map[string]schema.ToolResult),
+		results:     make(map[string]agent.ToolResult),
 	}
 }
 
@@ -829,7 +828,7 @@ func TestAgentLoopRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 			provider := &fakeProvider{responses: []*ai.Message{
 				{Role: ai.RoleAssistant, ToolCalls: tt.toolCalls},
 			}}
-			registry := &fakeRegistry{results: map[string]schema.ToolResult{}}
+			registry := &fakeRegistry{results: map[string]agent.ToolResult{}}
 			engine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "run echo", nil)
@@ -897,7 +896,7 @@ func TestAgentLoopStopsToolBatchAfterCancellation(t *testing.T) {
 			{Name: "first", ParallelSafe: true},
 			{Name: "second", ParallelSafe: true},
 		},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"first":  toolResult(ai.ToolCall{ID: "call-1", Name: "first"}, "one", false),
 			"second": toolResult(ai.ToolCall{ID: "call-2", Name: "second"}, "two", false),
 		},
@@ -1066,7 +1065,7 @@ func TestAgentLoopRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	}}
 	registry := &fakeRegistry{
 		definitions: []ai.ToolDefinition{{Name: "bash"}},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"bash": toolResult(ai.ToolCall{ID: "call-1", Name: "bash"}, "main.go", false),
 		},
 	}
@@ -1116,8 +1115,8 @@ func blocks(text string) []ai.ContentBlock {
 	return []ai.ContentBlock{ai.TextBlock(text)}
 }
 
-func toolResult(call ai.ToolCall, text string, isError bool) schema.ToolResult {
-	return schema.ToolResult{
+func toolResult(call ai.ToolCall, text string, isError bool) agent.ToolResult {
+	return agent.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    blocks(text),

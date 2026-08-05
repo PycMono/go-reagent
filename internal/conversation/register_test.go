@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -40,7 +40,7 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
 	store := &registeredStoreFake{snapshot: conversation.Snapshot{ConversationPK: 1}}
-	runtime := &registeredRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{{
+	runtime := &registeredRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 	var runner conversation.Runner
@@ -69,10 +69,10 @@ func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 }
 
 type registeredRuntimeFake struct {
-	result schema.RunResult
+	result agent.RunResult
 }
 
-func (f *registeredRuntimeFake) Run(context.Context, schema.RunRequest, engine.Reporter) (schema.RunResult, error) {
+func (f *registeredRuntimeFake) Run(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
 	return f.result, nil
 }
 

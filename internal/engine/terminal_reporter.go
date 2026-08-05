@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const terminalArgumentLimit = 150
@@ -20,22 +20,22 @@ type terminalReporter struct {
 }
 
 // NewTerminalReporter creates a Reporter that prints Agent lifecycle events.
-func NewTerminalReporter() Reporter {
+func NewTerminalReporter() agent.Reporter {
 	return newTerminalReporter(os.Stdout)
 }
 
-func newTerminalReporter(writer io.Writer) Reporter {
+func newTerminalReporter(writer io.Writer) agent.Reporter {
 	if writer == nil {
 		writer = io.Discard
 	}
 	return &terminalReporter{writer: writer}
 }
 
-func (r *terminalReporter) Report(_ context.Context, event schema.AgentEvent) {
+func (r *terminalReporter) Report(_ context.Context, event agent.AgentEvent) {
 	switch event.Type {
-	case schema.AgentEventThinking:
+	case agent.AgentEventThinking:
 		r.write("\n[🤔 思考中] 模型正在推理...\n")
-	case schema.AgentEventToolStart:
+	case agent.AgentEventToolStart:
 		if event.Tool == nil {
 			return
 		}
@@ -44,14 +44,14 @@ func (r *terminalReporter) Report(_ context.Context, event schema.AgentEvent) {
 			event.Tool.Call.Name,
 			terminalDisplayArguments(string(event.Tool.Call.Arguments)),
 		))
-	case schema.AgentEventToolUpdate:
+	case agent.AgentEventToolUpdate:
 		if event.Tool == nil || event.Tool.Call.Name != "exec" || event.Tool.Update == nil {
 			return
 		}
 		if content := terminalEventText(event.Tool.Update.Content); content != "" {
 			r.write(content)
 		}
-	case schema.AgentEventToolEnd:
+	case agent.AgentEventToolEnd:
 		if event.Tool == nil || event.Tool.Result == nil {
 			return
 		}
@@ -64,7 +64,7 @@ func (r *terminalReporter) Report(_ context.Context, event schema.AgentEvent) {
 			message += fmt.Sprintf("   错误: %s\n", content)
 		}
 		r.write(message)
-	case schema.AgentEventMessage:
+	case agent.AgentEventMessage:
 		if event.Message == nil {
 			return
 		}

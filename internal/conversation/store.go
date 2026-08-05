@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 var (
@@ -43,10 +42,10 @@ type RunRequest struct {
 	ConversationID string
 	RunID          string
 	Input          ai.Message
-	Context        []schema.ContextBlock
+	Context        []agent.ContextBlock
 	Metadata       map[string]string
 }
 
 type Runner interface {
-	Run(context.Context, RunRequest, engine.Reporter) (schema.RunResult, error)
+	Run(context.Context, RunRequest, agent.Reporter) (agent.RunResult, error)
 }

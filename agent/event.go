@@ -1,4 +1,4 @@
-package schema
+package agent
 
 import "github.com/PycMono/go-reagent/ai"
 

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
@@ -41,7 +41,7 @@ func TestAgentLoopReturnsToolConversationInOrder(t *testing.T) {
 	}}
 	registry := &fakeRegistry{
 		definitions: []ai.ToolDefinition{{Name: "echo"}},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"echo": toolResult(call, "hello", false),
 		},
 	}
@@ -97,7 +97,7 @@ func TestAgentLoopReturnsCompletedMessagesWithProviderError(t *testing.T) {
 	}}}
 	registry := &fakeRegistry{
 		definitions: []ai.ToolDefinition{{Name: "echo"}},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"echo": toolResult(call, "completed before failure", false),
 		},
 	}

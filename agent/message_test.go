@@ -1,11 +1,11 @@
-package schema_test
+package agent_test
 
 import (
 	"encoding/json"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestToolCallArgumentsRemainJSON(t *testing.T) {
@@ -37,7 +37,7 @@ func TestToolCallArgumentsRemainJSON(t *testing.T) {
 }
 
 func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
-	result := schema.ToolResult{
+	result := agent.ToolResult{
 		ToolCallID: "call-1",
 		ToolName:   "bash",
 		Content:    []ai.ContentBlock{ai.TextBlock("ok")},

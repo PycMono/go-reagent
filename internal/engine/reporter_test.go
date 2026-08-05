@@ -8,41 +8,40 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type recordingReporter struct {
 	mu     sync.Mutex
-	events []schema.AgentEvent
+	events []agent.AgentEvent
 }
 
-func (r *recordingReporter) Report(_ context.Context, event schema.AgentEvent) {
+func (r *recordingReporter) Report(_ context.Context, event agent.AgentEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 }
 
-func (r *recordingReporter) Events() []schema.AgentEvent {
+func (r *recordingReporter) Events() []agent.AgentEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]schema.AgentEvent(nil), r.events...)
+	return append([]agent.AgentEvent(nil), r.events...)
 }
 
-type reporterFunc func(context.Context, schema.AgentEvent)
+type reporterFunc func(context.Context, agent.AgentEvent)
 
-func (f reporterFunc) Report(ctx context.Context, event schema.AgentEvent) { f(ctx, event) }
+func (f reporterFunc) Report(ctx context.Context, event agent.AgentEvent) { f(ctx, event) }
 
 func TestMultiReporterSortsAndIsolatesPanic(t *testing.T) {
 	var got []string
-	reporter := engine.NewMultiReporter([]engine.ReporterRegistration{
-		{Name: "z", Order: 20, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { got = append(got, "z") })},
-		{Name: "panic", Order: 10, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { panic("boom") })},
-		{Name: "a", Order: 20, Reporter: reporterFunc(func(context.Context, schema.AgentEvent) { got = append(got, "a") })},
+	reporter := agent.NewMultiReporter([]agent.ReporterRegistration{
+		{Name: "z", Order: 20, Reporter: reporterFunc(func(context.Context, agent.AgentEvent) { got = append(got, "z") })},
+		{Name: "panic", Order: 10, Reporter: reporterFunc(func(context.Context, agent.AgentEvent) { panic("boom") })},
+		{Name: "a", Order: 20, Reporter: reporterFunc(func(context.Context, agent.AgentEvent) { got = append(got, "a") })},
 	})
 
-	reporter.Report(context.Background(), schema.NewThinkingEvent())
+	reporter.Report(context.Background(), agent.NewThinkingEvent())
 	if want := []string{"a", "z"}; !slices.Equal(got, want) {
 		t.Fatalf("reported to = %v, want %v", got, want)
 	}
@@ -65,7 +64,7 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 	}}
 	registry := &fakeRegistry{
 		definitions: []ai.ToolDefinition{{Name: "read"}},
-		results: map[string]schema.ToolResult{
+		results: map[string]agent.ToolResult{
 			"read": toolResult(ai.ToolCall{ID: "call-1", Name: "read"}, "file A", false),
 		},
 	}
@@ -78,12 +77,12 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 
 	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	result := toolResult(call, "file A", false)
-	want := []schema.AgentEvent{
-		schema.NewThinkingEvent(),
-		schema.NewToolStartEvent(call),
-		schema.NewToolEndEvent(call, result),
-		schema.NewThinkingEvent(),
-		schema.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}),
+	want := []agent.AgentEvent{
+		agent.NewThinkingEvent(),
+		agent.NewToolStartEvent(call),
+		agent.NewToolEndEvent(call, result),
+		agent.NewThinkingEvent(),
+		agent.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}),
 	}
 	if got := reporter.Events(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("events = %#v, want %#v", got, want)

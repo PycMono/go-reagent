@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx/fxtest"
 )
@@ -62,7 +62,7 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := tools.NewRegistry(tools.RegistryParams{Tools: []tools.Tool{readTool}})
+	registry, err := agent.NewRegistry(agent.RegistryOptions{Tools: []agent.Tool{readTool}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 4), true)
 	runtime := engine.NewAgentRuntime(factory, loop, registry)
 
-	_, err = runtime.Run(context.Background(), schema.RunRequest{Input: ai.Message{
+	_, err = runtime.Run(context.Background(), agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
 		Content: blocks("提交代码"),
 	}}, nil)

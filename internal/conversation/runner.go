@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type runner struct {
@@ -21,8 +21,8 @@ func NewRunner(runtime engine.AgentRuntime, store Store, historyLimit int) Runne
 	return &runner{runtime: runtime, store: store, historyLimit: historyLimit}
 }
 
-func (r *runner) Run(ctx context.Context, request RunRequest, reporter engine.Reporter) (schema.RunResult, error) {
-	result := schema.RunResult{RunID: request.RunID}
+func (r *runner) Run(ctx context.Context, request RunRequest, reporter agent.Reporter) (agent.RunResult, error) {
+	result := agent.RunResult{RunID: request.RunID}
 	if ctx == nil {
 		return result, errors.New("conversation runner: context is required")
 	}
@@ -44,11 +44,11 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter engine.Re
 	if err != nil {
 		return result, err
 	}
-	runtimeResult, runErr := r.runtime.Run(ctx, schema.RunRequest{
+	runtimeResult, runErr := r.runtime.Run(ctx, agent.RunRequest{
 		RunID:    request.RunID,
 		History:  cloneMessages(snapshot.Messages),
 		Input:    cloneMessage(request.Input),
-		Context:  append([]schema.ContextBlock(nil), request.Context...),
+		Context:  append([]agent.ContextBlock(nil), request.Context...),
 		Metadata: cloneMetadata(request.Metadata),
 	}, reporter)
 	if runErr != nil && len(runtimeResult.NewMessages) == 0 {

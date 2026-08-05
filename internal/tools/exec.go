@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
@@ -46,7 +46,7 @@ type execStreamGate struct {
 	mu   sync.Mutex
 }
 
-var _ Tool = (*ExecTool)(nil)
+var _ agent.Tool = (*ExecTool)(nil)
 
 func NewExecTool(supervisor *ProcessSupervisor) *ExecTool {
 	return &ExecTool{supervisor: supervisor}
@@ -76,33 +76,33 @@ func (t *ExecTool) Definition() ai.ToolDefinition {
 	}
 }
 
-func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, emit UpdateEmitter) (schema.ToolOutput, error) {
+func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, emit agent.UpdateEmitter) (agent.ToolOutput, error) {
 	if t == nil || t.supervisor == nil {
-		return schema.ToolOutput{}, errors.New("exec 未初始化")
+		return agent.ToolOutput{}, errors.New("exec 未初始化")
 	}
 	if ctx == nil {
-		return schema.ToolOutput{}, errors.New("context 不能为空")
+		return agent.ToolOutput{}, errors.New("context 不能为空")
 	}
 	input, err := decodeExecArgs(args)
 	if err != nil {
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
 	if strings.TrimSpace(input.Command) == "" {
-		return schema.ToolOutput{}, errors.New("command 不能为空")
+		return agent.ToolOutput{}, errors.New("command 不能为空")
 	}
 	timeoutSeconds := defaultExecTimeoutSeconds
 	if input.Timeout != nil {
 		timeoutSeconds = *input.Timeout
 	}
 	if timeoutSeconds < 1 || timeoutSeconds > maxExecTimeoutSeconds {
-		return schema.ToolOutput{}, fmt.Errorf("timeout 必须在 1..%d 秒", maxExecTimeoutSeconds)
+		return agent.ToolOutput{}, fmt.Errorf("timeout 必须在 1..%d 秒", maxExecTimeoutSeconds)
 	}
 	yieldMS := defaultExecYieldMS
 	if input.YieldMS != nil {
 		yieldMS = *input.YieldMS
 	}
 	if yieldMS < 0 || yieldMS > maxExecYieldMS {
-		return schema.ToolOutput{}, fmt.Errorf("yieldMs 必须在 0..%d 毫秒", maxExecYieldMS)
+		return agent.ToolOutput{}, fmt.Errorf("yieldMs 必须在 0..%d 毫秒", maxExecYieldMS)
 	}
 
 	gate := &execStreamGate{}
@@ -119,7 +119,7 @@ func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, emit Updat
 	})
 	if err != nil {
 		gate.close()
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
 	if input.Background {
 		return execOutput(session.snapshot()), nil
@@ -146,7 +146,7 @@ func (t *ExecTool) Execute(ctx context.Context, args json.RawMessage, emit Updat
 	}
 }
 
-func (g *execStreamGate) emit(emit UpdateEmitter, stream string, chunk []byte) {
+func (g *execStreamGate) emit(emit agent.UpdateEmitter, stream string, chunk []byte) {
 	if emit == nil || !g.open.Load() {
 		return
 	}
@@ -155,7 +155,7 @@ func (g *execStreamGate) emit(emit UpdateEmitter, stream string, chunk []byte) {
 	if !g.open.Load() {
 		return
 	}
-	emit(schema.ToolUpdate{
+	emit(agent.ToolUpdate{
 		Content: []ai.ContentBlock{ai.TextBlock(string(chunk))},
 		Details: StreamDetails{Stream: stream, Bytes: len(chunk)},
 	})
@@ -167,7 +167,7 @@ func (g *execStreamGate) close() {
 	g.mu.Unlock()
 }
 
-func execOutput(snapshot ProcessSnapshot) schema.ToolOutput {
+func execOutput(snapshot ProcessSnapshot) agent.ToolOutput {
 	output := textToolOutput(snapshot.Output)
 	output.Details = ExecDetails{
 		Status:    snapshot.Status,
@@ -180,7 +180,7 @@ func execOutput(snapshot ProcessSnapshot) schema.ToolOutput {
 	return output
 }
 
-func finishedExecOutput(ctx context.Context, snapshot ProcessSnapshot) (schema.ToolOutput, error) {
+func finishedExecOutput(ctx context.Context, snapshot ProcessSnapshot) (agent.ToolOutput, error) {
 	output := execOutput(snapshot)
 	if err := ctx.Err(); err != nil {
 		return output, fmt.Errorf("命令执行已取消: %w", err)

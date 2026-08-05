@@ -9,11 +9,11 @@ import (
 	"sync"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
 )
 
@@ -25,7 +25,7 @@ type AgentRunner struct {
 	userID             string
 	conversationID     string
 	prompt             config.Prompt
-	reporter           engine.Reporter
+	reporter           agent.Reporter
 
 	mu       sync.Mutex
 	started  bool
@@ -40,7 +40,7 @@ func NewAgentRunner(
 	conversationRunner conversation.Runner,
 	cfg *config.Config,
 	prompt config.Prompt,
-	reporter engine.Reporter,
+	reporter agent.Reporter,
 ) (*AgentRunner, error) {
 	if runtime == nil {
 		return nil, errors.New("agent runner: runtime is required")
@@ -95,7 +95,7 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 				Input:          input,
 			}, r.reporter)
 		} else {
-			_, err = r.runtime.Run(ctx, schema.RunRequest{Input: input}, r.reporter)
+			_, err = r.runtime.Run(ctx, agent.RunRequest{Input: input}, r.reporter)
 		}
 
 		r.mu.Lock()

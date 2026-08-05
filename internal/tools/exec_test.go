@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestExecToolDefinitionUsesFinalCamelCaseSchemaAndDefaults(t *testing.T) {
@@ -77,13 +77,13 @@ func TestExecToolCompletesForegroundWithWorkspaceEnvironmentAndDefaults(t *testi
 
 func TestExecToolStreamsForegroundStdoutAndStderrAndMarksNonzeroAsError(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	call := ai.ToolCall{ID: "exec-stream", Name: "exec", Arguments: execArguments(t, map[string]any{
 		"command": toolHelperCommand("output-exit"),
 		"yieldMs": 30_000,
 	})}
-	var events []schema.ToolEvent
-	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+	var events []agent.ToolEvent
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event agent.ToolEvent) {
 		events = append(events, event)
 	})
 	if err != nil || !result.IsError || !strings.Contains(toolResultText(t, result), "stdout") || !strings.Contains(toolResultText(t, result), "stderr") {
@@ -93,12 +93,12 @@ func TestExecToolStreamsForegroundStdoutAndStderrAndMarksNonzeroAsError(t *testi
 	if !ok || details.Status != "completed" || details.ExitCode == nil || *details.ExitCode != 7 {
 		t.Fatalf("Details = %#v", result.Details)
 	}
-	if len(events) < 4 || events[0].Phase != schema.ToolEventStart || events[len(events)-1].Phase != schema.ToolEventEnd {
+	if len(events) < 4 || events[0].Phase != agent.ToolEventStart || events[len(events)-1].Phase != agent.ToolEventEnd {
 		t.Fatalf("events = %#v", events)
 	}
 	streams := make(map[string]string)
 	for _, event := range events[1 : len(events)-1] {
-		if event.Phase != schema.ToolEventUpdate || event.Update == nil {
+		if event.Phase != agent.ToolEventUpdate || event.Update == nil {
 			t.Fatalf("event = %#v", event)
 		}
 		stream, ok := event.Update.Details.(StreamDetails)
@@ -114,9 +114,9 @@ func TestExecToolStreamsForegroundStdoutAndStderrAndMarksNonzeroAsError(t *testi
 
 func TestExecToolExplicitBackgroundStartsWithStreamingGateClosed(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	var eventsMu sync.Mutex
-	var events []schema.ToolEvent
+	var events []agent.ToolEvent
 	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-background",
 		Name: "exec",
@@ -124,7 +124,7 @@ func TestExecToolExplicitBackgroundStartsWithStreamingGateClosed(t *testing.T) {
 			"command":    toolHelperCommand("sleep-output", "100", "background-output"),
 			"background": true,
 		}),
-	}, func(_ context.Context, event schema.ToolEvent) {
+	}, func(_ context.Context, event agent.ToolEvent) {
 		eventsMu.Lock()
 		events = append(events, event)
 		eventsMu.Unlock()
@@ -141,16 +141,16 @@ func TestExecToolExplicitBackgroundStartsWithStreamingGateClosed(t *testing.T) {
 	}
 	eventsMu.Lock()
 	defer eventsMu.Unlock()
-	if len(events) != 2 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventEnd {
+	if len(events) != 2 || events[0].Phase != agent.ToolEventStart || events[1].Phase != agent.ToolEventEnd {
 		t.Fatalf("events after background completion = %#v", events)
 	}
 }
 
 func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	var eventsMu sync.Mutex
-	var events []schema.ToolEvent
+	var events []agent.ToolEvent
 	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-yield",
 		Name: "exec",
@@ -158,7 +158,7 @@ func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
 			"command": toolHelperCommand("paced-output", "500"),
 			"yieldMs": 200,
 		}),
-	}, func(_ context.Context, event schema.ToolEvent) {
+	}, func(_ context.Context, event agent.ToolEvent) {
 		eventsMu.Lock()
 		events = append(events, event)
 		eventsMu.Unlock()
@@ -175,7 +175,7 @@ func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
 	}
 	eventsMu.Lock()
 	defer eventsMu.Unlock()
-	if len(events) != 3 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventUpdate || events[2].Phase != schema.ToolEventEnd {
+	if len(events) != 3 || events[0].Phase != agent.ToolEventStart || events[1].Phase != agent.ToolEventUpdate || events[2].Phase != agent.ToolEventEnd {
 		t.Fatalf("events after yielded completion = %#v", events)
 	}
 	if got := toolEventText(t, events[1].Update.Content); got != "early" {
@@ -185,7 +185,7 @@ func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
 
 func TestExecToolTimeoutIsOrdinaryErrorAndKillsProcessGroup(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	marker := filepath.Join(t.TempDir(), "timeout-grandchild")
 	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-timeout",
@@ -211,7 +211,7 @@ func TestExecToolTimeoutIsOrdinaryErrorAndKillsProcessGroup(t *testing.T) {
 
 func TestExecToolPropagatesParentCancellationAsControlFlowError(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	result, err := registry.Execute(ctx, ai.ToolCall{
@@ -226,7 +226,7 @@ func TestExecToolPropagatesParentCancellationAsControlFlowError(t *testing.T) {
 
 func TestExecToolRejectsLegacyFieldsAndInvalidSecondsOrMilliseconds(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	tests := []map[string]any{
 		{"command": "true", "timeout_ms": 1000},
 		{"command": "true", "yield_ms": 1},
@@ -257,7 +257,7 @@ func execArguments(t *testing.T, input map[string]any) json.RawMessage {
 	return arguments
 }
 
-func toolOutputText(t *testing.T, output schema.ToolOutput) string {
+func toolOutputText(t *testing.T, output agent.ToolOutput) string {
 	t.Helper()
 	return toolEventText(t, output.Content)
 }

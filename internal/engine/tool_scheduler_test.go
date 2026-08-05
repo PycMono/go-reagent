@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
-	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 type schedulerRegistry struct {
@@ -43,8 +42,8 @@ func (r *schedulerRegistry) GetAvailableTools() []ai.ToolDefinition { return nil
 func (r *schedulerRegistry) Execute(
 	ctx context.Context,
 	call ai.ToolCall,
-	observer tools.ToolEventObserver,
-) (schema.ToolResult, error) {
+	observer agent.ToolEventObserver,
+) (agent.ToolResult, error) {
 	r.mu.Lock()
 	r.active++
 	if r.active > r.maxActive {
@@ -62,10 +61,10 @@ func (r *schedulerRegistry) Execute(
 	select {
 	case <-r.gates[call.ID]:
 	case <-ctx.Done():
-		return schema.ToolResult{}, ctx.Err()
+		return agent.ToolResult{}, ctx.Err()
 	}
 	r.finished <- call
-	return schema.ToolResult{
+	return agent.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    []ai.ContentBlock{ai.TextBlock("result-" + call.ID)},
@@ -101,13 +100,13 @@ func TestToolSchedulerRunsSafeCallsInWavesAroundExclusiveBarriers(t *testing.T) 
 	scheduler := engine.NewToolScheduler(registry, 4)
 
 	done := make(chan struct {
-		results []schema.ToolResult
+		results []agent.ToolResult
 		err     error
 	}, 1)
 	go func() {
 		results, err := scheduler.Schedule(context.Background(), calls, definitions, nil)
 		done <- struct {
-			results []schema.ToolResult
+			results []agent.ToolResult
 			err     error
 		}{results: results, err: err}
 	}()
@@ -173,13 +172,13 @@ func TestToolSchedulerBoundsConcurrencyAndKeepsInputResultOrder(t *testing.T) {
 	scheduler := engine.NewToolScheduler(registry, 2)
 
 	done := make(chan struct {
-		results []schema.ToolResult
+		results []agent.ToolResult
 		err     error
 	}, 1)
 	go func() {
 		results, err := scheduler.Schedule(context.Background(), calls, definitions, nil)
 		done <- struct {
-			results []schema.ToolResult
+			results []agent.ToolResult
 			err     error
 		}{results: results, err: err}
 	}()

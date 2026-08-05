@@ -10,8 +10,8 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
@@ -30,7 +30,7 @@ type ReadDetails struct {
 // ReadTool reads regular UTF-8 text files from the shared workspace.
 type ReadTool struct{ workspace *Workspace }
 
-var _ Tool = (*ReadTool)(nil)
+var _ agent.Tool = (*ReadTool)(nil)
 
 func NewReadTool(workspace *Workspace) (*ReadTool, error) {
 	if workspace == nil {
@@ -57,12 +57,12 @@ func (t *ReadTool) Definition() ai.ToolDefinition {
 	}
 }
 
-func (t *ReadTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+func (t *ReadTool) Execute(ctx context.Context, args json.RawMessage, _ agent.UpdateEmitter) (agent.ToolOutput, error) {
 	output, details, err := t.executeWithDetails(ctx, args)
 	if err != nil {
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
+	return agent.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *ReadTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

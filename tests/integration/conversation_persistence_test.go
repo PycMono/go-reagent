@@ -7,10 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestConversationRunnerPersistsAndIsolatesHistory(t *testing.T) {
@@ -56,10 +55,10 @@ type acceptanceRuntime struct {
 	histories [][]ai.Message
 }
 
-func (r *acceptanceRuntime) Run(_ context.Context, request schema.RunRequest, _ engine.Reporter) (schema.RunResult, error) {
+func (r *acceptanceRuntime) Run(_ context.Context, request agent.RunRequest, _ agent.Reporter) (agent.RunResult, error) {
 	r.histories = append(r.histories, cloneAcceptanceMessages(request.History))
 	answer := fmt.Sprintf("answer-%d", len(r.histories))
-	return schema.RunResult{NewMessages: []ai.Message{{
+	return agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock(answer)},
 	}}}, nil
 }

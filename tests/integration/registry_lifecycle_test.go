@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -22,7 +23,7 @@ import (
 
 func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 	var (
-		registry   tools.Registry
+		registry   agent.Registry
 		workspace  *tools.Workspace
 		supervisor *tools.ProcessSupervisor
 	)

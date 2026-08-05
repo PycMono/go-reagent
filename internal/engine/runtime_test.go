@@ -6,15 +6,14 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/schema"
-	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 type runtimeFactoryFake struct {
 	calls       int
-	request     schema.RunRequest
+	request     agent.RunRequest
 	definitions []ai.ToolDefinition
 	runContext  ctxpkg.RunContext
 	err         error
@@ -22,7 +21,7 @@ type runtimeFactoryFake struct {
 
 func (f *runtimeFactoryFake) Create(
 	_ context.Context,
-	request schema.RunRequest,
+	request agent.RunRequest,
 	definitions []ai.ToolDefinition,
 ) (ctxpkg.RunContext, error) {
 	f.calls++
@@ -34,7 +33,7 @@ func (f *runtimeFactoryFake) Create(
 type runtimeLoopFake struct {
 	calls      int
 	runContext ctxpkg.RunContext
-	reporter   Reporter
+	reporter   agent.Reporter
 	messages   []ai.Message
 	err        error
 }
@@ -50,16 +49,16 @@ func (r *runtimeRegistryFake) GetAvailableTools() []ai.ToolDefinition {
 func (*runtimeRegistryFake) Execute(
 	context.Context,
 	ai.ToolCall,
-	tools.ToolEventObserver,
-) (schema.ToolResult, error) {
-	return schema.ToolResult{}, nil
+	agent.ToolEventObserver,
+) (agent.ToolResult, error) {
+	return agent.ToolResult{}, nil
 }
 
 type runtimeReporterFake struct{}
 
-func (*runtimeReporterFake) Report(context.Context, schema.AgentEvent) {}
+func (*runtimeReporterFake) Report(context.Context, agent.AgentEvent) {}
 
-func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]ai.Message, error) {
+func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter agent.Reporter) ([]ai.Message, error) {
 	l.calls++
 	l.runContext = runContext
 	l.reporter = reporter
@@ -78,7 +77,7 @@ func TestAgentRuntimePreparesStructuredRequestAndReturnsIncrement(t *testing.T) 
 	loop := &runtimeLoopFake{messages: wantMessages}
 	reporter := &runtimeReporterFake{}
 	runtime := newAgentRuntime(factory, loop, registry)
-	request := schema.RunRequest{
+	request := agent.RunRequest{
 		RunID: "run-1",
 		Input: ai.Message{
 			Role:    ai.RoleUser,
@@ -107,7 +106,7 @@ func TestAgentRuntimePreparationErrorPreservesRunID(t *testing.T) {
 	factory := &runtimeFactoryFake{err: wantErr}
 	loop := &runtimeLoopFake{}
 	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{})
-	request := schema.RunRequest{RunID: "run-preparation-error"}
+	request := agent.RunRequest{RunID: "run-preparation-error"}
 
 	result, err := runtime.Run(context.Background(), request, nil)
 	if !errors.Is(err, wantErr) {
@@ -128,7 +127,7 @@ func TestAgentRuntimeLoopErrorPreservesIncrement(t *testing.T) {
 	loop := &runtimeLoopFake{messages: wantMessages, err: wantErr}
 	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{})
 
-	result, err := runtime.Run(context.Background(), schema.RunRequest{RunID: "run-loop-error"}, nil)
+	result, err := runtime.Run(context.Background(), agent.RunRequest{RunID: "run-loop-error"}, nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want %v", err, wantErr)
 	}
@@ -139,7 +138,7 @@ func TestAgentRuntimeLoopErrorPreservesIncrement(t *testing.T) {
 
 func TestAgentRuntimeMissingDependenciesPreservesRunID(t *testing.T) {
 	var runtime *runtime
-	result, err := runtime.Run(context.Background(), schema.RunRequest{RunID: "run-invalid-runtime"}, nil)
+	result, err := runtime.Run(context.Background(), agent.RunRequest{RunID: "run-invalid-runtime"}, nil)
 	if err == nil || err.Error() != "agent runtime: factory, loop, and registry are required" {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -148,4 +147,4 @@ func TestAgentRuntimeMissingDependenciesPreservesRunID(t *testing.T) {
 	}
 }
 
-var _ tools.Registry = (*runtimeRegistryFake)(nil)
+var _ agent.Registry = (*runtimeRegistryFake)(nil)
