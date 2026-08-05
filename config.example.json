@@ -6,21 +6,33 @@
       "protocol": "openai",
       "baseURL": "https://api.deepseek.com/v1/",
       "apiKey": "",
-      "model": "deepseek-chat"
+      "model": "deepseek-chat",
+      "pricing": {
+        "input_usd_per_million_tokens": 0.15,
+        "output_usd_per_million_tokens": 0.60
+      }
     },
     {
       "id": "zhipu-openai",
       "protocol": "openai",
       "baseURL": "https://open.bigmodel.cn/api/paas/v4/",
       "apiKey": "",
-      "model": "glm-4.5-air"
+      "model": "glm-4.5-air",
+      "pricing": {
+        "input_usd_per_million_tokens": 0.15,
+        "output_usd_per_million_tokens": 0.60
+      }
     },
     {
       "id": "zhipu-claude",
       "protocol": "anthropic",
       "baseURL": "https://open.bigmodel.cn/api/anthropic/",
       "apiKey": "",
-      "model": "glm-4.5-air"
+      "model": "glm-4.5-air",
+      "pricing": {
+        "input_usd_per_million_tokens": 0.15,
+        "output_usd_per_million_tokens": 0.60
+      }
     }
   ],
   "bot": {

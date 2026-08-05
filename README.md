@@ -65,6 +65,8 @@ result, err := sdk.Run(ctx, reagent.RunRequest{
 
 `RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的 Assistant/Tool 消息，不重复返回 System Prompt、外部 Context、History、Input 或内部 Thinking 脚手架。一个 `Agent` 支持并发调用；取消一个 Run 不会取消其他 Run。
 
+`RunResult.Invocations` 按真实模型调用顺序记录所有已完成的 Thinking 和 Action 调用。每条记录包含阶段、输入/输出 Token、平台、模型、配置单价、USD 成本和耗时。一次工具循环触发多次模型调用时会产生多条独立记录；隐藏 Thinking 文本不会进入 `NewMessages`，但其成本不会漏记。默认 SDK 会强制计量每次成功响应；上游缺少 Usage、Usage 非法或成本计算不一致都会让本次 Run 以 AI generation error 失败。
+
 根 `reagent` 包不开放 Store、Reporter、Provider、Tool、Registry 或 Fx 注入。需要底层协议和运行机制时可以直接使用公共 `ai`、`agent` 包，但完整默认 SDK 的组件组合保持私有。
 
 ## Agent Workspace 契约
@@ -110,6 +112,7 @@ go-reagent/
 ├── bootstrap.go              # 根 SDK 的私有 Fx 启动
 ├── internal/
 │   ├── bootstrap/            # SDK 与 CLI 共用的私有 Fx 图
+│   ├── observability/        # 严格模型 Usage、USD 成本与耗时跟踪
 │   ├── workspace/            # AGENTS、Skills、Context 和 Workspace 策略
 │   ├── tools/                # 六个默认工具和进程监督器
 │   └── cli/                  # CLI 生命周期、会话、MySQL、Terminal、WeCom
@@ -163,7 +166,11 @@ chmod 600 config.json
       "protocol": "openai",
       "baseURL": "https://api.deepseek.com/v1/",
       "apiKey": "填写你的 DeepSeek API Key",
-      "model": "deepseek-chat"
+      "model": "deepseek-chat",
+      "pricing": {
+        "input_usd_per_million_tokens": 0.15,
+        "output_usd_per_million_tokens": 0.60
+      }
     }
   ],
   "bot": {
@@ -195,6 +202,10 @@ go run ./cmd/reagent
 | `baseURL` | 兼容 API 的基础地址 |
 | `apiKey` | 与该平台和模型配套的密钥 |
 | `model` | 该平台实例使用的模型 ID |
+| `pricing.input_usd_per_million_tokens` | 输入 Token 单价，单位 USD/1M tokens，必须为有限非负数 |
+| `pricing.output_usd_per_million_tokens` | 输出 Token 单价，单位 USD/1M tokens，必须为有限非负数 |
+
+`pricing` 是每个平台的必填配置，允许两个价格均为 `0` 表示免费模型。示例中的 `0.15`/`0.60` 只演示格式，不代表厂商官方或实时价格；部署时必须按实际模型账单填写并维护。
 
 配置文件由 Configor 加载，支持环境叠加、example 回退和 Shell 环境变量覆盖：
 
@@ -250,7 +261,7 @@ Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地�
 SDK 与 CLI 复用 `internal/bootstrap.Module` 提供的私有 Fx 图：
 
 ```text
-PlatformConfig -> ai.Client -> agent.Loop / Registry / Runner
+PlatformConfig -> provider ai.Client -> CostTracker -> agent.Loop / Registry / Runner
 WorkDir        -> Workspace / AGENTS / Skills / 默认工具
 ```
 
@@ -270,6 +281,10 @@ WorkDir        -> Workspace / AGENTS / Skills / 默认工具
 
 模型的内部思考 Trace 和最终回复仍以纯文本输出，因此直接运行命令时会看到 JSON 运行日志与
 模型文本结果共存；接入日志平台时应按 JSON 行采集运行日志。
+
+每次成功模型调用都会输出包含平台、模型、输入/输出 Token、USD/1M tokens 单价、`cost_usd` 和 `latency_ms` 的结构化计量日志。上游缺少或返回非法 Usage 时会输出 `usage_missing`/`usage_invalid` 并终止 Run，不会估算或伪造零成本；Provider 调用失败只记录失败耗时，不生成成本记录。日志不包含消息正文、工具参数、API Key 或完整 Provider 请求。
+
+启用 MySQL 会话持久化后，形成可持久化 turn 的运行会把每次已完成的 Thinking/Action 调用各自写入 `agent_model_invocations`。该表是 Token、成本和耗时统计的唯一权威来源；不要再叠加可见 Assistant 消息 JSON 中的 Usage。隐藏 Thinking 文本和完整 Provider 请求不会持久化。部署顺序和聚合 SQL 见 [MySQL 会话持久化](docs/conversation-persistence.md)。
 
 `go-logger-sdk` v1.0.5 的 `caller` 字段目前指向 SDK 内部方法，而不是实际业务调用位置。
 排查日志时应以 `component`、`turn`、`phase`、`tool` 和 `tool_call_id` 等结构化字段为准。
@@ -348,6 +363,7 @@ go test ./...
 - 配置驱动的 Anthropic Messages 兼容 Provider。
 - 通过 `currentPlatform` 一键切换 DeepSeek、智谱或其他兼容服务。
 - 基于 `go-logger-sdk` 的 JSON 运行日志，以及 Bootstrap、Engine 和 Registry 的结构化上下文字段。
+- 按平台配置 USD/1M tokens 单价，逐次追踪每个 Thinking/Action 模型调用的 Token、成本和耗时。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。
