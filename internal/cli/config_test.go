@@ -99,7 +99,7 @@ func writeRuntimeConfig(t *testing.T) string {
 			"protocol":"openai",
 			"baseURL":"https://example.com/v1/",
 			"apiKey":"test-key",
-			"model":"test-model"
+			"model":"test-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
 		}]
 	}`), 0o600); err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ const (
 type Message struct {
 	Role    Role           `json:"role"`
 	Content []ContentBlock `json:"content,omitempty"`
+	Usage   *Usage         `json:"usage,omitempty"`
 
 	// 如果模型决定调用工具，此字段将被填充 (支持并行调用多个工具)
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
@@ -24,6 +25,18 @@ type Message struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	ToolName   string `json:"tool_name,omitempty"`
 	IsError    bool   `json:"is_error,omitempty"`
+}
+
+// Usage contains normalized token, pricing, cost, and latency data for one model response.
+type Usage struct {
+	InputTokens                    int64   `json:"input_tokens"`
+	OutputTokens                   int64   `json:"output_tokens"`
+	InputPriceUSDPerMillionTokens  float64 `json:"input_price_usd_per_million_tokens"`
+	OutputPriceUSDPerMillionTokens float64 `json:"output_price_usd_per_million_tokens"`
+	CostUSD                        float64 `json:"cost_usd"`
+	LatencyMS                      int64   `json:"latency_ms"`
+	PlatformID                     string  `json:"platform_id"`
+	Model                          string  `json:"model"`
 }
 
 // ToolCall 代表模型请求调用某个具体的工具

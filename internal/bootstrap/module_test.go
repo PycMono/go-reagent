@@ -19,7 +19,7 @@ func TestModuleBuildsOneDefaultRuntimeGraph(t *testing.T) {
 	app := fx.New(
 		fx.NopLogger,
 		fx.Supply(
-			ai.PlatformConfig{ID: "test", Protocol: ai.ProtocolOpenAI, BaseURL: "http://127.0.0.1/v1/", APIKey: "key", Model: "model"},
+			ai.PlatformConfig{ID: "test", Protocol: ai.ProtocolOpenAI, BaseURL: "http://127.0.0.1/v1/", APIKey: "key", Model: "model", Pricing: &ai.PricingConfig{}},
 			workspace.WorkDir(t.TempDir()),
 		),
 		Module,

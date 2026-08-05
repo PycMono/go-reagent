@@ -15,6 +15,7 @@ const (
 )
 
 type PlatformConfig = ai.PlatformConfig
+type PricingConfig = ai.PricingConfig
 type Protocol = ai.Protocol
 
 const (

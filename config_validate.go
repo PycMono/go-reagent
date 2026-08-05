@@ -3,6 +3,7 @@ package reagent
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 
@@ -126,6 +127,24 @@ func validatePlatform(p *ai.PlatformConfig, index int) error {
 	}
 	if p.Model == "" {
 		return fmt.Errorf("%s.model 不能为空", prefix)
+	}
+	if err := validatePricing(p.Pricing, prefix); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePricing(pricing *ai.PricingConfig, prefix string) error {
+	if pricing == nil {
+		return fmt.Errorf("%s.pricing 不能为空", prefix)
+	}
+	if math.IsNaN(pricing.InputUSDPerMillionTokens) || math.IsInf(pricing.InputUSDPerMillionTokens, 0) ||
+		pricing.InputUSDPerMillionTokens < 0 {
+		return fmt.Errorf("%s.pricing.input_usd_per_million_tokens 必须是有限非负数", prefix)
+	}
+	if math.IsNaN(pricing.OutputUSDPerMillionTokens) || math.IsInf(pricing.OutputUSDPerMillionTokens, 0) ||
+		pricing.OutputUSDPerMillionTokens < 0 {
+		return fmt.Errorf("%s.pricing.output_usd_per_million_tokens 必须是有限非负数", prefix)
 	}
 	return nil
 }

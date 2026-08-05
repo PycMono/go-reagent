@@ -26,7 +26,7 @@ func TestCLIModulesPopulateStructuredRuntimeGraph(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
 		"currentPlatform":"test",
-		"platforms":[{"id":"test","protocol":"openai","baseURL":"http://127.0.0.1","apiKey":"test","model":"test"}]
+		"platforms":[{"id":"test","protocol":"openai","baseURL":"http://127.0.0.1","apiKey":"test","model":"test","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}]
 	}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

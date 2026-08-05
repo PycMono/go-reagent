@@ -2,11 +2,28 @@ package agent_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 )
+
+func TestRunResultInvocationJSONContract(t *testing.T) {
+	result := agent.RunResult{RunID: "run-1", Invocations: []agent.ModelInvocation{{
+		Sequence: 1,
+		Phase:    agent.ModelInvocationPhaseAction,
+		Usage:    ai.Usage{InputTokens: 10, OutputTokens: 4},
+	}}}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"phase":"action"`) ||
+		!strings.Contains(string(encoded), `"input_tokens":10`) {
+		t.Fatalf("RunResult JSON = %s", encoded)
+	}
+}
 
 func TestToolCallArgumentsRemainJSON(t *testing.T) {
 	message := ai.Message{

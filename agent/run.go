@@ -23,10 +23,26 @@ type ContextBlock struct {
 	Priority int    `json:"priority,omitempty"`
 }
 
+// ModelInvocationPhase identifies why the Agent called the model.
+type ModelInvocationPhase string
+
+const (
+	ModelInvocationPhaseThinking ModelInvocationPhase = "thinking"
+	ModelInvocationPhaseAction   ModelInvocationPhase = "action"
+)
+
+// ModelInvocation records one successfully metered model call in run order.
+type ModelInvocation struct {
+	Sequence uint32               `json:"sequence"`
+	Phase    ModelInvocationPhase `json:"phase"`
+	Usage    ai.Usage             `json:"usage"`
+}
+
 // RunResult contains only messages created during the current run.
 type RunResult struct {
-	RunID       string       `json:"run_id,omitempty"`
-	NewMessages []ai.Message `json:"new_messages,omitempty"`
+	RunID       string            `json:"run_id,omitempty"`
+	NewMessages []ai.Message      `json:"new_messages,omitempty"`
+	Invocations []ModelInvocation `json:"invocations,omitempty"`
 }
 
 // RunContext is the prepared per-run message and tool snapshot.

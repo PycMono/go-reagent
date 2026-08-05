@@ -17,6 +17,12 @@ func cloneConfig(input *Config) *Config {
 	}
 	cloned := *input
 	cloned.Platforms = append([]PlatformConfig(nil), input.Platforms...)
+	for index := range cloned.Platforms {
+		if input.Platforms[index].Pricing != nil {
+			pricing := *input.Platforms[index].Pricing
+			cloned.Platforms[index].Pricing = &pricing
+		}
+	}
 	return &cloned
 }
 
