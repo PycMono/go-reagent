@@ -1,16 +1,64 @@
 package reagent
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PycMono/go-reagent/ai"
 )
+
+func TestPlatformPricingValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		pricing *ai.PricingConfig
+	}{
+		{name: "missing"},
+		{name: "negative input", pricing: &ai.PricingConfig{InputUSDPerMillionTokens: -1}},
+		{name: "negative output", pricing: &ai.PricingConfig{OutputUSDPerMillionTokens: -1}},
+		{name: "NaN input", pricing: &ai.PricingConfig{InputUSDPerMillionTokens: math.NaN()}},
+		{name: "infinite output", pricing: &ai.PricingConfig{OutputUSDPerMillionTokens: math.Inf(1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			platform := ai.PlatformConfig{
+				ID: "x", Protocol: ai.ProtocolOpenAI, BaseURL: "https://x.test/",
+				APIKey: "k", Model: "m", Pricing: tt.pricing,
+			}
+			if err := validatePlatform(&platform, 0); err == nil || !strings.Contains(err.Error(), "pricing") {
+				t.Fatalf("validatePlatform() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestPlatformPricingAllowsFreeModel(t *testing.T) {
+	platform := ai.PlatformConfig{
+		ID: "x", Protocol: ai.ProtocolOpenAI, BaseURL: "https://x.test/",
+		APIKey: "k", Model: "m", Pricing: &ai.PricingConfig{},
+	}
+	if err := validatePlatform(&platform, 0); err != nil {
+		t.Fatalf("validatePlatform() error = %v", err)
+	}
+}
+
+func TestCloneConfigCopiesPricing(t *testing.T) {
+	input := &Config{Platforms: []PlatformConfig{{
+		Pricing: &ai.PricingConfig{InputUSDPerMillionTokens: 0.15},
+	}}}
+	cloned := cloneConfig(input)
+	input.Platforms[0].Pricing.InputUSDPerMillionTokens = 9
+	if cloned.Platforms[0].Pricing.InputUSDPerMillionTokens != 0.15 {
+		t.Fatalf("cloned pricing mutated: %#v", cloned.Platforms[0].Pricing)
+	}
+}
 
 func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
-		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model"}],
+		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],
 		"conversation":{"enabled":true,"history_message_limit":100},
 		"mysql":{
 			"host":"127.0.0.1","port":3306,"database":"biz","user":"root","password":"123456",
@@ -37,7 +85,7 @@ func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
 	cfg, err := LoadConfig(writeConfig(t, `{
 		"currentPlatform":"x",
-		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}]
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}]
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +134,7 @@ func TestLoadConfigRejectsInvalidConversationAndMySQLConfiguration(t *testing.T)
 				mysql = strings.Replace(mysql, tt.oldValue, tt.invalidValue, 1)
 			}
 			document := `{"currentPlatform":"x","platforms":[` +
-				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}],` +
+				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],` +
 				conversation + `,"mysql":{` + mysql + `}}`
 
 			_, err := LoadConfig(writeConfig(t, document))
@@ -109,14 +157,14 @@ func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 				"protocol": " OpenAI ",
 				"baseURL": "https://api.deepseek.com/v1",
 				"apiKey": " deep-key ",
-				"model": " deepseek-chat "
+				"model": " deepseek-chat ","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
 			},
 			{
 				"id": "zhipu-claude",
 				"protocol": "anthropic",
 				"baseURL": "https://open.bigmodel.cn/api/anthropic/",
 				"apiKey": "",
-				"model": "glm-4.5-air"
+				"model": "glm-4.5-air","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
 			}
 		]
 	}`)
@@ -148,7 +196,7 @@ func TestLoadConfigNormalizesOptionalWeComWebhookURL(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[
-			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
 		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
 	}`)
@@ -166,7 +214,7 @@ func TestLoadConfigAllowsMissingWeComWebhookURL(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[
-			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		]
 	}`)
 
@@ -184,7 +232,7 @@ func TestLoadConfigRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[
-			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model"}
+			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
 		"bot":{"wecom":{"webhookURL":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
 	}`)
@@ -214,6 +262,9 @@ platforms:
     baseURL: "https://api.deepseek.com/v1"
     apiKey: " deep-key "
     model: " deepseek-chat "
+    pricing:
+      input_usd_per_million_tokens: 0.15
+      output_usd_per_million_tokens: 0.60
 `,
 		},
 		{
@@ -227,6 +278,9 @@ protocol = " OpenAI "
 baseURL = "https://api.deepseek.com/v1"
 apiKey = " deep-key "
 model = " deepseek-chat "
+[platforms.pricing]
+input_usd_per_million_tokens = 0.15
+output_usd_per_million_tokens = 0.60
 `,
 		},
 	}
@@ -260,8 +314,8 @@ func TestLoadConfigAppliesShellEnvironmentOverride(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"primary",
 		"platforms":[
-			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model"},
-			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model"}
+			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
+			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		]
 	}`)
 
@@ -284,8 +338,8 @@ func TestLoadConfigAppliesEnvironmentFileOverlay(t *testing.T) {
 	path := writeConfigAt(t, dir, "config.json", `{
 		"currentPlatform":"primary",
 		"platforms":[
-			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model"},
-			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model"}
+			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
+			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		]
 	}`)
 	writeConfigAt(t, dir, "config.test.json", `{"currentPlatform":"backup"}`)
@@ -309,7 +363,7 @@ func TestLoadConfigFallsBackToExampleFile(t *testing.T) {
 	writeConfigAt(t, dir, "config.example.json", `{
 		"currentPlatform":"example",
 		"platforms":[
-			{"id":"example","protocol":"openai","baseURL":"https://example.test/","apiKey":"example-key","model":"example-model"}
+			{"id":"example","protocol":"openai","baseURL":"https://example.test/","apiKey":"example-key","model":"example-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		]
 	}`)
 
@@ -330,7 +384,7 @@ func TestLoadConfigUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[
-			{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}
+			{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
 		"unknown":true
 	} {"ignored":"trailing document"}`)
@@ -357,7 +411,7 @@ func TestLoadConfigRejectsInvalidConfiguration(t *testing.T) {
 		{
 			name: "empty current platform",
 			document: `{"currentPlatform":" ","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "currentPlatform",
 		},
@@ -369,57 +423,57 @@ func TestLoadConfigRejectsInvalidConfiguration(t *testing.T) {
 		{
 			name: "empty id",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":" ","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}
+				{"id":" ","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "id",
 		},
 		{
 			name: "duplicate id",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m","apiKey":"k"},
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m","apiKey":"k","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "重复",
 		},
 		{
 			name: "missing current",
 			document: `{"currentPlatform":"missing","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "可用平台",
 		},
 		{
 			name: "missing current key",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/v1/","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "apiKey",
 		},
 		{
 			name: "unsupported protocol",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"other","baseURL":"https://x.test/","apiKey":"never-print-this","model":"m"}
+				{"id":"x","protocol":"other","baseURL":"https://x.test/","apiKey":"never-print-this","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "protocol",
 		},
 		{
 			name: "invalid URL scheme",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"file:///tmp/x","apiKey":"k","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"file:///tmp/x","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "baseURL",
 		},
 		{
 			name: "URL without host",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https:///v1","apiKey":"k","model":"m"}
+				{"id":"x","protocol":"openai","baseURL":"https:///v1","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "baseURL",
 		},
 		{
 			name: "empty model",
 			document: `{"currentPlatform":"x","platforms":[
-				{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":" "}
+				{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":" ","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 			]}`,
 			want: "model",
 		},

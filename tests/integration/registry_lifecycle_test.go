@@ -32,7 +32,7 @@ func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 		fx.NopLogger,
 		fx.Supply(
 			workspacepkg.WorkDir(t.TempDir()),
-			ai.PlatformConfig{ID: "test", Protocol: ai.ProtocolOpenAI, BaseURL: "http://127.0.0.1/v1/", APIKey: "key", Model: "model"},
+			ai.PlatformConfig{ID: "test", Protocol: ai.ProtocolOpenAI, BaseURL: "http://127.0.0.1/v1/", APIKey: "key", Model: "model", Pricing: &ai.PricingConfig{}},
 		),
 		bootstrap.Module,
 		fx.Populate(&registry, &workspace, &supervisor),

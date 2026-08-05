@@ -211,6 +211,7 @@ func newTestAgentWithHandler(t *testing.T, handler http.HandlerFunc) *reagent.Ag
 		CurrentPlatform: "test",
 		Platforms: []reagent.PlatformConfig{{
 			ID: "test", Protocol: reagent.ProtocolOpenAI, BaseURL: server.URL + "/v1/", APIKey: "key", Model: "model",
+			Pricing: &reagent.PricingConfig{InputUSDPerMillionTokens: 0.15, OutputUSDPerMillionTokens: 0.60},
 		}},
 	}
 	originalDir, err := os.Getwd()
