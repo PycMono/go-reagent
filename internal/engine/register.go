@@ -2,11 +2,8 @@ package engine
 
 import (
 	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
 	"go.uber.org/fx"
 )
-
-const defaultMaxParallelTools = 4
 
 // Register provides reporting and the complete Agent runtime stack.
 var Register = fx.Options(
@@ -16,9 +13,6 @@ var Register = fx.Options(
 			fx.ResultTags(`group:"reporters"`),
 		),
 		newRegisteredReporter,
-		newRegisteredScheduler,
-		newRegisteredLoop,
-		fx.Annotate(agent.New, fx.As(fx.Self()), fx.As(new(agent.Runner))),
 	),
 )
 
@@ -34,12 +28,4 @@ func newTerminalReporterRegistration() agent.ReporterRegistration {
 
 func newRegisteredReporter(params reporterParams) agent.Reporter {
 	return agent.NewMultiReporter(params.Registrations)
-}
-
-func newRegisteredScheduler(registry agent.Registry) *agent.Scheduler {
-	return agent.NewScheduler(registry, defaultMaxParallelTools)
-}
-
-func newRegisteredLoop(llmProvider ai.Client, scheduler *agent.Scheduler) *agent.Loop {
-	return agent.NewLoop(llmProvider, scheduler, true)
 }

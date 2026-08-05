@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -70,19 +71,20 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 	t.Setenv("CONFIG_PATH", path)
 	t.Setenv("AGENT_PROMPT", "registered prompt")
 	var (
-		cfg     *reagent.Config
-		workDir workspace.WorkDir
-		prompt  Prompt
+		cfg      *reagent.Config
+		platform ai.PlatformConfig
+		workDir  workspace.WorkDir
+		prompt   Prompt
 	)
 	app := fxtest.New(t,
 		Register,
-		fx.Populate(&cfg, &workDir, &prompt),
+		fx.Populate(&cfg, &platform, &workDir, &prompt),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
-	if cfg == nil || workDir == "" || prompt != Prompt("registered prompt") {
-		t.Fatalf("registered values = (%#v, %q, %q)", cfg, workDir, prompt)
+	if cfg == nil || platform.ID != "test-platform" || workDir == "" || prompt != Prompt("registered prompt") {
+		t.Fatalf("registered values = (%#v, %#v, %q, %q)", cfg, platform, workDir, prompt)
 	}
 }
 

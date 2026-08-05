@@ -76,3 +76,13 @@ func classify(op string, err error) error {
 		return wrap(ErrorCodeInternal, op, err)
 	}
 }
+
+func classifyInitialization(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, workspace.ErrInvalid) {
+		return wrap(ErrorCodeWorkspaceInvalid, op, err)
+	}
+	return wrap(ErrorCodeInitialization, op, err)
+}
