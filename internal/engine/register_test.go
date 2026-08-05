@@ -6,47 +6,9 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/ai"
-	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
-
-type registerProvider struct{}
-
-func (*registerProvider) Generate(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
-	return &ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}, nil
-}
-
-type registerRegistry struct{}
-
-func (*registerRegistry) GetAvailableTools() []ai.ToolDefinition { return nil }
-
-func (*registerRegistry) Execute(context.Context, ai.ToolCall, agent.ToolEventObserver) (agent.ToolResult, error) {
-	return agent.ToolResult{}, nil
-}
-
-func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
-	var (
-		runtime   agent.Runner
-		scheduler *agent.Scheduler
-		loop      *agent.Loop
-	)
-	app := fxtest.New(t,
-		fx.Provide(func() ai.Client { return &registerProvider{} }),
-		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
-		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
-		workspacepkg.Module,
-		Register,
-		fx.Populate(&runtime, &scheduler, &loop),
-	)
-	app.RequireStart()
-	defer app.RequireStop()
-
-	if runtime == nil || scheduler == nil || loop == nil {
-		t.Fatalf("runtime stack = runtime:%T scheduler:%#v loop:%#v", runtime, scheduler, loop)
-	}
-}
 
 type namedRegisterReporter struct {
 	name string
@@ -64,10 +26,6 @@ func TestRegisterSortsReversedReporterGroupByOrderThenName(t *testing.T) {
 	}
 	var reporter agent.Reporter
 	app := fxtest.New(t,
-		fx.Provide(func() ai.Client { return &registerProvider{} }),
-		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
-		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
-		workspacepkg.Module,
 		Register,
 		fx.Provide(
 			fx.Annotate(func() agent.ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),

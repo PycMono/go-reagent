@@ -13,7 +13,7 @@ import (
 	"go.uber.org/fx/fxtest"
 )
 
-func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
+func TestModuleProvidesDefaultToolsAndResources(t *testing.T) {
 	var (
 		registry   agent.Registry
 		workspace  *Workspace
@@ -21,14 +21,15 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 	)
 	app := fxtest.New(t,
 		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
-		Register,
+		Module,
+		fx.Provide(newModuleTestRegistry),
 		fx.Populate(&registry, &workspace, &supervisor),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
 	if registry == nil {
-		t.Fatal("Register did not provide Registry")
+		t.Fatal("Module did not provide tools for Registry construction")
 	}
 	if workspace == nil || supervisor == nil {
 		t.Fatalf("shared resources = workspace:%#v supervisor:%#v", workspace, supervisor)
@@ -45,14 +46,15 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 	}
 }
 
-func TestRegisterRejectsDuplicateToolGroupNames(t *testing.T) {
+func TestModuleToolGroupRejectsDuplicateNamesAtRegistryConstruction(t *testing.T) {
 	duplicateRead := registerTestTool{name: "read", execute: func(context.Context, json.RawMessage, agent.UpdateEmitter) (agent.ToolOutput, error) {
 		return agent.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("duplicate")}}, nil
 	}}
 	app := fx.New(
 		fx.NopLogger,
 		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
-		Register,
+		Module,
+		fx.Provide(newModuleTestRegistry),
 		fx.Provide(fx.Annotate(
 			func() agent.Tool { return duplicateRead },
 			fx.ResultTags(`group:"agent_tools"`),
@@ -68,7 +70,8 @@ func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
 	var registry agent.Registry
 	app := fxtest.New(t,
 		fx.Supply(workspacepkg.WorkDir(t.TempDir())),
-		Register,
+		Module,
+		fx.Provide(newModuleTestRegistry),
 		fx.Populate(&registry),
 	)
 	app.RequireStart()
@@ -85,6 +88,19 @@ func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
 			t.Fatalf("Execute(%s) = (%#v, %v)", call.ID, result, err)
 		}
 	}
+}
+
+type moduleTestRegistryParams struct {
+	fx.In
+
+	Tools []agent.Tool `group:"agent_tools"`
+}
+
+func newModuleTestRegistry(params moduleTestRegistryParams) (agent.Registry, error) {
+	return agent.NewRegistry(agent.RegistryOptions{
+		Tools:       params.Tools,
+		Middlewares: agent.DefaultMiddlewareRegistrations(),
+	})
 }
 
 type registerTestTool struct {

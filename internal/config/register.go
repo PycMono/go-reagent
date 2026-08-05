@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 )
@@ -17,6 +18,7 @@ type Prompt string
 var Register = fx.Options(
 	fx.Provide(
 		NewConfig,
+		NewPlatform,
 		NewWorkDir,
 		NewPrompt,
 	),
@@ -25,6 +27,10 @@ var Register = fx.Options(
 // NewConfig loads the process configuration selected by CONFIG_PATH.
 func NewConfig() (*reagent.Config, error) {
 	return reagent.LoadConfig(configurationPath())
+}
+
+func NewPlatform(config *reagent.Config) (ai.PlatformConfig, error) {
+	return config.Current()
 }
 
 // NewWorkDir resolves the current process directory as the Agent workspace.
