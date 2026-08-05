@@ -59,18 +59,65 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
 	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
+	invocation := agent.ModelInvocation{
+		Sequence: 1,
+		Phase:    agent.ModelInvocationPhaseAction,
+		Usage:    ai.Usage{PlatformID: "test", Model: "model"},
+	}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Version: 2}}
 	runtime := &runnerRuntimeFake{
-		result: agent.RunResult{RunID: "run", NewMessages: []ai.Message{partial}},
-		err:    runtimeErr,
+		result: agent.RunResult{
+			RunID:       "run",
+			NewMessages: []ai.Message{partial},
+			Invocations: []agent.ModelInvocation{invocation},
+		},
+		err: runtimeErr,
 	}
 
 	result, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, runtimeErr) {
 		t.Fatalf("Run() error = %v, want runtime error", err)
 	}
-	if !reflect.DeepEqual(result.NewMessages, []ai.Message{partial}) || store.appendCalls != 1 || len(store.appended.Messages) != 2 {
+	if !reflect.DeepEqual(result.NewMessages, []ai.Message{partial}) || store.appendCalls != 1 ||
+		len(store.appended.Messages) != 2 || !reflect.DeepEqual(store.appended.Invocations, []agent.ModelInvocation{invocation}) {
 		t.Fatalf("result/append = %#v, %#v", result, store.appended)
+	}
+}
+
+func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
+	answer := ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("answer")},
+		Usage:   &ai.Usage{PlatformID: "test", Model: "model"},
+	}
+	invocations := []agent.ModelInvocation{{
+		Sequence: 1,
+		Phase:    agent.ModelInvocationPhaseThinking,
+		Usage:    ai.Usage{PlatformID: "test", Model: "model"},
+	}, {
+		Sequence: 2,
+		Phase:    agent.ModelInvocationPhaseAction,
+		Usage:    ai.Usage{PlatformID: "test", Model: "model"},
+	}}
+	runtime := &runnerRuntimeFake{result: agent.RunResult{
+		NewMessages: []ai.Message{answer},
+		Invocations: invocations,
+	}}
+	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 42, Version: 7}}
+
+	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(store.appended.Invocations, invocations) {
+		t.Fatalf("Invocations = %#v, want %#v", store.appended.Invocations, invocations)
+	}
+
+	runtime.result.NewMessages[0].Usage.PlatformID = "mutated"
+	runtime.result.Invocations[0].Usage.PlatformID = "mutated"
+	if store.appended.Messages[1].Usage.PlatformID != "test" ||
+		store.appended.Invocations[0].Usage.PlatformID != "test" {
+		t.Fatalf("stored request aliases runtime result: %#v", store.appended)
 	}
 }
 
