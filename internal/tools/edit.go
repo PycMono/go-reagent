@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -34,8 +35,8 @@ var _ Tool = (*EditTool)(nil)
 
 func NewEditTool(workspace *Workspace) *EditTool { return &EditTool{workspace: workspace} }
 
-func (t *EditTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *EditTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:        "edit",
 		Description: "对工作区内的现有 UTF-8 文本文件执行一批原子替换；每个 oldText 必须在原始内容中唯一匹配，且范围不得重叠。",
 		InputSchema: map[string]any{
@@ -67,7 +68,7 @@ func (t *EditTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEm
 	if err != nil {
 		return schema.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
+	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *EditTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

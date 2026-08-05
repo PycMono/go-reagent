@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -14,7 +15,7 @@ import (
 type runtimeFactoryFake struct {
 	calls       int
 	request     schema.RunRequest
-	definitions []schema.ToolDefinition
+	definitions []ai.ToolDefinition
 	runContext  ctxpkg.RunContext
 	err         error
 }
@@ -22,11 +23,11 @@ type runtimeFactoryFake struct {
 func (f *runtimeFactoryFake) Create(
 	_ context.Context,
 	request schema.RunRequest,
-	definitions []schema.ToolDefinition,
+	definitions []ai.ToolDefinition,
 ) (ctxpkg.RunContext, error) {
 	f.calls++
 	f.request = request
-	f.definitions = append([]schema.ToolDefinition(nil), definitions...)
+	f.definitions = append([]ai.ToolDefinition(nil), definitions...)
 	return f.runContext, f.err
 }
 
@@ -34,21 +35,21 @@ type runtimeLoopFake struct {
 	calls      int
 	runContext ctxpkg.RunContext
 	reporter   Reporter
-	messages   []schema.Message
+	messages   []ai.Message
 	err        error
 }
 
 type runtimeRegistryFake struct {
-	definitions []schema.ToolDefinition
+	definitions []ai.ToolDefinition
 }
 
-func (r *runtimeRegistryFake) GetAvailableTools() []schema.ToolDefinition {
-	return append([]schema.ToolDefinition(nil), r.definitions...)
+func (r *runtimeRegistryFake) GetAvailableTools() []ai.ToolDefinition {
+	return append([]ai.ToolDefinition(nil), r.definitions...)
 }
 
 func (*runtimeRegistryFake) Execute(
 	context.Context,
-	schema.ToolCall,
+	ai.ToolCall,
 	tools.ToolEventObserver,
 ) (schema.ToolResult, error) {
 	return schema.ToolResult{}, nil
@@ -58,30 +59,30 @@ type runtimeReporterFake struct{}
 
 func (*runtimeReporterFake) Report(context.Context, schema.AgentEvent) {}
 
-func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]schema.Message, error) {
+func (l *runtimeLoopFake) Run(_ context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]ai.Message, error) {
 	l.calls++
 	l.runContext = runContext
 	l.reporter = reporter
-	return append([]schema.Message(nil), l.messages...), l.err
+	return append([]ai.Message(nil), l.messages...), l.err
 }
 
 func TestAgentRuntimePreparesStructuredRequestAndReturnsIncrement(t *testing.T) {
-	definitions := []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}
+	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := &runtimeRegistryFake{definitions: definitions}
 	wantContext := ctxpkg.RunContext{
-		Messages: []schema.Message{{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("prepared")}}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("prepared")}}},
 		Tools:    definitions,
 	}
 	factory := &runtimeFactoryFake{runContext: wantContext}
-	wantMessages := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("done")}}}
+	wantMessages := []ai.Message{{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}}
 	loop := &runtimeLoopFake{messages: wantMessages}
 	reporter := &runtimeReporterFake{}
 	runtime := newAgentRuntime(factory, loop, registry)
 	request := schema.RunRequest{
 		RunID: "run-1",
-		Input: schema.Message{
-			Role:    schema.RoleUser,
-			Content: []schema.ContentBlock{schema.TextBlock("do work")},
+		Input: ai.Message{
+			Role:    ai.RoleUser,
+			Content: []ai.ContentBlock{ai.TextBlock("do work")},
 		},
 		Metadata: map[string]string{"conversationId": "conversation-1"},
 	}
@@ -122,7 +123,7 @@ func TestAgentRuntimePreparationErrorPreservesRunID(t *testing.T) {
 
 func TestAgentRuntimeLoopErrorPreservesIncrement(t *testing.T) {
 	wantErr := errors.New("loop failed")
-	wantMessages := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("partial")}}}
+	wantMessages := []ai.Message{{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}}
 	factory := &runtimeFactoryFake{runContext: ctxpkg.RunContext{}}
 	loop := &runtimeLoopFake{messages: wantMessages, err: wantErr}
 	runtime := newAgentRuntime(factory, loop, &runtimeRegistryFake{})

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
@@ -79,8 +80,8 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 		if request.UserID != "user-1" || request.ConversationID != "conversation-1" {
 			t.Errorf("conversation identity = %q, %q", request.UserID, request.ConversationID)
 		}
-		text, err := schema.TextContent(request.Input.Content)
-		if err != nil || request.Input.Role != schema.RoleUser || text != "test prompt" {
+		text, err := ai.TextContent(request.Input.Content)
+		if err != nil || request.Input.Role != ai.RoleUser || text != "test prompt" {
 			t.Errorf("conversation input = %#v, %v", request.Input, err)
 		}
 		if gotReporter != reporter {
@@ -205,10 +206,10 @@ func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 	called := make(chan struct{}, 1)
 	reporter := &runnerReporterFake{}
 	runtime := runtimeFunc(func(_ context.Context, request schema.RunRequest, gotReporter engine.Reporter) (schema.RunResult, error) {
-		if request.Input.Role != schema.RoleUser {
+		if request.Input.Role != ai.RoleUser {
 			t.Errorf("Run(Input.Role) = %q, want user", request.Input.Role)
 		}
-		text, err := schema.TextContent(request.Input.Content)
+		text, err := ai.TextContent(request.Input.Content)
 		if err != nil || text != "test prompt" {
 			t.Errorf("Run(Input.Content) = %q, %v", text, err)
 		}

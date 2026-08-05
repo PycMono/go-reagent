@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -44,8 +45,8 @@ func (t *ProcessTool) Name() string {
 	return "process"
 }
 
-func (t *ProcessTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *ProcessTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:        t.Name(),
 		Description: "管理 exec 创建的后台命令。支持 list、poll、log、write、kill、clear 和 remove。",
 		InputSchema: map[string]any{
@@ -200,7 +201,7 @@ func processSnapshotOutput(action string, snapshot ProcessSnapshot, content stri
 
 func processOutput(content string, details ProcessDetails) schema.ToolOutput {
 	return schema.ToolOutput{
-		Content: []schema.ContentBlock{schema.TextBlock(content)},
+		Content: []ai.ContentBlock{ai.TextBlock(content)},
 		Details: details,
 	}
 }

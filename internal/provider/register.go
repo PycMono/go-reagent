@@ -26,7 +26,7 @@ func NewLLMProvider(cfg *config.Config) (LLMProvider, error) {
 	}
 	llmProvider, err := New(Options{
 		Name:     platform.ID,
-		Protocol: platform.Protocol,
+		Protocol: string(platform.Protocol),
 		BaseURL:  platform.BaseURL,
 		APIKey:   platform.APIKey,
 		Model:    platform.Model,

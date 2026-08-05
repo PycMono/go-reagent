@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestToolCallArgumentsRemainJSON(t *testing.T) {
-	message := schema.Message{
-		Role: schema.RoleAssistant,
-		ToolCalls: []schema.ToolCall{
+	message := ai.Message{
+		Role: ai.RoleAssistant,
+		ToolCalls: []ai.ToolCall{
 			{
 				ID:        "call-1",
 				Name:      "bash",
@@ -39,10 +40,10 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 	result := schema.ToolResult{
 		ToolCallID: "call-1",
 		ToolName:   "bash",
-		Content:    []schema.ContentBlock{schema.TextBlock("ok")},
+		Content:    []ai.ContentBlock{ai.TextBlock("ok")},
 		IsError:    false,
 	}
-	definition := schema.ToolDefinition{
+	definition := ai.ToolDefinition{
 		Name:        "bash",
 		Label:       "Read file",
 		Description: "execute a command",
@@ -74,7 +75,7 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 		t.Fatalf("unlabeled ToolDefinition JSON = %s, want %s", got, want)
 	}
 
-	parallelDefinition := schema.ToolDefinition{
+	parallelDefinition := ai.ToolDefinition{
 		Name:         "read",
 		Description:  "read a file",
 		InputSchema:  map[string]any{"type": "object"},
@@ -90,9 +91,9 @@ func TestToolProtocolTypesExposeHarnessMetadata(t *testing.T) {
 }
 
 func TestToolMessageJSONContract(t *testing.T) {
-	message := schema.Message{
-		Role:       schema.RoleTool,
-		Content:    []schema.ContentBlock{schema.TextBlock("denied")},
+	message := ai.Message{
+		Role:       ai.RoleTool,
+		Content:    []ai.ContentBlock{ai.TextBlock("denied")},
 		ToolCallID: "call-1",
 		ToolName:   "read",
 		IsError:    true,

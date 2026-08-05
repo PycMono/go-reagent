@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 const corePrompt = `# Agent Runtime 核心纪律
@@ -35,10 +35,10 @@ func NewPromptComposer(workDir string) *PromptComposer {
 
 // Build 将内置核心指令、工作区 AGENTS.md 和传入的 Skill 目录组合成系统消息，
 // 同时返回 Skill Prompt 的收录、截断和省略统计。
-func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPromptReport, error) {
+func (c *PromptComposer) Build(snapshot *SkillSnapshot) (ai.Message, SkillPromptReport, error) {
 	agentsInstructions, err := c.loadAgentsInstructions()
 	if err != nil {
-		return schema.Message{}, SkillPromptReport{}, err
+		return ai.Message{}, SkillPromptReport{}, err
 	}
 
 	var builder strings.Builder
@@ -52,9 +52,9 @@ func (c *PromptComposer) Build(snapshot *SkillSnapshot) (schema.Message, SkillPr
 		builder.WriteString(skillPrompt)
 	}
 
-	return schema.Message{
-		Role:    schema.RoleSystem,
-		Content: []schema.ContentBlock{schema.TextBlock(builder.String())},
+	return ai.Message{
+		Role:    ai.RoleSystem,
+		Content: []ai.ContentBlock{ai.TextBlock(builder.String())},
 	}, report, nil
 }
 

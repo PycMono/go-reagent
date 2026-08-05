@@ -6,11 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
-
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // OpenAIProvider 适配 OpenAI Chat Completions 兼容协议。
@@ -35,9 +34,9 @@ func newOpenAICompatibleProvider(apiKey, baseURL, model, name string) *OpenAIPro
 
 func (p *OpenAIProvider) Generate(
 	ctx context.Context,
-	msgs []schema.Message,
-	availableTools []schema.ToolDefinition,
-) (*schema.Message, error) {
+	msgs []ai.Message,
+	availableTools []ai.ToolDefinition,
+) (*ai.Message, error) {
 	openAIMessages, err := toOpenAIMessages(msgs)
 	if err != nil {
 		return nil, fmt.Errorf("%s 消息转换失败: %w", p.name, err)
@@ -64,17 +63,17 @@ func (p *OpenAIProvider) Generate(
 	}
 
 	message := response.Choices[0].Message
-	result := &schema.Message{
-		Role: schema.RoleAssistant,
+	result := &ai.Message{
+		Role: ai.RoleAssistant,
 	}
 	if message.Content != "" {
-		result.Content = []schema.ContentBlock{schema.TextBlock(message.Content)}
+		result.Content = []ai.ContentBlock{ai.TextBlock(message.Content)}
 	}
 	for _, toolCall := range message.ToolCalls {
 		if toolCall.Type != "function" {
 			continue
 		}
-		result.ToolCalls = append(result.ToolCalls, schema.ToolCall{
+		result.ToolCalls = append(result.ToolCalls, ai.ToolCall{
 			ID:        toolCall.ID,
 			Name:      toolCall.Function.Name,
 			Arguments: json.RawMessage(toolCall.Function.Arguments),
@@ -84,24 +83,24 @@ func (p *OpenAIProvider) Generate(
 	return result, nil
 }
 
-func toOpenAIMessages(messages []schema.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
+func toOpenAIMessages(messages []ai.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	result := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, message := range messages {
-		text, err := schema.TextContent(message.Content)
+		text, err := ai.TextContent(message.Content)
 		if err != nil {
 			return nil, fmt.Errorf("message content: %w", err)
 		}
 		switch message.Role {
-		case schema.RoleSystem:
+		case ai.RoleSystem:
 			result = append(result, openai.SystemMessage(text))
-		case schema.RoleUser:
+		case ai.RoleUser:
 			result = append(result, openai.UserMessage(text))
-		case schema.RoleTool:
+		case ai.RoleTool:
 			if message.ToolCallID == "" {
 				return nil, errors.New("tool message requires tool_call_id")
 			}
 			result = append(result, openai.ToolMessage(text, message.ToolCallID))
-		case schema.RoleAssistant:
+		case ai.RoleAssistant:
 			if text == "" && len(message.ToolCalls) == 0 {
 				return nil, errors.New("assistant message contains no content or tool calls")
 			}
@@ -130,7 +129,7 @@ func toOpenAIMessages(messages []schema.Message) ([]openai.ChatCompletionMessage
 	return result, nil
 }
 
-func toOpenAITools(definitions []schema.ToolDefinition) ([]openai.ChatCompletionToolUnionParam, error) {
+func toOpenAITools(definitions []ai.ToolDefinition) ([]openai.ChatCompletionToolUnionParam, error) {
 	result := make([]openai.ChatCompletionToolUnionParam, 0, len(definitions))
 	for _, definition := range definitions {
 		parameters, err := schemaObject(definition.InputSchema)

@@ -9,11 +9,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type registryEntry struct {
-	definition   schema.ToolDefinition
+	definition   ai.ToolDefinition
 	tool         Tool
 	validateArgs func(json.RawMessage) error
 	handler      Handler
@@ -58,7 +59,7 @@ func NewRegistry(params RegistryParams) (Registry, error) {
 	return registry, nil
 }
 
-func safeToolDefinition(tool Tool) (definition schema.ToolDefinition, err error) {
+func safeToolDefinition(tool Tool) (definition ai.ToolDefinition, err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("tool metadata panicked during registration")
@@ -67,8 +68,8 @@ func safeToolDefinition(tool Tool) (definition schema.ToolDefinition, err error)
 	return tool.Definition(), nil
 }
 
-func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
-	definitions := make([]schema.ToolDefinition, 0, len(r.tools))
+func (r *registryImpl) GetAvailableTools() []ai.ToolDefinition {
+	definitions := make([]ai.ToolDefinition, 0, len(r.tools))
 	for _, entry := range r.tools {
 		definitions = append(definitions, entry.definition)
 	}
@@ -80,7 +81,7 @@ func (r *registryImpl) GetAvailableTools() []schema.ToolDefinition {
 
 func (r *registryImpl) Execute(
 	ctx context.Context,
-	call schema.ToolCall,
+	call ai.ToolCall,
 	observer ToolEventObserver,
 ) (schema.ToolResult, error) {
 	if ctx == nil {
@@ -116,12 +117,12 @@ func observe(ctx context.Context, observer ToolEventObserver, event schema.ToolE
 	}
 }
 
-func normalizeToolResult(call schema.ToolCall, output schema.ToolOutput, err error) schema.ToolResult {
+func normalizeToolResult(call ai.ToolCall, output schema.ToolOutput, err error) schema.ToolResult {
 	if err != nil && len(output.Content) == 0 {
-		output.Content = []schema.ContentBlock{schema.TextBlock(err.Error())}
+		output.Content = []ai.ContentBlock{ai.TextBlock(err.Error())}
 	}
 	if err == nil && len(output.Content) == 0 {
-		output.Content = []schema.ContentBlock{schema.TextBlock("(no output)")}
+		output.Content = []ai.ContentBlock{ai.TextBlock("(no output)")}
 	}
 	output = limitToolOutput(output)
 	return schema.ToolResult{
@@ -133,7 +134,7 @@ func normalizeToolResult(call schema.ToolCall, output schema.ToolOutput, err err
 	}
 }
 
-func errorResult(call schema.ToolCall, err error) schema.ToolResult {
+func errorResult(call ai.ToolCall, err error) schema.ToolResult {
 	return normalizeToolResult(call, schema.ToolOutput{}, err)
 }
 

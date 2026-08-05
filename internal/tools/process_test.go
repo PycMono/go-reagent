@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -147,7 +148,7 @@ func TestProcessToolRejectsLegacyFieldsUnknownActionsAndInvalidActionArguments(t
 		{input: map[string]any{"action": "write", "sessionId": "x"}, want: "data"},
 	}
 	for index, tt := range tests {
-		result, err := registry.Execute(context.Background(), schema.ToolCall{
+		result, err := registry.Execute(context.Background(), ai.ToolCall{
 			ID:        "invalid-process",
 			Name:      "process",
 			Arguments: processArguments(t, tt.input),

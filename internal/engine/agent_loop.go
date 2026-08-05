@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
@@ -26,7 +27,7 @@ func NewAgentLoop(p provider.LLMProvider, scheduler *ToolScheduler, enableThinki
 }
 
 // Run executes provider turns until an Action response has no tool calls.
-func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]schema.Message, error) {
+func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]ai.Message, error) {
 	if l == nil || l.provider == nil {
 		return nil, errors.New("agent loop: LLM provider is required")
 	}
@@ -40,13 +41,13 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 		return nil, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 
-	contextHistory := append([]schema.Message(nil), runContext.Messages...)
-	newMessages := make([]schema.Message, 0)
-	finish := func(err error) ([]schema.Message, error) {
-		return append([]schema.Message(nil), newMessages...), err
+	contextHistory := append([]ai.Message(nil), runContext.Messages...)
+	newMessages := make([]ai.Message, 0)
+	finish := func(err error) ([]ai.Message, error) {
+		return append([]ai.Message(nil), newMessages...), err
 	}
-	availableTools := append([]schema.ToolDefinition(nil), runContext.Tools...)
-	slices.SortFunc(availableTools, func(a, b schema.ToolDefinition) int {
+	availableTools := append([]ai.ToolDefinition(nil), runContext.Tools...)
+	slices.SortFunc(availableTools, func(a, b ai.ToolDefinition) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
 	turnCount := 0
@@ -72,14 +73,14 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 			if err := validateThinkingResponse(thinkResp); err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", err))
 			}
-			thinkingText, err := schema.TextContent(thinkResp.Content)
+			thinkingText, err := ai.TextContent(thinkResp.Content)
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: response content: %w", err))
 			}
 			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkingText)
-			contextHistory = append(contextHistory, *thinkResp, schema.Message{
-				Role:    schema.RoleUser,
-				Content: []schema.ContentBlock{schema.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
+			contextHistory = append(contextHistory, *thinkResp, ai.Message{
+				Role:    ai.RoleUser,
+				Content: []ai.ContentBlock{ai.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
 			})
 		}
 
@@ -125,8 +126,8 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
 		for _, result := range results {
-			message := schema.Message{
-				Role:       schema.RoleTool,
+			message := ai.Message{
+				Role:       ai.RoleTool,
 				Content:    result.Content,
 				ToolCallID: result.ToolCallID,
 				ToolName:   result.ToolName,

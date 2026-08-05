@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -66,16 +67,16 @@ func TestRunContextFactoryRequiresEligibleSkill(t *testing.T) {
 	writeAgentsInstructions(t, workDir, "You are a service Agent.")
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 
-	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), []schema.ToolDefinition{{Name: "read"}})
+	_, err := factory.Create(context.Background(), validWorkspaceRunRequest(), []ai.ToolDefinition{{Name: "read"}})
 	if err == nil || err.Error() != "agent workspace: at least one eligible Skill is required" {
 		t.Fatalf("Create() error = %v", err)
 	}
 }
 
 func validWorkspaceRunRequest() schema.RunRequest {
-	return schema.RunRequest{Input: schema.Message{
-		Role:    schema.RoleUser,
-		Content: []schema.ContentBlock{schema.TextBlock("hello")},
+	return schema.RunRequest{Input: ai.Message{
+		Role:    ai.RoleUser,
+		Content: []ai.ContentBlock{ai.TextBlock("hello")},
 	}}
 }
 

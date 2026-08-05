@@ -7,41 +7,42 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 type schedulerRegistry struct {
-	started  chan schema.ToolCall
-	finished chan schema.ToolCall
+	started  chan ai.ToolCall
+	finished chan ai.ToolCall
 	gates    map[string]chan struct{}
 	errors   map[string]error
 
 	mu        sync.Mutex
 	active    int
 	maxActive int
-	calls     []schema.ToolCall
+	calls     []ai.ToolCall
 }
 
-func newSchedulerRegistry(calls []schema.ToolCall) *schedulerRegistry {
+func newSchedulerRegistry(calls []ai.ToolCall) *schedulerRegistry {
 	gates := make(map[string]chan struct{}, len(calls))
 	for _, call := range calls {
 		gates[call.ID] = make(chan struct{})
 	}
 	return &schedulerRegistry{
-		started:  make(chan schema.ToolCall, len(calls)),
-		finished: make(chan schema.ToolCall, len(calls)),
+		started:  make(chan ai.ToolCall, len(calls)),
+		finished: make(chan ai.ToolCall, len(calls)),
 		gates:    gates,
 		errors:   make(map[string]error),
 	}
 }
 
-func (r *schedulerRegistry) GetAvailableTools() []schema.ToolDefinition { return nil }
+func (r *schedulerRegistry) GetAvailableTools() []ai.ToolDefinition { return nil }
 
 func (r *schedulerRegistry) Execute(
 	ctx context.Context,
-	call schema.ToolCall,
+	call ai.ToolCall,
 	observer tools.ToolEventObserver,
 ) (schema.ToolResult, error) {
 	r.mu.Lock()
@@ -67,7 +68,7 @@ func (r *schedulerRegistry) Execute(
 	return schema.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
-		Content:    []schema.ContentBlock{schema.TextBlock("result-" + call.ID)},
+		Content:    []ai.ContentBlock{ai.TextBlock("result-" + call.ID)},
 	}, r.errors[call.ID]
 }
 
@@ -82,14 +83,14 @@ func (r *schedulerRegistry) closeAll() {
 }
 
 func TestToolSchedulerRunsSafeCallsInWavesAroundExclusiveBarriers(t *testing.T) {
-	calls := []schema.ToolCall{
+	calls := []ai.ToolCall{
 		{ID: "read-1", Name: "read-a"},
 		{ID: "read-2", Name: "read-b"},
 		{ID: "write", Name: "write"},
 		{ID: "read-3", Name: "read-c"},
 		{ID: "unknown", Name: "missing"},
 	}
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "read-a", ParallelSafe: true},
 		{Name: "read-b", ParallelSafe: true},
 		{Name: "write"},
@@ -160,13 +161,13 @@ func TestToolSchedulerRunsSafeCallsInWavesAroundExclusiveBarriers(t *testing.T) 
 }
 
 func TestToolSchedulerBoundsConcurrencyAndKeepsInputResultOrder(t *testing.T) {
-	calls := []schema.ToolCall{
+	calls := []ai.ToolCall{
 		{ID: "one", Name: "read"},
 		{ID: "two", Name: "read"},
 		{ID: "three", Name: "read"},
 		{ID: "four", Name: "read"},
 	}
-	definitions := []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}
+	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	t.Cleanup(registry.closeAll)
 	scheduler := engine.NewToolScheduler(registry, 2)
@@ -218,8 +219,8 @@ func TestToolSchedulerBoundsConcurrencyAndKeepsInputResultOrder(t *testing.T) {
 }
 
 func TestToolSchedulerUsesSerialFallbackForNonpositiveLimit(t *testing.T) {
-	calls := []schema.ToolCall{{ID: "one", Name: "read"}, {ID: "two", Name: "read"}}
-	definitions := []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}
+	calls := []ai.ToolCall{{ID: "one", Name: "read"}, {ID: "two", Name: "read"}}
+	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	t.Cleanup(registry.closeAll)
 	scheduler := engine.NewToolScheduler(registry, 0)
@@ -245,8 +246,8 @@ func TestToolSchedulerUsesSerialFallbackForNonpositiveLimit(t *testing.T) {
 }
 
 func TestToolSchedulerCancellationPreventsLaterWaves(t *testing.T) {
-	calls := []schema.ToolCall{{ID: "write", Name: "write"}, {ID: "read", Name: "read"}}
-	definitions := []schema.ToolDefinition{{Name: "write"}, {Name: "read", ParallelSafe: true}}
+	calls := []ai.ToolCall{{ID: "write", Name: "write"}, {ID: "read", Name: "read"}}
+	definitions := []ai.ToolDefinition{{Name: "write"}, {Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -273,8 +274,8 @@ func TestToolSchedulerCancellationPreventsLaterWaves(t *testing.T) {
 
 func TestToolSchedulerWaitsForStartedSiblingsBeforeReturningFirstError(t *testing.T) {
 	wantErr := errors.New("stop scheduling")
-	calls := []schema.ToolCall{{ID: "one", Name: "read"}, {ID: "two", Name: "read"}}
-	definitions := []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}
+	calls := []ai.ToolCall{{ID: "one", Name: "read"}, {ID: "two", Name: "read"}}
+	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	registry.errors["one"] = wantErr
 	t.Cleanup(registry.closeAll)
@@ -301,18 +302,18 @@ func TestToolSchedulerWaitsForStartedSiblingsBeforeReturningFirstError(t *testin
 	}
 }
 
-func requireSchedulerStarted(t *testing.T, started <-chan schema.ToolCall) schema.ToolCall {
+func requireSchedulerStarted(t *testing.T, started <-chan ai.ToolCall) ai.ToolCall {
 	t.Helper()
 	select {
 	case call := <-started:
 		return call
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for tool to start")
-		return schema.ToolCall{}
+		return ai.ToolCall{}
 	}
 }
 
-func requireNoSchedulerStart(t *testing.T, started <-chan schema.ToolCall) {
+func requireNoSchedulerStart(t *testing.T, started <-chan ai.ToolCall) {
 	t.Helper()
 	select {
 	case call := <-started:
@@ -321,13 +322,13 @@ func requireNoSchedulerStart(t *testing.T, started <-chan schema.ToolCall) {
 	}
 }
 
-func requireSchedulerFinished(t *testing.T, finished <-chan schema.ToolCall) schema.ToolCall {
+func requireSchedulerFinished(t *testing.T, finished <-chan ai.ToolCall) ai.ToolCall {
 	t.Helper()
 	select {
 	case call := <-finished:
 		return call
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for tool to finish")
-		return schema.ToolCall{}
+		return ai.ToolCall{}
 	}
 }

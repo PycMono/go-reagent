@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -156,12 +157,12 @@ func limitToolOutput(output schema.ToolOutput) schema.ToolOutput {
 	return output
 }
 
-func limitContent(content []schema.ContentBlock) ([]schema.ContentBlock, bool) {
+func limitContent(content []ai.ContentBlock) ([]ai.ContentBlock, bool) {
 	remaining := maxToolOutputBytes
-	limited := make([]schema.ContentBlock, 0, len(content)+1)
+	limited := make([]ai.ContentBlock, 0, len(content)+1)
 	truncated := false
 	for _, block := range content {
-		if block.Type != schema.ContentTypeText {
+		if block.Type != ai.ContentTypeText {
 			limited = append(limited, block)
 			continue
 		}
@@ -185,7 +186,7 @@ func limitContent(content []schema.ContentBlock) ([]schema.ContentBlock, bool) {
 		truncated = true
 	}
 	if truncated {
-		limited = append(limited, schema.TextBlock(toolOutputTruncationMarker))
+		limited = append(limited, ai.TextBlock(toolOutputTruncationMarker))
 	}
 	return limited, truncated
 }
@@ -205,10 +206,10 @@ func withTruncationDetail(details any) any {
 	return map[string]any{"tool_details": details, "truncated": true}
 }
 
-func contentByteCount(content []schema.ContentBlock) int {
+func contentByteCount(content []ai.ContentBlock) int {
 	count := 0
 	for _, block := range content {
-		if block.Type == schema.ContentTypeText {
+		if block.Type == ai.ContentTypeText {
 			count += len(block.Text)
 		}
 	}

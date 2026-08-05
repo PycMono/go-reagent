@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/jinzhu/configor"
 )
 
 const (
-	ProtocolOpenAI             = "openai"
-	ProtocolAnthropic          = "anthropic"
 	DefaultHistoryMessageLimit = 100
 )
 
 // Config describes all configured model platforms and the active selection.
 type Config struct {
-	CurrentPlatform string             `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
-	Platforms       []PlatformConfig   `json:"platforms" yaml:"platforms" toml:"platforms"`
-	Bot             BotConfig          `json:"bot" yaml:"bot" toml:"bot"`
-	Conversation    ConversationConfig `json:"conversation" yaml:"conversation" toml:"conversation"`
-	MySQL           MySQLConfig        `json:"mysql" yaml:"mysql" toml:"mysql"`
+	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
+	Platforms       []ai.PlatformConfig `json:"platforms" yaml:"platforms" toml:"platforms"`
+	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
+	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
+	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
 }
 
 // ConversationConfig controls optional durable conversation history.
@@ -55,15 +54,6 @@ type WeComConfig struct {
 	WebhookURL string `json:"webhookURL" yaml:"webhookURL" toml:"webhookURL"`
 }
 
-// PlatformConfig is one self-contained model platform profile.
-type PlatformConfig struct {
-	ID       string `json:"id" yaml:"id" toml:"id"`
-	Protocol string `json:"protocol" yaml:"protocol" toml:"protocol"`
-	BaseURL  string `json:"baseURL" yaml:"baseURL" toml:"baseURL"`
-	APIKey   string `json:"apiKey" yaml:"apiKey" toml:"apiKey"`
-	Model    string `json:"model" yaml:"model" toml:"model"`
-}
-
 // Load decodes, normalizes, and validates configuration through Configor.
 func Load(path string) (*Config, error) {
 	var cfg Config
@@ -79,9 +69,9 @@ func Load(path string) (*Config, error) {
 }
 
 // Current returns the selected platform profile.
-func (c *Config) Current() (PlatformConfig, error) {
+func (c *Config) Current() (ai.PlatformConfig, error) {
 	if c == nil {
-		return PlatformConfig{}, errors.New("配置不能为空")
+		return ai.PlatformConfig{}, errors.New("配置不能为空")
 	}
 
 	for _, platform := range c.Platforms {
@@ -89,12 +79,12 @@ func (c *Config) Current() (PlatformConfig, error) {
 			continue
 		}
 		if platform.APIKey == "" {
-			return PlatformConfig{}, fmt.Errorf("当前平台 %q 未配置 apiKey", platform.ID)
+			return ai.PlatformConfig{}, fmt.Errorf("当前平台 %q 未配置 apiKey", platform.ID)
 		}
 		return platform, nil
 	}
 
-	return PlatformConfig{}, c.currentPlatformNotFoundError()
+	return ai.PlatformConfig{}, c.currentPlatformNotFoundError()
 }
 
 func (c *Config) currentPlatformNotFoundError() error {

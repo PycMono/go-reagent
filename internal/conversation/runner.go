@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
@@ -54,7 +55,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter engine.Re
 		return runtimeResult, runErr
 	}
 
-	messages := make([]schema.Message, 0, 1+len(runtimeResult.NewMessages))
+	messages := make([]ai.Message, 0, 1+len(runtimeResult.NewMessages))
 	messages = append(messages, cloneMessage(request.Input))
 	messages = append(messages, cloneMessages(runtimeResult.NewMessages)...)
 	persistErr := r.store.AppendTurn(ctx, AppendRequest{
@@ -76,10 +77,10 @@ func validateRunRequest(request RunRequest) (Key, error) {
 		return Key{}, errors.New("conversation runner: user ID is required")
 	case key.ConversationID == "":
 		return Key{}, errors.New("conversation runner: conversation ID is required")
-	case request.Input.Role != schema.RoleUser:
+	case request.Input.Role != ai.RoleUser:
 		return Key{}, fmt.Errorf("conversation runner: input role must be user, got %q", request.Input.Role)
 	}
-	inputText, err := schema.TextContent(request.Input.Content)
+	inputText, err := ai.TextContent(request.Input.Content)
 	if err != nil {
 		return Key{}, fmt.Errorf("conversation runner: input content: %w", err)
 	}
@@ -93,22 +94,22 @@ func validateRunRequest(request RunRequest) (Key, error) {
 	return key, nil
 }
 
-func cloneMessages(messages []schema.Message) []schema.Message {
+func cloneMessages(messages []ai.Message) []ai.Message {
 	if messages == nil {
 		return nil
 	}
-	cloned := make([]schema.Message, len(messages))
+	cloned := make([]ai.Message, len(messages))
 	for index := range messages {
 		cloned[index] = cloneMessage(messages[index])
 	}
 	return cloned
 }
 
-func cloneMessage(message schema.Message) schema.Message {
+func cloneMessage(message ai.Message) ai.Message {
 	cloned := message
-	cloned.Content = append([]schema.ContentBlock(nil), message.Content...)
+	cloned.Content = append([]ai.ContentBlock(nil), message.Content...)
 	if message.ToolCalls != nil {
-		cloned.ToolCalls = make([]schema.ToolCall, len(message.ToolCalls))
+		cloned.ToolCalls = make([]ai.ToolCall, len(message.ToolCalls))
 		for index, call := range message.ToolCalls {
 			cloned.ToolCalls[index] = call
 			cloned.ToolCalls[index].Arguments = append([]byte(nil), call.Arguments...)

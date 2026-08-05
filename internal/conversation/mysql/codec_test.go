@@ -6,15 +6,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestMessageCodecRoundTripsSupportedMessages(t *testing.T) {
-	messages := []schema.Message{
-		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("hello")}},
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}}},
-		{Role: schema.RoleTool, ToolCallID: "call-1", ToolName: "read", IsError: true, Content: []schema.ContentBlock{schema.TextBlock("failed")}},
+	messages := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}}},
+		{Role: ai.RoleTool, ToolCallID: "call-1", ToolName: "read", IsError: true, Content: []ai.ContentBlock{ai.TextBlock("failed")}},
 	}
 
 	for _, message := range messages {
@@ -33,11 +33,11 @@ func TestMessageCodecRoundTripsSupportedMessages(t *testing.T) {
 }
 
 func TestMessageCodecRejectsCorruptRows(t *testing.T) {
-	userPayload, err := json.Marshal(schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("hello")}})
+	userPayload, err := json.Marshal(ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	systemPayload, err := json.Marshal(schema.Message{Role: schema.RoleSystem, Content: []schema.ContentBlock{schema.TextBlock("system")}})
+	systemPayload, err := json.Marshal(ai.Message{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock("system")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,9 +45,9 @@ func TestMessageCodecRejectsCorruptRows(t *testing.T) {
 		name string
 		row  messageRow
 	}{
-		{name: "invalid JSON", row: messageRow{Role: string(schema.RoleUser), Payload: jsonPayload(`{"role":`)}},
-		{name: "unknown role", row: messageRow{Role: string(schema.RoleSystem), Payload: jsonPayload(systemPayload)}},
-		{name: "role mismatch", row: messageRow{Role: string(schema.RoleAssistant), Payload: jsonPayload(userPayload)}},
+		{name: "invalid JSON", row: messageRow{Role: string(ai.RoleUser), Payload: jsonPayload(`{"role":`)}},
+		{name: "unknown role", row: messageRow{Role: string(ai.RoleSystem), Payload: jsonPayload(systemPayload)}},
+		{name: "role mismatch", row: messageRow{Role: string(ai.RoleAssistant), Payload: jsonPayload(userPayload)}},
 	}
 
 	for _, tt := range tests {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/dispatch"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
@@ -50,15 +51,15 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
 	ctx := context.Background()
-	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	reporter.Report(ctx, schema.NewThinkingEvent())
-	reporter.Report(ctx, schema.NewToolUpdateEvent(call, schema.ToolUpdate{Content: []schema.ContentBlock{schema.TextBlock("chunk")}}))
+	reporter.Report(ctx, schema.NewToolUpdateEvent(call, schema.ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}}))
 	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
 	reporter.Report(ctx, schema.NewToolStartEvent(call))
-	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []schema.ContentBlock{schema.TextBlock("permission denied")}, IsError: true}))
-	reporter.Report(ctx, schema.NewMessageEvent(schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: []schema.ContentBlock{schema.TextBlock("done")},
+	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []ai.ContentBlock{ai.TextBlock("permission denied")}, IsError: true}))
+	reporter.Report(ctx, schema.NewMessageEvent(ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("done")},
 	}))
 
 	mu.Lock()
@@ -93,16 +94,16 @@ func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
 
 	for _, test := range []struct {
 		name string
-		role schema.Role
+		role ai.Role
 	}{
-		{name: "user", role: schema.RoleUser},
-		{name: "system", role: schema.RoleSystem},
-		{name: "tool", role: schema.RoleTool},
+		{name: "user", role: ai.RoleUser},
+		{name: "system", role: ai.RoleSystem},
+		{name: "tool", role: ai.RoleTool},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reporter.Report(context.Background(), schema.NewMessageEvent(schema.Message{
+			reporter.Report(context.Background(), schema.NewMessageEvent(ai.Message{
 				Role:    test.role,
-				Content: []schema.ContentBlock{schema.TextBlock("must not send")},
+				Content: []ai.ContentBlock{ai.TextBlock("must not send")},
 			}))
 			if got := requestCount.Load(); got != 0 {
 				t.Fatalf("request count = %d, want 0", got)
@@ -127,16 +128,16 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
-	call := schema.ToolCall{ID: "call-1", Name: "read"}
+	call := ai.ToolCall{ID: "call-1", Name: "read"}
 	reporter.Report(context.Background(), schema.NewToolEndEvent(call, schema.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
-		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		IsError:    true,
 	}))
-	reporter.Report(context.Background(), schema.NewMessageEvent(schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: []schema.ContentBlock{schema.TextBlock(strings.Repeat("企", 2000))},
+	reporter.Report(context.Background(), schema.NewMessageEvent(ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock(strings.Repeat("企", 2000))},
 	}))
 
 	errorRequest := <-requests

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -55,8 +56,8 @@ func (t *ExecTool) Name() string {
 	return "exec"
 }
 
-func (t *ExecTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *ExecTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:        t.Name(),
 		Description: "在工作区中执行 shell 命令。前台输出按 stdout/stderr 流式返回，命令可在 yield 后转入后台；命令拥有宿主进程权限，cwd 不是安全沙箱。",
 		InputSchema: map[string]any{
@@ -155,7 +156,7 @@ func (g *execStreamGate) emit(emit UpdateEmitter, stream string, chunk []byte) {
 		return
 	}
 	emit(schema.ToolUpdate{
-		Content: []schema.ContentBlock{schema.TextBlock(string(chunk))},
+		Content: []ai.ContentBlock{ai.TextBlock(string(chunk))},
 		Details: StreamDetails{Stream: stream, Bytes: len(chunk)},
 	})
 }

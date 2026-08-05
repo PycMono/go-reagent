@@ -1,21 +1,23 @@
 package schema
 
+import "github.com/PycMono/go-reagent/ai"
+
 type ToolOutput struct {
-	Content []ContentBlock `json:"content"`
-	Details any            `json:"details,omitempty"`
+	Content []ai.ContentBlock `json:"content"`
+	Details any               `json:"details,omitempty"`
 }
 
 type ToolUpdate struct {
-	Content []ContentBlock `json:"content"`
-	Details any            `json:"details,omitempty"`
+	Content []ai.ContentBlock `json:"content"`
+	Details any               `json:"details,omitempty"`
 }
 
 type ToolResult struct {
-	ToolCallID string         `json:"tool_call_id"`
-	ToolName   string         `json:"tool_name"`
-	Content    []ContentBlock `json:"content"`
-	Details    any            `json:"details,omitempty"`
-	IsError    bool           `json:"is_error"`
+	ToolCallID string            `json:"tool_call_id"`
+	ToolName   string            `json:"tool_name"`
+	Content    []ai.ContentBlock `json:"content"`
+	Details    any               `json:"details,omitempty"`
+	IsError    bool              `json:"is_error"`
 }
 
 type AgentEventType string
@@ -38,7 +40,7 @@ const (
 
 type ToolEvent struct {
 	Phase  ToolEventPhase `json:"phase"`
-	Call   ToolCall       `json:"call"`
+	Call   ai.ToolCall    `json:"call"`
 	Update *ToolUpdate    `json:"update,omitempty"`
 	Result *ToolResult    `json:"result,omitempty"`
 }
@@ -46,18 +48,18 @@ type ToolEvent struct {
 type AgentEvent struct {
 	Type    AgentEventType `json:"type"`
 	Tool    *ToolEvent     `json:"tool,omitempty"`
-	Message *Message       `json:"message,omitempty"`
+	Message *ai.Message    `json:"message,omitempty"`
 }
 
-func NewToolStart(call ToolCall) ToolEvent {
+func NewToolStart(call ai.ToolCall) ToolEvent {
 	return ToolEvent{Phase: ToolEventStart, Call: call}
 }
 
-func NewToolUpdate(call ToolCall, update ToolUpdate) ToolEvent {
+func NewToolUpdate(call ai.ToolCall, update ToolUpdate) ToolEvent {
 	return ToolEvent{Phase: ToolEventUpdate, Call: call, Update: &update}
 }
 
-func NewToolEnd(call ToolCall, result ToolResult) ToolEvent {
+func NewToolEnd(call ai.ToolCall, result ToolResult) ToolEvent {
 	return ToolEvent{Phase: ToolEventEnd, Call: call, Result: &result}
 }
 
@@ -74,15 +76,15 @@ func NewAgentToolEvent(event ToolEvent) AgentEvent {
 	return AgentEvent{Type: eventType, Tool: &event}
 }
 
-func NewToolStartEvent(call ToolCall) AgentEvent {
+func NewToolStartEvent(call ai.ToolCall) AgentEvent {
 	return NewAgentToolEvent(NewToolStart(call))
 }
 
-func NewToolUpdateEvent(call ToolCall, update ToolUpdate) AgentEvent {
+func NewToolUpdateEvent(call ai.ToolCall, update ToolUpdate) AgentEvent {
 	return NewAgentToolEvent(NewToolUpdate(call, update))
 }
 
-func NewToolEndEvent(call ToolCall, result ToolResult) AgentEvent {
+func NewToolEndEvent(call ai.ToolCall, result ToolResult) AgentEvent {
 	return NewAgentToolEvent(NewToolEnd(call, result))
 }
 
@@ -90,6 +92,6 @@ func NewThinkingEvent() AgentEvent {
 	return AgentEvent{Type: AgentEventThinking}
 }
 
-func NewMessageEvent(message Message) AgentEvent {
+func NewMessageEvent(message ai.Message) AgentEvent {
 	return AgentEvent{Type: AgentEventMessage, Message: &message}
 }

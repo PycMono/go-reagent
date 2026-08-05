@@ -6,19 +6,19 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	reagentinternal "github.com/PycMono/go-reagent/internal"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/provider"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
 
 type dependencyGraphProvider struct{}
 
-func (*dependencyGraphProvider) Generate(context.Context, []schema.Message, []schema.ToolDefinition) (*schema.Message, error) {
-	return &schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("done")}}, nil
+func (*dependencyGraphProvider) Generate(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+	return &ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}, nil
 }
 
 func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {

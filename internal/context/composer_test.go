@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 // TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder 验证系统提示词按核心纪律、Agent 定义和 Skill 目录的顺序组合，且不会泄露 Skill Body。
@@ -29,8 +29,8 @@ func TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 	content := messageText(t, message)
-	if message.Role != schema.RoleSystem {
-		t.Fatalf("Role = %q, want %q", message.Role, schema.RoleSystem)
+	if message.Role != ai.RoleSystem {
+		t.Fatalf("Role = %q, want %q", message.Role, ai.RoleSystem)
 	}
 	core := strings.Index(content, "# Agent Runtime 核心纪律")
 	agents := strings.Index(content, "# Agent 定义（来自 AGENTS.md）")
@@ -80,7 +80,7 @@ func TestPromptComposerAllowsEmptyCatalog(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 	content := messageText(t, message)
-	if message.Role != schema.RoleSystem || !strings.Contains(content, "# Agent Runtime 核心纪律") {
+	if message.Role != ai.RoleSystem || !strings.Contains(content, "# Agent Runtime 核心纪律") {
 		t.Fatalf("Build() = %#v", message)
 	}
 	for _, absent := range []string{"<available_skills>"} {
@@ -156,9 +156,9 @@ func TestPromptComposerRejectsAgentsSymlinks(t *testing.T) {
 	})
 }
 
-func messageText(t *testing.T, message schema.Message) string {
+func messageText(t *testing.T, message ai.Message) string {
 	t.Helper()
-	text, err := schema.TextContent(message.Content)
+	text, err := ai.TextContent(message.Content)
 	if err != nil {
 		t.Fatalf("TextContent() error = %v", err)
 	}

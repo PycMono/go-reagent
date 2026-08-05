@@ -10,6 +10,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -17,30 +18,30 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newTerminalReporter(&output)
 	ctx := context.Background()
-	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
-	execCall := schema.ToolCall{ID: "call-2", Name: "exec", Arguments: json.RawMessage(`{"command":"go test"}`)}
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	execCall := ai.ToolCall{ID: "call-2", Name: "exec", Arguments: json.RawMessage(`{"command":"go test"}`)}
 
 	reporter.Report(ctx, schema.NewThinkingEvent())
 	reporter.Report(ctx, schema.NewToolStartEvent(call))
 	reporter.Report(ctx, schema.NewToolUpdateEvent(execCall, schema.ToolUpdate{
-		Content: []schema.ContentBlock{schema.TextBlock("stderr chunk")},
+		Content: []ai.ContentBlock{ai.TextBlock("stderr chunk")},
 		Details: map[string]any{"stream": "stderr", "bytes": 4},
 	}))
 	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
-		Content:    []schema.ContentBlock{schema.TextBlock("ok")},
+		Content:    []ai.ContentBlock{ai.TextBlock("ok")},
 	}))
-	failedCall := schema.ToolCall{ID: "call-3", Name: "edit"}
+	failedCall := ai.ToolCall{ID: "call-3", Name: "edit"}
 	reporter.Report(ctx, schema.NewToolEndEvent(failedCall, schema.ToolResult{
 		ToolCallID: failedCall.ID,
 		ToolName:   failedCall.Name,
-		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		IsError:    true,
 	}))
-	reporter.Report(ctx, schema.NewMessageEvent(schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: []schema.ContentBlock{schema.TextBlock("完成")},
+	reporter.Report(ctx, schema.NewMessageEvent(ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("完成")},
 	}))
 
 	got := output.String()
@@ -74,7 +75,7 @@ func TestTerminalDisplayArgumentsTruncatesAtRuneBoundary(t *testing.T) {
 func TestTerminalReporterIgnoresEmptyMessageAndSerializesConcurrentEvents(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newTerminalReporter(&output)
-	reporter.Report(context.Background(), schema.NewMessageEvent(schema.Message{Role: schema.RoleAssistant}))
+	reporter.Report(context.Background(), schema.NewMessageEvent(ai.Message{Role: ai.RoleAssistant}))
 	if output.Len() != 0 {
 		t.Fatalf("empty message output = %q", output.String())
 	}
@@ -84,7 +85,7 @@ func TestTerminalReporterIgnoresEmptyMessageAndSerializesConcurrentEvents(t *tes
 		waitGroup.Add(1)
 		go func(index int) {
 			defer waitGroup.Done()
-			reporter.Report(context.Background(), schema.NewToolStartEvent(schema.ToolCall{
+			reporter.Report(context.Background(), schema.NewToolStartEvent(ai.ToolCall{
 				Name:      fmt.Sprintf("tool-%d", index),
 				Arguments: json.RawMessage(`{}`),
 			}))

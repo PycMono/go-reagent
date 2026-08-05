@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
@@ -18,16 +19,16 @@ import (
 )
 
 type scriptedProvider struct {
-	responses []*schema.Message
-	requests  [][]schema.Message
+	responses []*ai.Message
+	requests  [][]ai.Message
 }
 
 func (p *scriptedProvider) Generate(
 	_ context.Context,
-	messages []schema.Message,
-	_ []schema.ToolDefinition,
-) (*schema.Message, error) {
-	p.requests = append(p.requests, append([]schema.Message(nil), messages...))
+	messages []ai.Message,
+	_ []ai.ToolDefinition,
+) (*ai.Message, error) {
+	p.requests = append(p.requests, append([]ai.Message(nil), messages...))
 	index := len(p.requests) - 1
 	if index >= len(p.responses) {
 		return nil, fmt.Errorf("unexpected provider call %d", index+1)
@@ -65,19 +66,19 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &scriptedProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("选择 git-workflow，先读取技能。")},
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
+	provider := &scriptedProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("选择 git-workflow，先读取技能。")},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{
 			ID: "read-page-1", Name: "read",
 			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","limit":4}`),
 		}}},
-		{Role: schema.RoleAssistant, Content: blocks("发现 continuation marker，继续读取。")},
-		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{
+		{Role: ai.RoleAssistant, Content: blocks("发现 continuation marker，继续读取。")},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{
 			ID: "read-page-2", Name: "read",
 			Arguments: json.RawMessage(`{"path":"skills/git-workflow/SKILL.md","offset":5}`),
 		}}},
-		{Role: schema.RoleAssistant, Content: blocks("技能已完整读取，可以执行。")},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+		{Role: ai.RoleAssistant, Content: blocks("技能已完整读取，可以执行。")},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	factory := ctxpkg.NewRunContextFactory(
 		ctxpkg.NewPromptComposer(workDir),
@@ -86,8 +87,8 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 4), true)
 	runtime := engine.NewAgentRuntime(factory, loop, registry)
 
-	_, err = runtime.Run(context.Background(), schema.RunRequest{Input: schema.Message{
-		Role:    schema.RoleUser,
+	_, err = runtime.Run(context.Background(), schema.RunRequest{Input: ai.Message{
+		Role:    ai.RoleUser,
 		Content: blocks("提交代码"),
 	}}, nil)
 	if err != nil {
@@ -112,22 +113,22 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 	}
 }
 
-func blocks(text string) []schema.ContentBlock {
-	return []schema.ContentBlock{schema.TextBlock(text)}
+func blocks(text string) []ai.ContentBlock {
+	return []ai.ContentBlock{ai.TextBlock(text)}
 }
 
-func messageText(t *testing.T, message schema.Message) string {
+func messageText(t *testing.T, message ai.Message) string {
 	t.Helper()
-	text, err := schema.TextContent(message.Content)
+	text, err := ai.TextContent(message.Content)
 	if err != nil {
 		t.Fatalf("TextContent() error = %v", err)
 	}
 	return text
 }
 
-func findToolObservation(messages []schema.Message, toolCallID string) *schema.Message {
+func findToolObservation(messages []ai.Message, toolCallID string) *ai.Message {
 	for index := range messages {
-		if messages[index].Role == schema.RoleTool && messages[index].ToolCallID == toolCallID {
+		if messages[index].Role == ai.RoleTool && messages[index].ToolCallID == toolCallID {
 			return &messages[index]
 		}
 	}

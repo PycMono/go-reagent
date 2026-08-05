@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
-func encodeMessage(message schema.Message) (messageRow, error) {
+func encodeMessage(message ai.Message) (messageRow, error) {
 	if !isPersistedRole(message.Role) {
 		return messageRow{}, fmt.Errorf("mysql conversation: unsupported message role %q", message.Role)
 	}
@@ -20,16 +20,16 @@ func encodeMessage(message schema.Message) (messageRow, error) {
 	return messageRow{Role: string(message.Role), Payload: jsonPayload(payload)}, nil
 }
 
-func decodeMessage(row messageRow) (schema.Message, error) {
-	var message schema.Message
+func decodeMessage(row messageRow) (ai.Message, error) {
+	var message ai.Message
 	if err := json.Unmarshal(row.Payload, &message); err != nil {
-		return schema.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("decode payload: %w", err))
+		return ai.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("decode payload: %w", err))
 	}
 	if !isPersistedRole(message.Role) {
-		return schema.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("unsupported payload role %q", message.Role))
+		return ai.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("unsupported payload role %q", message.Role))
 	}
 	if row.Role != string(message.Role) {
-		return schema.Message{}, errors.Join(
+		return ai.Message{}, errors.Join(
 			conversation.ErrCorruptMessage,
 			fmt.Errorf("stored role %q does not match payload role %q", row.Role, message.Role),
 		)
@@ -37,6 +37,6 @@ func decodeMessage(row messageRow) (schema.Message, error) {
 	return message, nil
 }
 
-func isPersistedRole(role schema.Role) bool {
-	return role == schema.RoleUser || role == schema.RoleAssistant || role == schema.RoleTool
+func isPersistedRole(role ai.Role) bool {
+	return role == ai.RoleUser || role == ai.RoleAssistant || role == ai.RoleTool
 }

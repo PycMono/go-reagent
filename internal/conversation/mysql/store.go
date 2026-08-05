@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"gorm.io/gorm"
 )
 
@@ -102,7 +102,7 @@ func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int
 	}
 
 	window := safeWindow(rows, limit)
-	messages := make([]schema.Message, 0, len(window))
+	messages := make([]ai.Message, 0, len(window))
 	for index := range window {
 		message, err := decodeMessage(window[index])
 		if err != nil {

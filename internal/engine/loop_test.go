@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/provider"
@@ -20,19 +21,19 @@ import (
 )
 
 type fakeProvider struct {
-	responses      []*schema.Message
+	responses      []*ai.Message
 	err            error
-	requests       [][]schema.Message
-	availableTools [][]schema.ToolDefinition
+	requests       [][]ai.Message
+	availableTools [][]ai.ToolDefinition
 }
 
 func (p *fakeProvider) Generate(
 	_ context.Context,
-	messages []schema.Message,
-	availableTools []schema.ToolDefinition,
-) (*schema.Message, error) {
-	p.requests = append(p.requests, append([]schema.Message(nil), messages...))
-	p.availableTools = append(p.availableTools, append([]schema.ToolDefinition(nil), availableTools...))
+	messages []ai.Message,
+	availableTools []ai.ToolDefinition,
+) (*ai.Message, error) {
+	p.requests = append(p.requests, append([]ai.Message(nil), messages...))
+	p.availableTools = append(p.availableTools, append([]ai.ToolDefinition(nil), availableTools...))
 	if p.err != nil {
 		return nil, p.err
 	}
@@ -46,9 +47,9 @@ func (p *fakeProvider) Generate(
 
 type fakeRegistry struct {
 	mu           sync.Mutex
-	definitions  []schema.ToolDefinition
+	definitions  []ai.ToolDefinition
 	results      map[string]schema.ToolResult
-	calls        []schema.ToolCall
+	calls        []ai.ToolCall
 	afterExecute func(callCount int)
 }
 
@@ -89,14 +90,14 @@ type registryWithRequiredRead struct {
 	tools.Registry
 }
 
-func (r registryWithRequiredRead) GetAvailableTools() []schema.ToolDefinition {
+func (r registryWithRequiredRead) GetAvailableTools() []ai.ToolDefinition {
 	definitions := r.Registry.GetAvailableTools()
 	for _, definition := range definitions {
 		if definition.Name == "read" {
 			return definitions
 		}
 	}
-	return append(definitions, schema.ToolDefinition{Name: "read", Description: "read workspace files", ParallelSafe: true})
+	return append(definitions, ai.ToolDefinition{Name: "read", Description: "read workspace files", ParallelSafe: true})
 }
 
 func writeValidAgentWorkspace(workDir string) {
@@ -124,8 +125,8 @@ func writeValidAgentWorkspace(workDir string) {
 }
 
 func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter engine.Reporter) error {
-	runContext, err := r.factory.Create(ctx, schema.RunRequest{Input: schema.Message{
-		Role:    schema.RoleUser,
+	runContext, err := r.factory.Create(ctx, schema.RunRequest{Input: ai.Message{
+		Role:    ai.RoleUser,
 		Content: blocks(prompt),
 	}}, r.registry.GetAvailableTools())
 	if err != nil {
@@ -136,11 +137,11 @@ func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter engin
 	return err
 }
 
-func (r *fakeRegistry) GetAvailableTools() []schema.ToolDefinition {
-	return append([]schema.ToolDefinition(nil), r.definitions...)
+func (r *fakeRegistry) GetAvailableTools() []ai.ToolDefinition {
+	return append([]ai.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *fakeRegistry) Execute(ctx context.Context, call schema.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
+func (r *fakeRegistry) Execute(ctx context.Context, call ai.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	callCount := len(r.calls)
@@ -165,25 +166,25 @@ func (r *fakeRegistry) Execute(ctx context.Context, call schema.ToolCall, observ
 	return result, nil
 }
 
-func (r *fakeRegistry) Calls() []schema.ToolCall {
+func (r *fakeRegistry) Calls() []ai.ToolCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]schema.ToolCall(nil), r.calls...)
+	return append([]ai.ToolCall(nil), r.calls...)
 }
 
 type controlledRegistry struct {
-	definitions []schema.ToolDefinition
-	started     chan schema.ToolCall
-	finished    chan schema.ToolCall
+	definitions []ai.ToolDefinition
+	started     chan ai.ToolCall
+	finished    chan ai.ToolCall
 	gates       map[string]chan struct{}
 	results     map[string]schema.ToolResult
 }
 
-func (r *controlledRegistry) GetAvailableTools() []schema.ToolDefinition {
-	return append([]schema.ToolDefinition(nil), r.definitions...)
+func (r *controlledRegistry) GetAvailableTools() []ai.ToolDefinition {
+	return append([]ai.ToolDefinition(nil), r.definitions...)
 }
 
-func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
+func (r *controlledRegistry) Execute(ctx context.Context, call ai.ToolCall, observer tools.ToolEventObserver) (schema.ToolResult, error) {
 	if observer != nil {
 		observer(ctx, schema.NewToolStart(call))
 	}
@@ -230,37 +231,37 @@ func (r *controlledRegistry) Execute(ctx context.Context, call schema.ToolCall, 
 	return result, nil
 }
 
-func canceledToolResult(call schema.ToolCall, err error) schema.ToolResult {
+func canceledToolResult(call ai.ToolCall, err error) schema.ToolResult {
 	return toolResult(call, err.Error(), true)
 }
 
 func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("plan one")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("plan one")},
 		{
-			Role:    schema.RoleAssistant,
+			Role:    ai.RoleAssistant,
 			Content: blocks("working"),
-			ToolCalls: []schema.ToolCall{{
+			ToolCalls: []ai.ToolCall{{
 				ID:        "call-1",
 				Name:      "zeta",
 				Arguments: json.RawMessage(`{}`),
 			}},
 		},
-		{Role: schema.RoleAssistant, Content: blocks("plan two")},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+		{Role: ai.RoleAssistant, Content: blocks("plan two")},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{{Name: "zeta"}, {Name: "alpha", ParallelSafe: true}},
+		definitions: []ai.ToolDefinition{{Name: "zeta"}, {Name: "alpha", ParallelSafe: true}},
 		results: map[string]schema.ToolResult{
-			"zeta": toolResult(schema.ToolCall{ID: "call-1", Name: "zeta"}, "tool result", false),
+			"zeta": toolResult(ai.ToolCall{ID: "call-1", Name: "zeta"}, "tool result", false),
 		},
 	}
 	reporter := &recordingReporter{}
 	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 2), true)
 	runContext := ctxpkg.RunContext{
-		Messages: []schema.Message{
-			{Role: schema.RoleSystem, Content: blocks("system")},
-			{Role: schema.RoleUser, Content: blocks("do work")},
+		Messages: []ai.Message{
+			{Role: ai.RoleSystem, Content: blocks("system")},
+			{Role: ai.RoleUser, Content: blocks("do work")},
 		},
 		Tools: registry.definitions,
 	}
@@ -281,7 +282,7 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 	}
 	secondThinking := provider.requests[2]
 	observation := findMessageByToolCallID(secondThinking, "call-1")
-	if observation == nil || observation.Role != schema.RoleTool || messageText(t, *observation) != "tool result" {
+	if observation == nil || observation.Role != ai.RoleTool || messageText(t, *observation) != "tool result" {
 		t.Fatalf("tool observation = %#v", observation)
 	}
 	events := reporter.Events()
@@ -297,10 +298,10 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 }
 
 func TestAgentLoopPassesContextAndAvailableToolsToProvider(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
-	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
+	registry := &fakeRegistry{definitions: []ai.ToolDefinition{
 		{Name: "bash", Description: "execute a command", InputSchema: map[string]any{"type": "object"}},
 	}}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -312,7 +313,7 @@ func TestAgentLoopPassesContextAndAvailableToolsToProvider(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", len(provider.requests))
 	}
 	request := provider.requests[0]
-	if len(request) != 2 || request[0].Role != schema.RoleSystem || messageText(t, request[1]) != "hello" {
+	if len(request) != 2 || request[0].Role != ai.RoleSystem || messageText(t, request[1]) != "hello" {
 		t.Fatalf("initial context = %#v", request)
 	}
 	if len(provider.availableTools[0]) != 2 || provider.availableTools[0][0].Name != "bash" || provider.availableTools[0][1].Name != "read" {
@@ -341,18 +342,18 @@ func TestAgentLoopBuildsWorkspaceContextForEachRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("done one")},
-		{Role: schema.RoleAssistant, Content: blocks("done two")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("done one")},
+		{Role: ai.RoleAssistant, Content: blocks("done two")},
 	}}
-	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "read", ParallelSafe: true}}}
+	registry := &fakeRegistry{definitions: []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}}
 	agentEngine := newAgentLoopForTest(provider, registry, workDir, false)
 	if err := agentEngine.Run(context.Background(), "hello one", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
 	request := provider.requests[0]
-	if len(request) != 2 || request[0].Role != schema.RoleSystem || messageText(t, request[1]) != "hello one" {
+	if len(request) != 2 || request[0].Role != ai.RoleSystem || messageText(t, request[1]) != "hello one" {
 		t.Fatalf("initial context = %#v", request)
 	}
 	for _, want := range []string{
@@ -407,7 +408,7 @@ func TestAgentLoopRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 		[]byte("---\nname: review\ndescription: Review changes\n---\nBody"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeProvider{responses: []*schema.Message{{Role: schema.RoleAssistant, Content: blocks("unused")}}}
+	provider := &fakeProvider{responses: []*ai.Message{{Role: ai.RoleAssistant, Content: blocks("unused")}}}
 	writeValidAgentWorkspace(workDir)
 	agentEngine := newAgentLoopRuntimeForTest(provider, &fakeRegistry{}, workDir, false)
 
@@ -421,17 +422,17 @@ func TestAgentLoopRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 }
 
 func TestAgentLoopAppendsToolObservationAndContinues(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
+	provider := &fakeProvider{responses: []*ai.Message{
 		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
+			Role: ai.RoleAssistant,
+			ToolCalls: []ai.ToolCall{
 				{ID: "call-1", Name: "echo", Arguments: json.RawMessage(`{"text":"hello"}`)},
 			},
 		},
-		{Role: schema.RoleAssistant, Content: blocks("tool finished")},
+		{Role: ai.RoleAssistant, Content: blocks("tool finished")},
 	}}
 	registry := &fakeRegistry{results: map[string]schema.ToolResult{
-		"echo": toolResult(schema.ToolCall{ID: "call-1", Name: "echo"}, "hello", false),
+		"echo": toolResult(ai.ToolCall{ID: "call-1", Name: "echo"}, "hello", false),
 	}}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
 
@@ -450,20 +451,20 @@ func TestAgentLoopAppendsToolObservationAndContinues(t *testing.T) {
 		t.Fatalf("follow-up message count = %d, want 4", len(followUp))
 	}
 	observation := followUp[3]
-	if observation.Role != schema.RoleTool || observation.ToolCallID != "call-1" || messageText(t, observation) != "hello" {
+	if observation.Role != ai.RoleTool || observation.ToolCallID != "call-1" || messageText(t, observation) != "hello" {
 		t.Fatalf("observation = %#v", observation)
 	}
 }
 
 func TestAgentLoopExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.T) {
-	toolCalls := []schema.ToolCall{
+	toolCalls := []ai.ToolCall{
 		{ID: "call-1", Name: "read-a", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-b", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-3", Name: "read-c", Arguments: json.RawMessage(`{}`)},
 	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: toolCalls},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	gates := map[string]chan struct{}{
 		"call-1": make(chan struct{}),
@@ -471,13 +472,13 @@ func TestAgentLoopExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.T)
 		"call-3": make(chan struct{}),
 	}
 	registry := &controlledRegistry{
-		definitions: []schema.ToolDefinition{
+		definitions: []ai.ToolDefinition{
 			{Name: "read-a", ParallelSafe: true},
 			{Name: "read-b", ParallelSafe: true},
 			{Name: "read-c", ParallelSafe: true},
 		},
-		started:  make(chan schema.ToolCall, len(toolCalls)),
-		finished: make(chan schema.ToolCall, len(toolCalls)),
+		started:  make(chan ai.ToolCall, len(toolCalls)),
+		finished: make(chan ai.ToolCall, len(toolCalls)),
 		gates:    gates,
 	}
 	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -534,19 +535,19 @@ func TestAgentLoopExecutesParallelSafeToolsConcurrentlyInCallOrder(t *testing.T)
 }
 
 func TestAgentLoopBoundsParallelTools(t *testing.T) {
-	toolCalls := []schema.ToolCall{
+	toolCalls := []ai.ToolCall{
 		{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-3", Name: "read-3", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-4", Name: "read-4", Arguments: json.RawMessage(`{}`)},
 	}
-	definitions := make([]schema.ToolDefinition, 0, len(toolCalls))
+	definitions := make([]ai.ToolDefinition, 0, len(toolCalls))
 	for _, call := range toolCalls {
-		definitions = append(definitions, schema.ToolDefinition{Name: call.Name, ParallelSafe: true})
+		definitions = append(definitions, ai.ToolDefinition{Name: call.Name, ParallelSafe: true})
 	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: toolCalls},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
 	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -573,25 +574,25 @@ func TestAgentLoopBoundsParallelTools(t *testing.T) {
 }
 
 func TestAgentLoopUsesExclusiveToolsAsBarriers(t *testing.T) {
-	toolCalls := []schema.ToolCall{
+	toolCalls := []ai.ToolCall{
 		{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-3", Name: "write", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-4", Name: "read-3", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-5", Name: "missing", Arguments: json.RawMessage(`{}`)},
 	}
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "read-1", ParallelSafe: true},
 		{Name: "read-2", ParallelSafe: true},
 		{Name: "write"},
 		{Name: "read-3", ParallelSafe: true},
 	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: toolCalls},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	registry.results["call-5"] = toolResult(schema.ToolCall{ID: "call-5", Name: "missing"}, `tool "missing" is not registered`, true)
+	registry.results["call-5"] = toolResult(ai.ToolCall{ID: "call-5", Name: "missing"}, `tool "missing" is not registered`, true)
 	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "run ordered batch", registry.gates)
@@ -642,21 +643,21 @@ func TestAgentLoopUsesExclusiveToolsAsBarriers(t *testing.T) {
 }
 
 func TestAgentLoopCompletesParallelSiblingsAfterToolError(t *testing.T) {
-	toolCalls := []schema.ToolCall{
+	toolCalls := []ai.ToolCall{
 		{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{}`)},
 	}
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "read-1", ParallelSafe: true},
 		{Name: "read-2", ParallelSafe: true},
 	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: toolCalls},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
-	registry.results["call-1"] = toolResult(schema.ToolCall{ID: "call-1", Name: "read-1"}, "read failed", true)
-	registry.results["call-2"] = toolResult(schema.ToolCall{ID: "call-2", Name: "read-2"}, "read ok", false)
+	registry.results["call-1"] = toolResult(ai.ToolCall{ID: "call-1", Name: "read-1"}, "read failed", true)
+	registry.results["call-2"] = toolResult(ai.ToolCall{ID: "call-2", Name: "read-2"}, "read ok", false)
 	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
 
 	done, markFinished := runEngineForTest(t, agentEngine, "read both", registry.gates)
@@ -679,17 +680,17 @@ func TestAgentLoopCompletesParallelSiblingsAfterToolError(t *testing.T) {
 }
 
 func TestAgentLoopUsesSerialFallbackForNonpositiveParallelLimit(t *testing.T) {
-	toolCalls := []schema.ToolCall{
+	toolCalls := []ai.ToolCall{
 		{ID: "call-1", Name: "read-1", Arguments: json.RawMessage(`{}`)},
 		{ID: "call-2", Name: "read-2", Arguments: json.RawMessage(`{}`)},
 	}
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "read-1", ParallelSafe: true},
 		{Name: "read-2", ParallelSafe: true},
 	}
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, ToolCalls: toolCalls},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: toolCalls},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := newControlledRegistry(toolCalls, definitions)
 	agentEngine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -725,8 +726,8 @@ func closeAllGates(gates map[string]chan struct{}) {
 }
 
 func newControlledRegistry(
-	calls []schema.ToolCall,
-	definitions []schema.ToolDefinition,
+	calls []ai.ToolCall,
+	definitions []ai.ToolDefinition,
 ) *controlledRegistry {
 	gates := make(map[string]chan struct{}, len(calls))
 	for _, call := range calls {
@@ -734,8 +735,8 @@ func newControlledRegistry(
 	}
 	return &controlledRegistry{
 		definitions: definitions,
-		started:     make(chan schema.ToolCall, len(calls)),
-		finished:    make(chan schema.ToolCall, len(calls)),
+		started:     make(chan ai.ToolCall, len(calls)),
+		finished:    make(chan ai.ToolCall, len(calls)),
 		gates:       gates,
 		results:     make(map[string]schema.ToolResult),
 	}
@@ -771,18 +772,18 @@ func runEngineForTest(
 	return done, markFinished
 }
 
-func requireStartedCall(t *testing.T, started <-chan schema.ToolCall) schema.ToolCall {
+func requireStartedCall(t *testing.T, started <-chan ai.ToolCall) ai.ToolCall {
 	t.Helper()
 	select {
 	case call := <-started:
 		return call
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for tool to start")
-		return schema.ToolCall{}
+		return ai.ToolCall{}
 	}
 }
 
-func requireNoStartedCall(t *testing.T, started <-chan schema.ToolCall) {
+func requireNoStartedCall(t *testing.T, started <-chan ai.ToolCall) {
 	t.Helper()
 	select {
 	case call := <-started:
@@ -791,7 +792,7 @@ func requireNoStartedCall(t *testing.T, started <-chan schema.ToolCall) {
 	}
 }
 
-func requireFinishedCall(t *testing.T, finished <-chan schema.ToolCall, wantID string) {
+func requireFinishedCall(t *testing.T, finished <-chan ai.ToolCall, wantID string) {
 	t.Helper()
 	select {
 	case call := <-finished:
@@ -806,17 +807,17 @@ func requireFinishedCall(t *testing.T, finished <-chan schema.ToolCall, wantID s
 func TestAgentLoopRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 	tests := []struct {
 		name      string
-		toolCalls []schema.ToolCall
+		toolCalls []ai.ToolCall
 		wantError string
 	}{
 		{
 			name:      "empty ID",
-			toolCalls: []schema.ToolCall{{Name: "echo", Arguments: json.RawMessage(`{}`)}},
+			toolCalls: []ai.ToolCall{{Name: "echo", Arguments: json.RawMessage(`{}`)}},
 			wantError: "empty ID",
 		},
 		{
 			name: "duplicate ID",
-			toolCalls: []schema.ToolCall{
+			toolCalls: []ai.ToolCall{
 				{ID: "call-1", Name: "echo", Arguments: json.RawMessage(`{}`)},
 				{ID: "call-1", Name: "echo", Arguments: json.RawMessage(`{}`)},
 			},
@@ -826,8 +827,8 @@ func TestAgentLoopRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &fakeProvider{responses: []*schema.Message{
-				{Role: schema.RoleAssistant, ToolCalls: tt.toolCalls},
+			provider := &fakeProvider{responses: []*ai.Message{
+				{Role: ai.RoleAssistant, ToolCalls: tt.toolCalls},
 			}}
 			registry := &fakeRegistry{results: map[string]schema.ToolResult{}}
 			engine := newAgentLoopForTest(provider, registry, t.TempDir(), false)
@@ -844,7 +845,7 @@ func TestAgentLoopRejectsInvalidToolCallIDsBeforeExecution(t *testing.T) {
 }
 
 func TestAgentLoopRejectsNilProviderResponse(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{nil}}
+	provider := &fakeProvider{responses: []*ai.Message{nil}}
 	engine := newAgentLoopForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 	err := engine.Run(context.Background(), "hello", nil)
@@ -867,8 +868,8 @@ func TestAgentLoopDoesNotCallProviderAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("must not run")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("must not run")},
 	}}
 	engine := newAgentLoopForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
@@ -883,23 +884,23 @@ func TestAgentLoopDoesNotCallProviderAfterCancellation(t *testing.T) {
 
 func TestAgentLoopStopsToolBatchAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	provider := &fakeProvider{responses: []*schema.Message{
+	provider := &fakeProvider{responses: []*ai.Message{
 		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
+			Role: ai.RoleAssistant,
+			ToolCalls: []ai.ToolCall{
 				{ID: "call-1", Name: "first", Arguments: json.RawMessage(`{}`)},
 				{ID: "call-2", Name: "second", Arguments: json.RawMessage(`{}`)},
 			},
 		},
 	}}
 	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{
+		definitions: []ai.ToolDefinition{
 			{Name: "first", ParallelSafe: true},
 			{Name: "second", ParallelSafe: true},
 		},
 		results: map[string]schema.ToolResult{
-			"first":  toolResult(schema.ToolCall{ID: "call-1", Name: "first"}, "one", false),
-			"second": toolResult(schema.ToolCall{ID: "call-2", Name: "second"}, "two", false),
+			"first":  toolResult(ai.ToolCall{ID: "call-1", Name: "first"}, "one", false),
+			"second": toolResult(ai.ToolCall{ID: "call-2", Name: "second"}, "two", false),
 		},
 		afterExecute: func(callCount int) {
 			if callCount == 1 {
@@ -920,11 +921,11 @@ func TestAgentLoopStopsToolBatchAfterCancellation(t *testing.T) {
 }
 
 func TestAgentLoopCarriesThinkingIntoActionContext(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("先规划，再行动。")},
-		{Role: schema.RoleAssistant, Content: blocks("任务完成")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("先规划，再行动。")},
+		{Role: ai.RoleAssistant, Content: blocks("任务完成")},
 	}}
-	registry := &fakeRegistry{definitions: []schema.ToolDefinition{
+	registry := &fakeRegistry{definitions: []ai.ToolDefinition{
 		{Name: "bash", Description: "execute command"},
 	}}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), true)
@@ -942,15 +943,15 @@ func TestAgentLoopCarriesThinkingIntoActionContext(t *testing.T) {
 		t.Fatalf("action tools = %#v, want bash and required read", provider.availableTools[1])
 	}
 	actionContext := provider.requests[1]
-	if len(actionContext) != 4 || actionContext[2].Role != schema.RoleAssistant ||
+	if len(actionContext) != 4 || actionContext[2].Role != ai.RoleAssistant ||
 		messageText(t, actionContext[2]) != "先规划，再行动。" ||
-		actionContext[3].Role != schema.RoleUser || !strings.Contains(messageText(t, actionContext[3]), "进入 Action") {
+		actionContext[3].Role != ai.RoleUser || !strings.Contains(messageText(t, actionContext[3]), "进入 Action") {
 		t.Fatalf("action context = %#v", actionContext)
 	}
 }
 
 func TestAgentLoopRejectsNilThinkingResponse(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{nil}}
+	provider := &fakeProvider{responses: []*ai.Message{nil}}
 	engine := newAgentLoopForTest(provider, &fakeRegistry{}, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
@@ -960,15 +961,15 @@ func TestAgentLoopRejectsNilThinkingResponse(t *testing.T) {
 }
 
 func TestAgentLoopRejectsToolCallsDuringThinking(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
+	provider := &fakeProvider{responses: []*ai.Message{
 		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
+			Role: ai.RoleAssistant,
+			ToolCalls: []ai.ToolCall{
 				{ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{}`)},
 			},
 		},
 	}}
-	registry := &fakeRegistry{definitions: []schema.ToolDefinition{{Name: "bash"}}}
+	registry := &fakeRegistry{definitions: []ai.ToolDefinition{{Name: "bash"}}}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), true)
 
 	err := engine.Run(context.Background(), "hello", nil)
@@ -983,29 +984,29 @@ func TestAgentLoopRejectsToolCallsDuringThinking(t *testing.T) {
 func TestAgentLoopRejectsInvalidThinkingMessages(t *testing.T) {
 	tests := []struct {
 		name     string
-		response *schema.Message
+		response *ai.Message
 		want     string
 	}{
 		{
 			name:     "empty plan",
-			response: &schema.Message{Role: schema.RoleAssistant},
+			response: &ai.Message{Role: ai.RoleAssistant},
 			want:     "non-empty",
 		},
 		{
 			name:     "wrong role",
-			response: &schema.Message{Role: schema.RoleUser, Content: blocks("plan")},
+			response: &ai.Message{Role: ai.RoleUser, Content: blocks("plan")},
 			want:     "assistant role",
 		},
 		{
 			name:     "unexpected tool call ID",
-			response: &schema.Message{Role: schema.RoleAssistant, Content: blocks("plan"), ToolCallID: "call-1"},
+			response: &ai.Message{Role: ai.RoleAssistant, Content: blocks("plan"), ToolCallID: "call-1"},
 			want:     "tool_call_id",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
+			provider := &fakeProvider{responses: []*ai.Message{tt.response}}
 			engine := newAgentLoopForTest(provider, &fakeRegistry{}, t.TempDir(), true)
 
 			err := engine.Run(context.Background(), "hello", nil)
@@ -1019,29 +1020,29 @@ func TestAgentLoopRejectsInvalidThinkingMessages(t *testing.T) {
 func TestAgentLoopRejectsInvalidActionMessages(t *testing.T) {
 	tests := []struct {
 		name     string
-		response *schema.Message
+		response *ai.Message
 		want     string
 	}{
 		{
 			name:     "empty response",
-			response: &schema.Message{Role: schema.RoleAssistant},
+			response: &ai.Message{Role: ai.RoleAssistant},
 			want:     "no content or tool calls",
 		},
 		{
 			name:     "wrong role",
-			response: &schema.Message{Role: schema.RoleUser, Content: blocks("done")},
+			response: &ai.Message{Role: ai.RoleUser, Content: blocks("done")},
 			want:     "assistant role",
 		},
 		{
 			name:     "unexpected tool call ID",
-			response: &schema.Message{Role: schema.RoleAssistant, Content: blocks("done"), ToolCallID: "call-1"},
+			response: &ai.Message{Role: ai.RoleAssistant, Content: blocks("done"), ToolCallID: "call-1"},
 			want:     "tool_call_id",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &fakeProvider{responses: []*schema.Message{tt.response}}
+			provider := &fakeProvider{responses: []*ai.Message{tt.response}}
 			engine := newAgentLoopForTest(provider, &fakeRegistry{}, t.TempDir(), false)
 
 			err := engine.Run(context.Background(), "hello", nil)
@@ -1053,21 +1054,21 @@ func TestAgentLoopRejectsInvalidActionMessages(t *testing.T) {
 }
 
 func TestAgentLoopRunsThinkingBeforeEveryActionTurn(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("先查看目录。")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("先查看目录。")},
 		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
+			Role: ai.RoleAssistant,
+			ToolCalls: []ai.ToolCall{
 				{ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls -la"}`)},
 			},
 		},
-		{Role: schema.RoleAssistant, Content: blocks("已有观察结果，接下来总结。")},
-		{Role: schema.RoleAssistant, Content: blocks("完成")},
+		{Role: ai.RoleAssistant, Content: blocks("已有观察结果，接下来总结。")},
+		{Role: ai.RoleAssistant, Content: blocks("完成")},
 	}}
 	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{{Name: "bash"}},
+		definitions: []ai.ToolDefinition{{Name: "bash"}},
 		results: map[string]schema.ToolResult{
-			"bash": toolResult(schema.ToolCall{ID: "call-1", Name: "bash"}, "main.go", false),
+			"bash": toolResult(ai.ToolCall{ID: "call-1", Name: "bash"}, "main.go", false),
 		},
 	}
 	engine := newAgentLoopForTest(provider, registry, t.TempDir(), true)
@@ -1093,17 +1094,17 @@ func TestAgentLoopRunsThinkingBeforeEveryActionTurn(t *testing.T) {
 	if observation == nil || messageText(t, *observation) != "main.go" {
 		t.Fatalf("second action observation = %#v", observation)
 	}
-	if got := secondActionContext[len(secondActionContext)-2]; got.Role != schema.RoleAssistant ||
+	if got := secondActionContext[len(secondActionContext)-2]; got.Role != ai.RoleAssistant ||
 		messageText(t, got) != "已有观察结果，接下来总结。" {
 		t.Fatalf("second action thinking = %#v", got)
 	}
-	if got := secondActionContext[len(secondActionContext)-1]; got.Role != schema.RoleUser ||
+	if got := secondActionContext[len(secondActionContext)-1]; got.Role != ai.RoleUser ||
 		!strings.Contains(messageText(t, got), "进入 Action") {
 		t.Fatalf("second action transition = %#v", got)
 	}
 }
 
-func findMessageByToolCallID(messages []schema.Message, toolCallID string) *schema.Message {
+func findMessageByToolCallID(messages []ai.Message, toolCallID string) *ai.Message {
 	for index := range messages {
 		if messages[index].ToolCallID == toolCallID {
 			return &messages[index]
@@ -1112,11 +1113,11 @@ func findMessageByToolCallID(messages []schema.Message, toolCallID string) *sche
 	return nil
 }
 
-func blocks(text string) []schema.ContentBlock {
-	return []schema.ContentBlock{schema.TextBlock(text)}
+func blocks(text string) []ai.ContentBlock {
+	return []ai.ContentBlock{ai.TextBlock(text)}
 }
 
-func toolResult(call schema.ToolCall, text string, isError bool) schema.ToolResult {
+func toolResult(call ai.ToolCall, text string, isError bool) schema.ToolResult {
 	return schema.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
@@ -1125,9 +1126,9 @@ func toolResult(call schema.ToolCall, text string, isError bool) schema.ToolResu
 	}
 }
 
-func messageText(t *testing.T, message schema.Message) string {
+func messageText(t *testing.T, message ai.Message) string {
 	t.Helper()
-	text, err := schema.TextContent(message.Content)
+	text, err := ai.TextContent(message.Content)
 	if err != nil {
 		t.Fatalf("TextContent() error = %v", err)
 	}

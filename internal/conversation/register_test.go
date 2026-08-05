@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
@@ -39,8 +40,8 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
 	store := &registeredStoreFake{snapshot: conversation.Snapshot{ConversationPK: 1}}
-	runtime := &registeredRuntimeFake{result: schema.RunResult{NewMessages: []schema.Message{{
-		Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")},
+	runtime := &registeredRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 	var runner conversation.Runner
 	app := fxtest.New(t,
@@ -57,7 +58,7 @@ func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 
 	_, err := runner.Run(context.Background(), conversation.RunRequest{
 		UserID: "user", ConversationID: "conversation",
-		Input: schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
+		Input: ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

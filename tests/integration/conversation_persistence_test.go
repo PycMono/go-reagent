@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
@@ -21,7 +22,7 @@ func TestConversationRunnerPersistsAndIsolatesHistory(t *testing.T) {
 		t.Helper()
 		_, err := runner.Run(context.Background(), conversation.RunRequest{
 			UserID: userID, ConversationID: conversationID,
-			Input: schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock(input)}},
+			Input: ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(input)}},
 		}, nil)
 		if err != nil {
 			t.Fatalf("Run(%q, %q) error = %v", userID, conversationID, err)
@@ -39,9 +40,9 @@ func TestConversationRunnerPersistsAndIsolatesHistory(t *testing.T) {
 	if len(runtime.histories[0]) != 0 {
 		t.Fatalf("first history = %#v, want empty", runtime.histories[0])
 	}
-	wantSecond := []schema.Message{
-		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question-1")}},
-		{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer-1")}},
+	wantSecond := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question-1")}},
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer-1")}},
 	}
 	if !reflect.DeepEqual(runtime.histories[1], wantSecond) {
 		t.Fatalf("second history = %#v, want %#v", runtime.histories[1], wantSecond)
@@ -52,21 +53,21 @@ func TestConversationRunnerPersistsAndIsolatesHistory(t *testing.T) {
 }
 
 type acceptanceRuntime struct {
-	histories [][]schema.Message
+	histories [][]ai.Message
 }
 
 func (r *acceptanceRuntime) Run(_ context.Context, request schema.RunRequest, _ engine.Reporter) (schema.RunResult, error) {
 	r.histories = append(r.histories, cloneAcceptanceMessages(request.History))
 	answer := fmt.Sprintf("answer-%d", len(r.histories))
-	return schema.RunResult{NewMessages: []schema.Message{{
-		Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock(answer)},
+	return schema.RunResult{NewMessages: []ai.Message{{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock(answer)},
 	}}}, nil
 }
 
 type acceptanceConversation struct {
 	pk       uint64
 	version  uint64
-	messages []schema.Message
+	messages []ai.Message
 }
 
 type acceptanceConversationStore struct {
@@ -116,15 +117,15 @@ func (s *acceptanceConversationStore) AppendTurn(_ context.Context, request conv
 	return conversation.ErrNotFound
 }
 
-func cloneAcceptanceMessages(messages []schema.Message) []schema.Message {
+func cloneAcceptanceMessages(messages []ai.Message) []ai.Message {
 	if messages == nil {
 		return nil
 	}
-	cloned := make([]schema.Message, len(messages))
+	cloned := make([]ai.Message, len(messages))
 	for index, message := range messages {
 		cloned[index] = message
-		cloned[index].Content = append([]schema.ContentBlock(nil), message.Content...)
-		cloned[index].ToolCalls = append([]schema.ToolCall(nil), message.ToolCalls...)
+		cloned[index].Content = append([]ai.ContentBlock(nil), message.Content...)
+		cloned[index].ToolCalls = append([]ai.ToolCall(nil), message.ToolCalls...)
 	}
 	return cloned
 }

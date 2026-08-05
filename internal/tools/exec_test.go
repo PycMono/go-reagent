@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -77,7 +78,7 @@ func TestExecToolCompletesForegroundWithWorkspaceEnvironmentAndDefaults(t *testi
 func TestExecToolStreamsForegroundStdoutAndStderrAndMarksNonzeroAsError(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
-	call := schema.ToolCall{ID: "exec-stream", Name: "exec", Arguments: execArguments(t, map[string]any{
+	call := ai.ToolCall{ID: "exec-stream", Name: "exec", Arguments: execArguments(t, map[string]any{
 		"command": toolHelperCommand("output-exit"),
 		"yieldMs": 30_000,
 	})}
@@ -116,7 +117,7 @@ func TestExecToolExplicitBackgroundStartsWithStreamingGateClosed(t *testing.T) {
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	var eventsMu sync.Mutex
 	var events []schema.ToolEvent
-	result, err := registry.Execute(context.Background(), schema.ToolCall{
+	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-background",
 		Name: "exec",
 		Arguments: execArguments(t, map[string]any{
@@ -150,7 +151,7 @@ func TestExecToolYieldClosesStreamingGateBeforeToolEnd(t *testing.T) {
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	var eventsMu sync.Mutex
 	var events []schema.ToolEvent
-	result, err := registry.Execute(context.Background(), schema.ToolCall{
+	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-yield",
 		Name: "exec",
 		Arguments: execArguments(t, map[string]any{
@@ -186,7 +187,7 @@ func TestExecToolTimeoutIsOrdinaryErrorAndKillsProcessGroup(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	marker := filepath.Join(t.TempDir(), "timeout-grandchild")
-	result, err := registry.Execute(context.Background(), schema.ToolCall{
+	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:   "exec-timeout",
 		Name: "exec",
 		Arguments: execArguments(t, map[string]any{
@@ -213,7 +214,7 @@ func TestExecToolPropagatesParentCancellationAsControlFlowError(t *testing.T) {
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewExecTool(supervisor))
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
-	result, err := registry.Execute(ctx, schema.ToolCall{
+	result, err := registry.Execute(ctx, ai.ToolCall{
 		ID:        "exec-canceled",
 		Name:      "exec",
 		Arguments: execArguments(t, map[string]any{"command": toolHelperCommand("sleep", "5000"), "yieldMs": 30_000}),
@@ -236,7 +237,7 @@ func TestExecToolRejectsLegacyFieldsAndInvalidSecondsOrMilliseconds(t *testing.T
 		{"command": " ", "yieldMs": 0},
 	}
 	for index, input := range tests {
-		result, err := registry.Execute(context.Background(), schema.ToolCall{
+		result, err := registry.Execute(context.Background(), ai.ToolCall{
 			ID:        "invalid-exec",
 			Name:      "exec",
 			Arguments: execArguments(t, input),

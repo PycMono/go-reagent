@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -83,9 +83,9 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	if snapshot.ConversationPK == 0 || snapshot.Version != 0 || len(snapshot.Messages) != 0 {
 		t.Fatalf("initial snapshot = %#v", snapshot)
 	}
-	messages := []schema.Message{
-		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
-		{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+	messages := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 	}
 	if err := store.AppendTurn(ctx, conversation.AppendRequest{
 		ConversationPK: snapshot.ConversationPK, ExpectedVersion: snapshot.Version,

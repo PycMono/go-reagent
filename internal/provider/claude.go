@@ -6,10 +6,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type ClaudeProvider struct {
@@ -33,9 +32,9 @@ func newClaudeProvider(apiKey, baseURL, model, name string) *ClaudeProvider {
 
 func (p *ClaudeProvider) Generate(
 	ctx context.Context,
-	msgs []schema.Message,
-	availableTools []schema.ToolDefinition,
-) (*schema.Message, error) {
+	msgs []ai.Message,
+	availableTools []ai.ToolDefinition,
+) (*ai.Message, error) {
 	messages, system, err := toClaudeMessages(msgs)
 	if err != nil {
 		return nil, fmt.Errorf("%s 消息转换失败: %w", p.name, err)
@@ -60,13 +59,13 @@ func (p *ClaudeProvider) Generate(
 		return nil, fmt.Errorf("%s API 请求失败: %w", p.name, err)
 	}
 
-	result := &schema.Message{Role: schema.RoleAssistant}
+	result := &ai.Message{Role: ai.RoleAssistant}
 	for _, block := range response.Content {
 		switch block.Type {
 		case "text":
-			result.Content = append(result.Content, schema.TextBlock(block.Text))
+			result.Content = append(result.Content, ai.TextBlock(block.Text))
 		case "tool_use":
-			result.ToolCalls = append(result.ToolCalls, schema.ToolCall{
+			result.ToolCalls = append(result.ToolCalls, ai.ToolCall{
 				ID:        block.ID,
 				Name:      block.Name,
 				Arguments: append(json.RawMessage(nil), block.Input...),
@@ -77,7 +76,7 @@ func (p *ClaudeProvider) Generate(
 	return result, nil
 }
 
-func toClaudeMessages(messages []schema.Message) (
+func toClaudeMessages(messages []ai.Message) (
 	[]anthropic.MessageParam,
 	[]anthropic.TextBlockParam,
 	error,
@@ -86,25 +85,25 @@ func toClaudeMessages(messages []schema.Message) (
 	var system []anthropic.TextBlockParam
 
 	for _, message := range messages {
-		text, err := schema.TextContent(message.Content)
+		text, err := ai.TextContent(message.Content)
 		if err != nil {
 			return nil, nil, fmt.Errorf("message content: %w", err)
 		}
 		switch message.Role {
-		case schema.RoleSystem:
+		case ai.RoleSystem:
 			system = append(system, anthropic.TextBlockParam{Text: text})
-		case schema.RoleUser:
+		case ai.RoleUser:
 			result = append(result, anthropic.NewUserMessage(
 				anthropic.NewTextBlock(text),
 			))
-		case schema.RoleTool:
+		case ai.RoleTool:
 			if message.ToolCallID == "" {
 				return nil, nil, errors.New("tool message requires tool_call_id")
 			}
 			result = append(result, anthropic.NewUserMessage(
 				anthropic.NewToolResultBlock(message.ToolCallID, text, message.IsError),
 			))
-		case schema.RoleAssistant:
+		case ai.RoleAssistant:
 			if text == "" && len(message.ToolCalls) == 0 {
 				return nil, nil, errors.New("assistant message contains no content or tool calls")
 			}
@@ -128,7 +127,7 @@ func toClaudeMessages(messages []schema.Message) (
 	return result, system, nil
 }
 
-func toClaudeTools(definitions []schema.ToolDefinition) ([]anthropic.ToolUnionParam, error) {
+func toClaudeTools(definitions []ai.ToolDefinition) ([]anthropic.ToolUnionParam, error) {
 	result := make([]anthropic.ToolUnionParam, 0, len(definitions))
 	for _, definition := range definitions {
 		object, err := schemaObject(definition.InputSchema)
