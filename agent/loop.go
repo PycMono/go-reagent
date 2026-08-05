@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
+	"strings"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/ai"
@@ -25,29 +27,39 @@ func NewLoop(p ai.Client, scheduler *Scheduler, enableThinking bool) *Loop {
 
 // Run executes provider turns until an Action response has no tool calls.
 func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter) ([]ai.Message, error) {
+	result, err := l.runDetailed(ctx, runContext, reporter)
+	return result.newMessages, err
+}
+
+func (l *Loop) runDetailed(ctx context.Context, runContext RunContext, reporter Reporter) (loopResult, error) {
 	if l == nil || l.provider == nil {
-		return nil, errors.New("agent loop: LLM provider is required")
+		return loopResult{}, errors.New("agent loop: LLM provider is required")
 	}
 	if l.scheduler == nil {
-		return nil, errors.New("agent loop: tool scheduler is required")
+		return loopResult{}, errors.New("agent loop: tool scheduler is required")
 	}
 	if ctx == nil {
-		return nil, errors.New("agent loop: context is required")
+		return loopResult{}, errors.New("agent loop: context is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("Agent 运行已取消: %w", err)
+		return loopResult{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 
 	contextHistory := append([]ai.Message(nil), runContext.Messages...)
 	newMessages := make([]ai.Message, 0)
-	finish := func(err error) ([]ai.Message, error) {
-		return append([]ai.Message(nil), newMessages...), err
+	invocations := make([]ModelInvocation, 0)
+	finish := func(err error) (loopResult, error) {
+		return loopResult{
+			newMessages: append([]ai.Message(nil), newMessages...),
+			invocations: append([]ModelInvocation(nil), invocations...),
+		}, err
 	}
 	availableTools := append([]ai.ToolDefinition(nil), runContext.Tools...)
 	slices.SortFunc(availableTools, func(a, b ai.ToolDefinition) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
 	turnCount := 0
+	var callSequence uint32
 	for {
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
@@ -60,6 +72,7 @@ func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter
 			if reporter != nil {
 				reporter.Report(ctx, NewThinkingEvent())
 			}
+			callSequence++
 			thinkResp, err := l.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", ai.WrapGeneration("thinking", err)))
@@ -70,6 +83,14 @@ func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter
 			if err := validateThinkingResponse(thinkResp); err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", err))
 			}
+			if err := validateMeteredUsage(thinkResp.Usage); err != nil {
+				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", ai.WrapGeneration("model usage", err)))
+			}
+			invocations = append(invocations, ModelInvocation{
+				Sequence: callSequence,
+				Phase:    ModelInvocationPhaseThinking,
+				Usage:    *thinkResp.Usage,
+			})
 			thinkingText, err := ai.TextContent(thinkResp.Content)
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: response content: %w", err))
@@ -84,6 +105,7 @@ func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
+		callSequence++
 		actionResp, err := l.provider.Generate(ctx, contextHistory, availableTools)
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", ai.WrapGeneration("action", err)))
@@ -94,6 +116,14 @@ func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter
 		if err := validateActionResponse(actionResp); err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", err))
 		}
+		if err := validateMeteredUsage(actionResp.Usage); err != nil {
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", ai.WrapGeneration("model usage", err)))
+		}
+		invocations = append(invocations, ModelInvocation{
+			Sequence: callSequence,
+			Phase:    ModelInvocationPhaseAction,
+			Usage:    *actionResp.Usage,
+		})
 		contextHistory = append(contextHistory, *actionResp)
 		newMessages = append(newMessages, *actionResp)
 		if len(actionResp.ToolCalls) == 0 {
@@ -137,4 +167,37 @@ func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter
 			newMessages = append(newMessages, message)
 		}
 	}
+}
+
+func validateMeteredUsage(usage *ai.Usage) error {
+	if usage == nil {
+		return errors.New("usage is required")
+	}
+	if strings.TrimSpace(usage.PlatformID) == "" {
+		return errors.New("usage platform ID is required")
+	}
+	if strings.TrimSpace(usage.Model) == "" {
+		return errors.New("usage model is required")
+	}
+	if usage.InputTokens < 0 || usage.OutputTokens < 0 {
+		return errors.New("usage tokens must be non-negative")
+	}
+	if usage.LatencyMS < 0 {
+		return errors.New("usage latency must be non-negative")
+	}
+	if invalidUsageDecimal(usage.InputPriceUSDPerMillionTokens) ||
+		invalidUsageDecimal(usage.OutputPriceUSDPerMillionTokens) ||
+		invalidUsageDecimal(usage.CostUSD) {
+		return errors.New("usage prices and cost must be finite and non-negative")
+	}
+	expectedCost := (float64(usage.InputTokens)*usage.InputPriceUSDPerMillionTokens +
+		float64(usage.OutputTokens)*usage.OutputPriceUSDPerMillionTokens) / 1_000_000
+	if math.Abs(usage.CostUSD-expectedCost) > 1e-12 {
+		return errors.New("usage cost does not match token prices")
+	}
+	return nil
+}
+
+func invalidUsageDecimal(value float64) bool {
+	return value < 0 || math.IsNaN(value) || math.IsInf(value, 0)
 }

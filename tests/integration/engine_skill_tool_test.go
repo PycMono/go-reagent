@@ -31,7 +31,9 @@ func (p *scriptedProvider) Generate(
 	if index >= len(p.responses) {
 		return nil, fmt.Errorf("unexpected provider call %d", index+1)
 	}
-	return p.responses[index], nil
+	response := *p.responses[index]
+	response.Usage = &ai.Usage{PlatformID: "test", Model: "test-model"}
+	return &response, nil
 }
 
 func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {

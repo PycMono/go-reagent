@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +18,51 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 )
+
+type rawClientFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)
+
+func (f rawClientFunc) Generate(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) (*ai.Message, error) {
+	return f(ctx, messages, tools)
+}
+
+func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *ai.Usage
+	}{
+		{name: "missing"},
+		{name: "blank platform", usage: &ai.Usage{Model: "m"}},
+		{name: "blank model", usage: &ai.Usage{PlatformID: "p"}},
+		{name: "negative input tokens", usage: &ai.Usage{PlatformID: "p", Model: "m", InputTokens: -1}},
+		{name: "negative output tokens", usage: &ai.Usage{PlatformID: "p", Model: "m", OutputTokens: -1}},
+		{name: "negative latency", usage: &ai.Usage{PlatformID: "p", Model: "m", LatencyMS: -1}},
+		{name: "NaN price", usage: &ai.Usage{PlatformID: "p", Model: "m", InputPriceUSDPerMillionTokens: math.NaN()}},
+		{name: "infinite cost", usage: &ai.Usage{PlatformID: "p", Model: "m", CostUSD: math.Inf(1)}},
+		{name: "incorrect cost", usage: &ai.Usage{
+			PlatformID: "p", Model: "m", InputTokens: 1_000_000,
+			InputPriceUSDPerMillionTokens: 0.25, CostUSD: 0.20,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := rawClientFunc(func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+				return &ai.Message{
+					Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("response")}, Usage: tt.usage,
+				}, nil
+			})
+			loop := agent.NewLoop(client, agent.NewScheduler(&fakeRegistry{}, 1), false)
+			messages, err := loop.Run(context.Background(), agent.RunContext{Messages: []ai.Message{{
+				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")},
+			}}}, nil)
+			if err == nil || !errors.Is(err, ai.ErrGeneration) {
+				t.Fatalf("Run() error = %v, want generation error", err)
+			}
+			if len(messages) != 0 {
+				t.Fatalf("uncosted response accepted: %#v", messages)
+			}
+		})
+	}
+}
 
 type fakeProvider struct {
 	responses      []*ai.Message
@@ -40,7 +86,7 @@ func (p *fakeProvider) Generate(
 	if index >= len(p.responses) {
 		return nil, fmt.Errorf("unexpected provider call %d", index+1)
 	}
-	return p.responses[index], nil
+	return withTestUsage(p.responses[index]), nil
 }
 
 type fakeRegistry struct {
@@ -140,7 +186,11 @@ func TestLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		agent.NewToolStartEvent(call),
 		agent.NewToolEndEvent(call, result),
 		agent.NewThinkingEvent(),
-		agent.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}),
+		agent.NewMessageEvent(ai.Message{
+			Role:    ai.RoleAssistant,
+			Content: blocks("done"),
+			Usage:   costedUsage(0),
+		}),
 	}
 	if got := reporter.Events(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("events = %#v, want %#v", got, want)

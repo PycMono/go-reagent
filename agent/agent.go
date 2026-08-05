@@ -51,8 +51,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) 
 		return result, err
 	}
 
-	newMessages, err := a.loop.Run(ctx, runContext, reporter)
-	result.NewMessages = cloneMessages(newMessages)
+	loopResult, err := a.loop.runDetailed(ctx, runContext, reporter)
+	result.NewMessages = cloneMessages(loopResult.newMessages)
+	result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
 	return result, err
 }
 
