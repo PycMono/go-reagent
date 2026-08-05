@@ -183,7 +183,7 @@ Visible assistant message payloads may contain their own `usage` object. This du
 - A provider response without Usage is rejected with an explicit generation error after emitting `usage_missing`; it is not added to loop history or returned as a visible response.
 - A provider response with negative tokens or otherwise invalid Usage is rejected with an explicit generation error after emitting `usage_invalid`.
 - Successfully observed calls completed before a later run failure remain in `RunResult.Invocations`. If the run also contains completed messages, the current partial-turn persistence behavior stores those messages and invocation rows together.
-- Configuration rejects absent, negative, NaN, or infinite prices at startup.
+- Configuration rejects absent, negative, NaN, infinite, or `>= 100,000,000` prices at startup. Calculated per-call cost uses the same exclusive upper bound so every accepted value fits `DECIMAL(20,12)`.
 - Persistence rejects malformed invocation data before database writes.
 - Observability logging failures must not change provider results or crash the run; logging uses the repository's existing logger SDK.
 

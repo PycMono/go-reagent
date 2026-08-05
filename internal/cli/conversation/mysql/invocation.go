@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/agent"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 func encodeInvocation(
@@ -35,11 +36,11 @@ func encodeInvocation(
 	case invocation.Usage.LatencyMS < 0:
 		return invocationRow{}, errors.New("mysql conversation: invocation latency must be non-negative")
 	case invalidDecimal(invocation.Usage.InputPriceUSDPerMillionTokens):
-		return invocationRow{}, errors.New("mysql conversation: invocation input price must be finite and non-negative")
+		return invocationRow{}, errors.New("mysql conversation: invocation input price is outside the supported range")
 	case invalidDecimal(invocation.Usage.OutputPriceUSDPerMillionTokens):
-		return invocationRow{}, errors.New("mysql conversation: invocation output price must be finite and non-negative")
+		return invocationRow{}, errors.New("mysql conversation: invocation output price is outside the supported range")
 	case invalidDecimal(invocation.Usage.CostUSD):
-		return invocationRow{}, errors.New("mysql conversation: invocation cost must be finite and non-negative")
+		return invocationRow{}, errors.New("mysql conversation: invocation cost is outside the supported range")
 	}
 
 	var rowRunID *string
@@ -65,7 +66,7 @@ func encodeInvocation(
 }
 
 func invalidDecimal(value float64) bool {
-	return value < 0 || math.IsNaN(value) || math.IsInf(value, 0)
+	return value < 0 || value >= ai.MaxUsageDecimalExclusive || math.IsNaN(value) || math.IsInf(value, 0)
 }
 
 func decimal12(value float64) string {

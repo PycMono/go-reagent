@@ -103,6 +103,22 @@ func TestCostTrackerAllowsFreePricing(t *testing.T) {
 	}
 }
 
+func TestCostTrackerRejectsCostOutsideLedgerRange(t *testing.T) {
+	tracker, err := NewCostTracker(
+		clientFunc(func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+			return &ai.Message{Role: ai.RoleAssistant, Usage: &ai.Usage{InputTokens: 3_000_000}}, nil
+		}),
+		"test", "model", Pricing{InputUSDPerMillionTokens: 50_000_000},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tracker.Generate(context.Background(), nil, nil)
+	if result != nil || !errors.Is(err, ai.ErrGeneration) {
+		t.Fatalf("Generate() = %#v, %v, want nil generation error", result, err)
+	}
+}
+
 func TestCostTrackerPreservesDelegateError(t *testing.T) {
 	want := errors.New("provider failed")
 	response := &ai.Message{Role: ai.RoleAssistant}
@@ -133,11 +149,13 @@ func TestCostTrackerRejectsInvalidConstruction(t *testing.T) {
 		pricing    Pricing
 	}{
 		{name: "nil client", platformID: "p", model: "m"},
+		{name: "typed nil client", next: clientFunc(nil), platformID: "p", model: "m"},
 		{name: "blank platform", next: validClient, platformID: " ", model: "m"},
 		{name: "blank model", next: validClient, platformID: "p", model: " "},
 		{name: "negative input price", next: validClient, platformID: "p", model: "m", pricing: Pricing{InputUSDPerMillionTokens: -1}},
 		{name: "NaN input price", next: validClient, platformID: "p", model: "m", pricing: Pricing{InputUSDPerMillionTokens: math.NaN()}},
 		{name: "infinite output price", next: validClient, platformID: "p", model: "m", pricing: Pricing{OutputUSDPerMillionTokens: math.Inf(1)}},
+		{name: "input price outside ledger range", next: validClient, platformID: "p", model: "m", pricing: Pricing{InputUSDPerMillionTokens: 100_000_000}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

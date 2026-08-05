@@ -114,6 +114,8 @@ func TestOpenAICompatibleProviderTracksUsagePresence(t *testing.T) {
 		wantNil   bool
 	}{
 		{name: "omitted", wantNil: true},
+		{name: "missing completion tokens", usageJSON: `,"usage":{"prompt_tokens":0,"total_tokens":0}`, wantNil: true},
+		{name: "missing prompt tokens", usageJSON: `,"usage":{"completion_tokens":0,"total_tokens":0}`, wantNil: true},
 		{name: "explicit zero", usageJSON: `,"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`},
 	}
 	for _, tt := range tests {

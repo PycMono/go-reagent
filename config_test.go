@@ -20,6 +20,7 @@ func TestPlatformPricingValidation(t *testing.T) {
 		{name: "negative output", pricing: &ai.PricingConfig{OutputUSDPerMillionTokens: -1}},
 		{name: "NaN input", pricing: &ai.PricingConfig{InputUSDPerMillionTokens: math.NaN()}},
 		{name: "infinite output", pricing: &ai.PricingConfig{OutputUSDPerMillionTokens: math.Inf(1)}},
+		{name: "input outside ledger range", pricing: &ai.PricingConfig{InputUSDPerMillionTokens: 100_000_000}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

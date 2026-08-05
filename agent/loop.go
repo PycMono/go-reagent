@@ -188,7 +188,7 @@ func validateMeteredUsage(usage *ai.Usage) error {
 	if invalidUsageDecimal(usage.InputPriceUSDPerMillionTokens) ||
 		invalidUsageDecimal(usage.OutputPriceUSDPerMillionTokens) ||
 		invalidUsageDecimal(usage.CostUSD) {
-		return errors.New("usage prices and cost must be finite and non-negative")
+		return errors.New("usage prices and cost are outside the supported range")
 	}
 	expectedCost := (float64(usage.InputTokens)*usage.InputPriceUSDPerMillionTokens +
 		float64(usage.OutputTokens)*usage.OutputPriceUSDPerMillionTokens) / 1_000_000
@@ -199,5 +199,5 @@ func validateMeteredUsage(usage *ai.Usage) error {
 }
 
 func invalidUsageDecimal(value float64) bool {
-	return value < 0 || math.IsNaN(value) || math.IsInf(value, 0)
+	return value < 0 || value >= ai.MaxUsageDecimalExclusive || math.IsNaN(value) || math.IsInf(value, 0)
 }

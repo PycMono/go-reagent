@@ -73,7 +73,8 @@ func (p *Client) Generate(
 			})
 		}
 	}
-	if response.JSON.Usage.Valid() {
+	if response.JSON.Usage.Valid() && response.Usage.JSON.InputTokens.Valid() &&
+		response.Usage.JSON.OutputTokens.Valid() {
 		result.Usage = &ai.Usage{
 			InputTokens:  response.Usage.InputTokens,
 			OutputTokens: response.Usage.OutputTokens,
