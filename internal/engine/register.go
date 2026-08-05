@@ -16,9 +16,9 @@ var Register = fx.Options(
 			fx.ResultTags(`group:"reporters"`),
 		),
 		newRegisteredReporter,
-		newRegisteredToolScheduler,
-		newRegisteredAgentLoop,
-		NewAgentRuntime,
+		newRegisteredScheduler,
+		newRegisteredLoop,
+		fx.Annotate(agent.New, fx.As(fx.Self()), fx.As(new(agent.Runner))),
 	),
 )
 
@@ -36,10 +36,10 @@ func newRegisteredReporter(params reporterParams) agent.Reporter {
 	return agent.NewMultiReporter(params.Registrations)
 }
 
-func newRegisteredToolScheduler(registry agent.Registry) *ToolScheduler {
-	return NewToolScheduler(registry, defaultMaxParallelTools)
+func newRegisteredScheduler(registry agent.Registry) *agent.Scheduler {
+	return agent.NewScheduler(registry, defaultMaxParallelTools)
 }
 
-func newRegisteredAgentLoop(llmProvider ai.Client, scheduler *ToolScheduler) *AgentLoop {
-	return NewAgentLoop(llmProvider, scheduler, true)
+func newRegisteredLoop(llmProvider ai.Client, scheduler *agent.Scheduler) *agent.Loop {
+	return agent.NewLoop(llmProvider, scheduler, true)
 }

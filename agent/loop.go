@@ -1,4 +1,4 @@
-package engine
+package agent
 
 import (
 	"cmp"
@@ -8,25 +8,23 @@ import (
 	"slices"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
-	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 )
 
-// AgentLoop owns provider phases, message history, validation, and tool scheduling for one run.
-type AgentLoop struct {
+// Loop owns provider phases, message history, validation, and tool scheduling for one run.
+type Loop struct {
 	provider       ai.Client
-	scheduler      *ToolScheduler
+	scheduler      *Scheduler
 	enableThinking bool
 }
 
-// NewAgentLoop creates the state-machine boundary for Agent execution.
-func NewAgentLoop(p ai.Client, scheduler *ToolScheduler, enableThinking bool) *AgentLoop {
-	return &AgentLoop{provider: p, scheduler: scheduler, enableThinking: enableThinking}
+// NewLoop creates the state-machine boundary for Agent execution.
+func NewLoop(p ai.Client, scheduler *Scheduler, enableThinking bool) *Loop {
+	return &Loop{provider: p, scheduler: scheduler, enableThinking: enableThinking}
 }
 
 // Run executes provider turns until an Action response has no tool calls.
-func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, reporter agent.Reporter) ([]ai.Message, error) {
+func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter) ([]ai.Message, error) {
 	if l == nil || l.provider == nil {
 		return nil, errors.New("agent loop: LLM provider is required")
 	}
@@ -60,11 +58,11 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 
 		if l.enableThinking {
 			if reporter != nil {
-				reporter.Report(ctx, agent.NewThinkingEvent())
+				reporter.Report(ctx, NewThinkingEvent())
 			}
 			thinkResp, err := l.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", err))
+				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", ai.WrapGeneration("thinking", err)))
 			}
 			if thinkResp == nil {
 				return finish(errors.New("Thinking 阶段生成失败: provider returned an empty response"))
@@ -88,7 +86,7 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 		}
 		actionResp, err := l.provider.Generate(ctx, contextHistory, availableTools)
 		if err != nil {
-			return finish(fmt.Errorf("Action 阶段生成失败: %w", err))
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", ai.WrapGeneration("action", err)))
 		}
 		if actionResp == nil {
 			return finish(errors.New("Action 阶段生成失败: provider returned an empty response"))
@@ -100,7 +98,7 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 		newMessages = append(newMessages, *actionResp)
 		if len(actionResp.ToolCalls) == 0 {
 			if reporter != nil {
-				reporter.Report(ctx, agent.NewMessageEvent(*actionResp))
+				reporter.Report(ctx, NewMessageEvent(*actionResp))
 			}
 			return finish(nil)
 		}
@@ -115,14 +113,17 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 			logsdk.Any("tool_count", len(actionResp.ToolCalls)),
 			logsdk.Any("execution_mode", mode),
 		)
-		observer := func(ctx context.Context, event agent.ToolEvent) {
+		observer := func(ctx context.Context, event ToolEvent) {
 			if reporter != nil {
-				reporter.Report(ctx, agent.NewAgentToolEvent(event))
+				reporter.Report(ctx, NewAgentToolEvent(event))
 			}
 		}
 		results, err := l.scheduler.Schedule(ctx, actionResp.ToolCalls, availableTools, observer)
 		if err != nil {
-			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return finish(fmt.Errorf("Agent 运行已取消: %w", err))
+			}
+			return finish(fmt.Errorf("%w: schedule tools: %w", ErrToolRuntime, err))
 		}
 		for _, result := range results {
 			message := ai.Message{

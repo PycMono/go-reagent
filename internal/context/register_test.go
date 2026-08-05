@@ -3,6 +3,7 @@ package context
 import (
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -13,7 +14,7 @@ func TestRegisterProvidesWorkspaceContextComponents(t *testing.T) {
 	var (
 		composer *PromptComposer
 		loader   *SkillLoader
-		factory  *RunContextFactory
+		factory  agent.ContextFactory
 	)
 	app := fxtest.New(t,
 		fx.Supply(config.WorkDir(workDir)),
@@ -29,7 +30,7 @@ func TestRegisterProvidesWorkspaceContextComponents(t *testing.T) {
 	if loader == nil || loader.workDir != workDir {
 		t.Fatalf("SkillLoader = %#v, want workDir %q", loader, workDir)
 	}
-	if factory == nil || factory.composer != composer || factory.skillLoader != loader {
-		t.Fatalf("RunContextFactory = %#v, want injected components", factory)
+	if factory == nil {
+		t.Fatal("agent.ContextFactory was not provided")
 	}
 }

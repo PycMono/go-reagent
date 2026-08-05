@@ -13,13 +13,12 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"go.uber.org/fx"
 )
 
 // AgentRunner executes the configured Agent task exactly once.
 type AgentRunner struct {
-	runtime            engine.AgentRuntime
+	runtime            agent.Runner
 	conversationRunner conversation.Runner
 	persistenceEnabled bool
 	userID             string
@@ -36,7 +35,7 @@ type AgentRunner struct {
 
 // NewAgentRunner creates the one-shot application runner.
 func NewAgentRunner(
-	runtime engine.AgentRuntime,
+	runtime agent.Runner,
 	conversationRunner conversation.Runner,
 	cfg *config.Config,
 	prompt config.Prompt,

@@ -10,7 +10,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	reagentinternal "github.com/PycMono/go-reagent/internal"
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
@@ -32,7 +31,7 @@ func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {
 	t.Setenv("CONFIG_PATH", configPath)
 	workDir := t.TempDir()
 	var (
-		runtime    engine.AgentRuntime
+		runtime    agent.Runner
 		registry   agent.Registry
 		workspace  *tools.Workspace
 		supervisor *tools.ProcessSupervisor

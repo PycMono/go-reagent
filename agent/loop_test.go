@@ -1,4 +1,4 @@
-package engine_test
+package agent_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/engine"
 )
 
 type fakeProvider struct {
@@ -88,6 +88,65 @@ type registryWithRequiredRead struct {
 	agent.Registry
 }
 
+type recordingReporter struct {
+	mu     sync.Mutex
+	events []agent.AgentEvent
+}
+
+func (r *recordingReporter) Report(_ context.Context, event agent.AgentEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+}
+
+func (r *recordingReporter) Events() []agent.AgentEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]agent.AgentEvent(nil), r.events...)
+}
+
+func TestLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("plan one")},
+		{
+			Role:    ai.RoleAssistant,
+			Content: blocks("starting tool"),
+			ToolCalls: []ai.ToolCall{{
+				ID:        "call-1",
+				Name:      "read",
+				Arguments: json.RawMessage(`{"path":"a.txt"}`),
+			}},
+		},
+		{Role: ai.RoleAssistant, Content: blocks("plan two")},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
+	}}
+	registry := &fakeRegistry{
+		definitions: []ai.ToolDefinition{{Name: "read"}},
+		results: map[string]agent.ToolResult{
+			"read": toolResult(ai.ToolCall{ID: "call-1", Name: "read"}, "file A", false),
+		},
+	}
+	reporter := &recordingReporter{}
+	runtime := newAgentLoopForTest(provider, registry, t.TempDir(), true)
+
+	if err := runtime.Run(context.Background(), "read a", reporter); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	result := toolResult(call, "file A", false)
+	want := []agent.AgentEvent{
+		agent.NewThinkingEvent(),
+		agent.NewToolStartEvent(call),
+		agent.NewToolEndEvent(call, result),
+		agent.NewThinkingEvent(),
+		agent.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}),
+	}
+	if got := reporter.Events(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %#v, want %#v", got, want)
+	}
+}
+
 func (r registryWithRequiredRead) GetAvailableTools() []ai.ToolDefinition {
 	definitions := r.Registry.GetAvailableTools()
 	for _, definition := range definitions {
@@ -123,14 +182,19 @@ func writeValidAgentWorkspace(workDir string) {
 }
 
 func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter agent.Reporter) error {
-	runContext, err := r.factory.Create(ctx, agent.RunRequest{Input: ai.Message{
+	prepared, err := r.factory.Create(ctx, agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
 		Content: blocks(prompt),
 	}}, r.registry.GetAvailableTools())
 	if err != nil {
 		return err
 	}
-	loop := engine.NewAgentLoop(r.provider, engine.NewToolScheduler(r.registry, r.MaxParallelTools), r.enableThinking)
+	runContext := agent.RunContext{
+		Messages: prepared.Messages,
+		Tools:    prepared.Tools,
+		Metadata: prepared.Metadata,
+	}
+	loop := agent.NewLoop(r.provider, agent.NewScheduler(r.registry, r.MaxParallelTools), r.enableThinking)
 	_, err = loop.Run(ctx, runContext, reporter)
 	return err
 }
@@ -255,8 +319,8 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 		},
 	}
 	reporter := &recordingReporter{}
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 2), true)
-	runContext := ctxpkg.RunContext{
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 2), true)
+	runContext := agent.RunContext{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: blocks("system")},
 			{Role: ai.RoleUser, Content: blocks("do work")},

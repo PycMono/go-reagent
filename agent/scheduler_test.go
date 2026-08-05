@@ -1,4 +1,4 @@
-package engine_test
+package agent_test
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/engine"
 )
 
 type schedulerRegistry struct {
@@ -97,7 +96,7 @@ func TestToolSchedulerRunsSafeCallsInWavesAroundExclusiveBarriers(t *testing.T) 
 	}
 	registry := newSchedulerRegistry(calls)
 	t.Cleanup(registry.closeAll)
-	scheduler := engine.NewToolScheduler(registry, 4)
+	scheduler := agent.NewScheduler(registry, 4)
 
 	done := make(chan struct {
 		results []agent.ToolResult
@@ -169,7 +168,7 @@ func TestToolSchedulerBoundsConcurrencyAndKeepsInputResultOrder(t *testing.T) {
 	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	t.Cleanup(registry.closeAll)
-	scheduler := engine.NewToolScheduler(registry, 2)
+	scheduler := agent.NewScheduler(registry, 2)
 
 	done := make(chan struct {
 		results []agent.ToolResult
@@ -222,7 +221,7 @@ func TestToolSchedulerUsesSerialFallbackForNonpositiveLimit(t *testing.T) {
 	definitions := []ai.ToolDefinition{{Name: "read", ParallelSafe: true}}
 	registry := newSchedulerRegistry(calls)
 	t.Cleanup(registry.closeAll)
-	scheduler := engine.NewToolScheduler(registry, 0)
+	scheduler := agent.NewScheduler(registry, 0)
 
 	done := make(chan error, 1)
 	go func() {
@@ -253,7 +252,7 @@ func TestToolSchedulerCancellationPreventsLaterWaves(t *testing.T) {
 		cancel()
 		registry.closeAll()
 	})
-	scheduler := engine.NewToolScheduler(registry, 2)
+	scheduler := agent.NewScheduler(registry, 2)
 
 	done := make(chan error, 1)
 	go func() {
@@ -278,7 +277,7 @@ func TestToolSchedulerWaitsForStartedSiblingsBeforeReturningFirstError(t *testin
 	registry := newSchedulerRegistry(calls)
 	registry.errors["one"] = wantErr
 	t.Cleanup(registry.closeAll)
-	scheduler := engine.NewToolScheduler(registry, 2)
+	scheduler := agent.NewScheduler(registry, 2)
 
 	done := make(chan error, 1)
 	go func() {

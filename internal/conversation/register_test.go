@@ -10,7 +10,6 @@ import (
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -24,7 +23,7 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	)
 	app := fxtest.New(t,
 		fx.Supply(cfg),
-		fx.Provide(func() engine.AgentRuntime { return &registeredRuntimeFake{} }),
+		fx.Provide(func() agent.Runner { return &registeredRuntimeFake{} }),
 		drivermysql.Register,
 		conversationmysql.Register,
 		conversation.Register,
@@ -47,7 +46,7 @@ func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 	app := fxtest.New(t,
 		fx.Supply(cfg),
 		fx.Provide(
-			func() engine.AgentRuntime { return runtime },
+			func() agent.Runner { return runtime },
 			func() conversation.Store { return store },
 		),
 		conversation.Register,

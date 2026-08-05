@@ -1,32 +1,31 @@
-package engine
+package agent
 
 import (
 	"context"
 	"errors"
 	"sync"
 
-	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 )
 
-// ToolScheduler partitions tool calls into ordered waves and executes parallel-safe waves with a bound.
-type ToolScheduler struct {
-	registry    agent.Registry
+// Scheduler partitions tool calls into ordered waves and executes parallel-safe waves with a bound.
+type Scheduler struct {
+	registry    Registry
 	maxParallel int
 }
 
-// NewToolScheduler creates a scheduler backed by registry.
-func NewToolScheduler(registry agent.Registry, maxParallel int) *ToolScheduler {
-	return &ToolScheduler{registry: registry, maxParallel: maxParallel}
+// NewScheduler creates a scheduler backed by registry.
+func NewScheduler(registry Registry, maxParallel int) *Scheduler {
+	return &Scheduler{registry: registry, maxParallel: maxParallel}
 }
 
 // Schedule executes consecutive parallel-safe calls together and treats every other call as a barrier.
-func (s *ToolScheduler) Schedule(
+func (s *Scheduler) Schedule(
 	ctx context.Context,
 	calls []ai.ToolCall,
 	definitions []ai.ToolDefinition,
-	observer agent.ToolEventObserver,
-) ([]agent.ToolResult, error) {
+	observer ToolEventObserver,
+) ([]ToolResult, error) {
 	if ctx == nil {
 		return nil, errors.New("tool scheduler: context is required")
 	}
@@ -35,7 +34,7 @@ func (s *ToolScheduler) Schedule(
 	}
 
 	parallelSafe := definitionSafety(definitions)
-	results := make([]agent.ToolResult, len(calls))
+	results := make([]ToolResult, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -55,7 +54,7 @@ func (s *ToolScheduler) Schedule(
 }
 
 // Mode describes whether a batch is serial, parallel, or a mixture of both scheduling forms.
-func (s *ToolScheduler) Mode(calls []ai.ToolCall, definitions []ai.ToolDefinition) string {
+func (s *Scheduler) Mode(calls []ai.ToolCall, definitions []ai.ToolDefinition) string {
 	if len(calls) == 0 || s == nil || s.maxParallel <= 1 {
 		return "serial"
 	}
@@ -96,13 +95,13 @@ func definitionSafety(definitions []ai.ToolDefinition) map[string]bool {
 	return parallelSafe
 }
 
-func (s *ToolScheduler) executeWave(
+func (s *Scheduler) executeWave(
 	ctx context.Context,
 	calls []ai.ToolCall,
-	results []agent.ToolResult,
+	results []ToolResult,
 	start int,
 	end int,
-	observer agent.ToolEventObserver,
+	observer ToolEventObserver,
 ) error {
 	limit := s.maxParallel
 	if limit <= 0 {
