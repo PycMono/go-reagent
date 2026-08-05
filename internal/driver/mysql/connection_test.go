@@ -9,7 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	sqlsdk "github.com/PycMono/go-mysql-sdk"
-	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent"
 	"go.uber.org/fx/fxtest"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -18,7 +18,7 @@ import (
 func TestNewConnectionDoesNotOpenWhenPersistenceDisabled(t *testing.T) {
 	lifecycle := fxtest.NewLifecycle(t)
 	calls := 0
-	connection, err := newConnection(lifecycle, &config.Config{}, func(*sqlsdk.Options) (sdkProvider, error) {
+	connection, err := newConnection(lifecycle, &reagent.Config{}, func(*sqlsdk.Options) (sdkProvider, error) {
 		calls++
 		return &sdkProviderFake{}, nil
 	})
@@ -34,9 +34,9 @@ func TestNewConnectionDoesNotOpenWhenPersistenceDisabled(t *testing.T) {
 
 func TestNewConnectionMapsExactSDKOptions(t *testing.T) {
 	lifecycle := fxtest.NewLifecycle(t)
-	cfg := &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
-		MySQL: config.MySQLConfig{
+	cfg := &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
+		MySQL: reagent.MySQLConfig{
 			Host: "127.0.0.1", Port: 3306, Database: "biz", User: "root", Password: "123456",
 			MaxOpen: 100, MaxIdle: 10, ConnLifetime: 3600, ConnTimeout: 3,
 			LogLevel: 3, SlowThreshold: 500,
@@ -61,9 +61,9 @@ func TestNewConnectionMapsExactSDKOptions(t *testing.T) {
 func TestNewConnectionSanitizesOpenerFailure(t *testing.T) {
 	const password = "never-print-mysql-password"
 	lifecycle := fxtest.NewLifecycle(t)
-	cfg := &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
-		MySQL:        config.MySQLConfig{Password: password},
+	cfg := &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
+		MySQL:        reagent.MySQLConfig{Password: password},
 	}
 	_, err := newConnection(lifecycle, cfg, func(*sqlsdk.Options) (sdkProvider, error) {
 		return nil, fmt.Errorf("dial dsn with %s failed", password)
@@ -154,10 +154,10 @@ func (f *sdkProviderFake) Transaction(ctx context.Context, callback func(context
 func (f *sdkProviderFake) IsInTransaction(context.Context) bool         { return false }
 func (f *sdkProviderFake) FindDB4TransContext(context.Context) *gorm.DB { return nil }
 
-func enabledConnectionConfig() *config.Config {
-	return &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
-		MySQL: config.MySQLConfig{
+func enabledConnectionConfig() *reagent.Config {
+	return &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
+		MySQL: reagent.MySQLConfig{
 			Host: "127.0.0.1", Port: 3306, Database: "biz", User: "root", Password: "password",
 			MaxOpen: 100, MaxIdle: 10, ConnLifetime: 3600, ConnTimeout: 3, LogLevel: 3, SlowThreshold: 500,
 		},

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
-	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
+	cfg := &reagent.Config{Conversation: reagent.ConversationConfig{HistoryMessageLimit: 100}}
 	var (
 		connection *drivermysql.Connection
 		store      conversation.Store
@@ -37,7 +37,7 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 }
 
 func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
-	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
+	cfg := &reagent.Config{Conversation: reagent.ConversationConfig{HistoryMessageLimit: 100}}
 	store := &registeredStoreFake{snapshot: conversation.Snapshot{ConversationPK: 1}}
 	runtime := &registeredRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},

@@ -1,4 +1,4 @@
-package config
+package reagent
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestLoadParsesConversationAndMySQLConfiguration(t *testing.T) {
+func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model"}],
@@ -19,9 +19,9 @@ func TestLoadParsesConversationAndMySQLConfiguration(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	if !cfg.Conversation.Enabled || cfg.Conversation.HistoryMessageLimit != 100 {
 		t.Fatalf("Conversation = %#v", cfg.Conversation)
@@ -34,8 +34,8 @@ func TestLoadParsesConversationAndMySQLConfiguration(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultsConversationHistoryLimit(t *testing.T) {
-	cfg, err := Load(writeConfig(t, `{
+func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}]
 	}`))
@@ -47,7 +47,7 @@ func TestLoadDefaultsConversationHistoryLimit(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidConversationAndMySQLConfiguration(t *testing.T) {
+func TestLoadConfigRejectsInvalidConversationAndMySQLConfiguration(t *testing.T) {
 	const (
 		credential = "never-print-mysql-password"
 		validMySQL = `"host":"127.0.0.1","port":3306,"database":"biz","user":"root","password":"` + credential + `",` +
@@ -89,18 +89,18 @@ func TestLoadRejectsInvalidConversationAndMySQLConfiguration(t *testing.T) {
 				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m"}],` +
 				conversation + `,"mysql":{` + mysql + `}}`
 
-			_, err := Load(writeConfig(t, document))
+			_, err := LoadConfig(writeConfig(t, document))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+				t.Fatalf("LoadConfig() error = %v, want containing %q", err, tt.want)
 			}
 			if strings.Contains(errorText(err), credential) {
-				t.Fatalf("Load() error leaks MySQL password: %v", err)
+				t.Fatalf("LoadConfig() error leaks MySQL password: %v", err)
 			}
 		})
 	}
 }
 
-func TestLoadSelectsAndNormalizesCurrentPlatform(t *testing.T) {
+func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform": " deepseek ",
 		"platforms": [
@@ -121,9 +121,9 @@ func TestLoadSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 		]
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	current, err := cfg.Current()
 	if err != nil {
@@ -144,7 +144,7 @@ func TestLoadSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	}
 }
 
-func TestLoadNormalizesOptionalWeComWebhookURL(t *testing.T) {
+func TestLoadConfigNormalizesOptionalWeComWebhookURL(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[
@@ -153,16 +153,16 @@ func TestLoadNormalizesOptionalWeComWebhookURL(t *testing.T) {
 		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	if got := cfg.Bot.WeCom.WebhookURL; got != "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key" {
 		t.Fatalf("WebhookURL = %q", got)
 	}
 }
 
-func TestLoadAllowsMissingWeComWebhookURL(t *testing.T) {
+func TestLoadConfigAllowsMissingWeComWebhookURL(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[
@@ -170,16 +170,16 @@ func TestLoadAllowsMissingWeComWebhookURL(t *testing.T) {
 		]
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	if cfg.Bot.WeCom.WebhookURL != "" {
 		t.Fatalf("WebhookURL = %q, want empty", cfg.Bot.WeCom.WebhookURL)
 	}
 }
 
-func TestLoadRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
+func TestLoadConfigRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
 	const credential = "never-print-webhook-key"
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
@@ -189,16 +189,16 @@ func TestLoadRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
 		"bot":{"wecom":{"webhookURL":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
 	}`)
 
-	_, err := Load(path)
+	_, err := LoadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "webhookURL") {
-		t.Fatalf("Load() error = %v, want webhookURL validation error", err)
+		t.Fatalf("LoadConfig() error = %v, want webhookURL validation error", err)
 	}
 	if strings.Contains(errorText(err), credential) {
-		t.Fatalf("Load() error leaks webhook credential: %v", err)
+		t.Fatalf("LoadConfig() error leaks webhook credential: %v", err)
 	}
 }
 
-func TestLoadSupportsYAMLAndTOML(t *testing.T) {
+func TestLoadConfigSupportsYAMLAndTOML(t *testing.T) {
 	tests := []struct {
 		name      string
 		extension string
@@ -233,9 +233,9 @@ model = " deepseek-chat "
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := Load(writeConfigFile(t, "config"+tt.extension, tt.document))
+			cfg, err := LoadConfig(writeConfigFile(t, "config"+tt.extension, tt.document))
 			if err != nil {
-				t.Fatalf("Load() error = %v", err)
+				t.Fatalf("LoadConfig() error = %v", err)
 			}
 			current, err := cfg.Current()
 			if err != nil {
@@ -255,7 +255,7 @@ model = " deepseek-chat "
 	}
 }
 
-func TestLoadAppliesShellEnvironmentOverride(t *testing.T) {
+func TestLoadConfigAppliesShellEnvironmentOverride(t *testing.T) {
 	t.Setenv("CONFIGOR_CURRENTPLATFORM", "backup")
 	path := writeConfig(t, `{
 		"currentPlatform":"primary",
@@ -265,9 +265,9 @@ func TestLoadAppliesShellEnvironmentOverride(t *testing.T) {
 		]
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	current, err := cfg.Current()
 	if err != nil {
@@ -278,7 +278,7 @@ func TestLoadAppliesShellEnvironmentOverride(t *testing.T) {
 	}
 }
 
-func TestLoadAppliesEnvironmentFileOverlay(t *testing.T) {
+func TestLoadConfigAppliesEnvironmentFileOverlay(t *testing.T) {
 	t.Setenv("CONFIGOR_ENV", "test")
 	dir := t.TempDir()
 	path := writeConfigAt(t, dir, "config.json", `{
@@ -290,9 +290,9 @@ func TestLoadAppliesEnvironmentFileOverlay(t *testing.T) {
 	}`)
 	writeConfigAt(t, dir, "config.test.json", `{"currentPlatform":"backup"}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	current, err := cfg.Current()
 	if err != nil {
@@ -303,7 +303,7 @@ func TestLoadAppliesEnvironmentFileOverlay(t *testing.T) {
 	}
 }
 
-func TestLoadFallsBackToExampleFile(t *testing.T) {
+func TestLoadConfigFallsBackToExampleFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	writeConfigAt(t, dir, "config.example.json", `{
@@ -313,9 +313,9 @@ func TestLoadFallsBackToExampleFile(t *testing.T) {
 		]
 	}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	current, err := cfg.Current()
 	if err != nil {
@@ -326,7 +326,7 @@ func TestLoadFallsBackToExampleFile(t *testing.T) {
 	}
 }
 
-func TestLoadUsesConfigorPermissiveJSONDefaults(t *testing.T) {
+func TestLoadConfigUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[
@@ -335,9 +335,9 @@ func TestLoadUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 		"unknown":true
 	} {"ignored":"trailing document"}`)
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	current, err := cfg.Current()
 	if err != nil {
@@ -348,7 +348,7 @@ func TestLoadUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidConfiguration(t *testing.T) {
+func TestLoadConfigRejectsInvalidConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string
 		document string
@@ -427,22 +427,22 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, tt.document))
+			_, err := LoadConfig(writeConfig(t, tt.document))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+				t.Fatalf("LoadConfig() error = %v, want containing %q", err, tt.want)
 			}
 			if strings.Contains(errorText(err), "never-print-this") {
-				t.Fatalf("Load() error leaks credential: %v", err)
+				t.Fatalf("LoadConfig() error leaks credential: %v", err)
 			}
 		})
 	}
 }
 
-func TestLoadErrorContainsConfigurationPath(t *testing.T) {
+func TestLoadConfigErrorContainsConfigurationPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
-	_, err := Load(path)
+	_, err := LoadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), path) {
-		t.Fatalf("Load() error = %v, want path %q", err, path)
+		t.Fatalf("LoadConfig() error = %v, want path %q", err, path)
 	}
 }
 

@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/dispatch"
 	"github.com/PycMono/go-reagent/internal/engine"
 )
@@ -31,9 +31,9 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registrations, err := dispatch.NewReporterRegistrations(&agentconfig.Config{
-		Bot: agentconfig.BotConfig{
-			WeCom: agentconfig.WeComConfig{WebhookURL: server.URL},
+	registrations, err := dispatch.NewReporterRegistrations(&reagent.Config{
+		Bot: reagent.BotConfig{
+			WeCom: reagent.WeComConfig{WebhookURL: server.URL},
 		},
 	})
 	if err != nil {

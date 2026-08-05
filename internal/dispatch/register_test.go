@@ -3,11 +3,11 @@ package dispatch
 import (
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent"
 )
 
 func TestNewReporterRegistrationsAllowsDisabledWeCom(t *testing.T) {
-	registrations, err := NewReporterRegistrations(&config.Config{})
+	registrations, err := NewReporterRegistrations(&reagent.Config{})
 	if err != nil {
 		t.Fatalf("NewReporterRegistrations() error = %v", err)
 	}

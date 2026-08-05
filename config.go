@@ -1,5 +1,5 @@
-// Package config loads and validates the go-reagent process configuration.
-package config
+// Package reagent exposes the synchronous go-reagent SDK.
+package reagent
 
 import (
 	"errors"
@@ -14,13 +14,21 @@ const (
 	DefaultHistoryMessageLimit = 100
 )
 
+type PlatformConfig = ai.PlatformConfig
+type Protocol = ai.Protocol
+
+const (
+	ProtocolOpenAI    = ai.ProtocolOpenAI
+	ProtocolAnthropic = ai.ProtocolAnthropic
+)
+
 // Config describes all configured model platforms and the active selection.
 type Config struct {
-	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
-	Platforms       []ai.PlatformConfig `json:"platforms" yaml:"platforms" toml:"platforms"`
-	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
-	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
-	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
+	CurrentPlatform string             `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
+	Platforms       []PlatformConfig   `json:"platforms" yaml:"platforms" toml:"platforms"`
+	Bot             BotConfig          `json:"bot" yaml:"bot" toml:"bot"`
+	Conversation    ConversationConfig `json:"conversation" yaml:"conversation" toml:"conversation"`
+	MySQL           MySQLConfig        `json:"mysql" yaml:"mysql" toml:"mysql"`
 }
 
 // ConversationConfig controls optional durable conversation history.
@@ -54,24 +62,24 @@ type WeComConfig struct {
 	WebhookURL string `json:"webhookURL" yaml:"webhookURL" toml:"webhookURL"`
 }
 
-// Load decodes, normalizes, and validates configuration through Configor.
-func Load(path string) (*Config, error) {
+// LoadConfig decodes, normalizes, and validates configuration through Configor.
+func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	if err := configor.Load(&cfg, path); err != nil {
-		return nil, fmt.Errorf("加载配置 %s 失败: %w", path, err)
+		return nil, wrap(ErrorCodeConfigLoad, "LoadConfig", fmt.Errorf("加载配置 %s 失败: %w", path, err))
 	}
 
 	if err := cfg.normalizeAndValidate(); err != nil {
-		return nil, fmt.Errorf("加载配置 %s 失败: %w", path, err)
+		return nil, wrap(ErrorCodeConfigInvalid, "LoadConfig", fmt.Errorf("加载配置 %s 失败: %w", path, err))
 	}
 
 	return &cfg, nil
 }
 
 // Current returns the selected platform profile.
-func (c *Config) Current() (ai.PlatformConfig, error) {
+func (c *Config) Current() (PlatformConfig, error) {
 	if c == nil {
-		return ai.PlatformConfig{}, errors.New("配置不能为空")
+		return PlatformConfig{}, errors.New("配置不能为空")
 	}
 
 	for _, platform := range c.Platforms {
@@ -79,12 +87,12 @@ func (c *Config) Current() (ai.PlatformConfig, error) {
 			continue
 		}
 		if platform.APIKey == "" {
-			return ai.PlatformConfig{}, fmt.Errorf("当前平台 %q 未配置 apiKey", platform.ID)
+			return PlatformConfig{}, fmt.Errorf("当前平台 %q 未配置 apiKey", platform.ID)
 		}
 		return platform, nil
 	}
 
-	return ai.PlatformConfig{}, c.currentPlatformNotFoundError()
+	return PlatformConfig{}, c.currentPlatformNotFoundError()
 }
 
 func (c *Config) currentPlatformNotFoundError() error {

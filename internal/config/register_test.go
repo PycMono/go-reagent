@@ -2,9 +2,11 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -68,7 +70,7 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 	t.Setenv("CONFIG_PATH", path)
 	t.Setenv("AGENT_PROMPT", "registered prompt")
 	var (
-		cfg     *Config
+		cfg     *reagent.Config
 		workDir workspace.WorkDir
 		prompt  Prompt
 	)
@@ -86,7 +88,8 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 
 func writeRuntimeConfig(t *testing.T) string {
 	t.Helper()
-	return writeConfig(t, `{
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
 		"currentPlatform":"test-platform",
 		"platforms":[{
 			"id":"test-platform",
@@ -95,5 +98,8 @@ func writeRuntimeConfig(t *testing.T) string {
 			"apiKey":"test-key",
 			"model":"test-model"
 		}]
-	}`)
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
