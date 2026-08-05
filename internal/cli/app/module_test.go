@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	"github.com/PycMono/go-reagent/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"

@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/internal/cli/conversation"
-	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
-	drivermysql "github.com/PycMono/go-reagent/internal/cli/driver/mysql"
+	"github.com/PycMono/go-reagent/conversation"
+	persistencemysql "github.com/PycMono/go-reagent/persistence/mysql"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx/fxtest"
@@ -36,7 +35,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	}
 
 	lifecycle := fxtest.NewLifecycle(t)
-	connection, err := drivermysql.NewConnection(lifecycle, &config.Config{
+	connection, err := persistencemysql.NewConnection(lifecycle, &config.Config{
 		Conversation: config.ConversationConfig{Enabled: true, HistoryMessageLimit: 100},
 		MySQL: config.MySQLConfig{
 			Host: host, Port: port, Database: database, User: user, Password: password,
@@ -87,7 +86,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 		}
 	})
 
-	store := conversationmysql.NewStore(connection, connection)
+	store := persistencemysql.NewStore(connection, connection)
 	snapshot, err := store.LoadOrCreate(ctx, key, 100)
 	if err != nil {
 		t.Fatal(err)

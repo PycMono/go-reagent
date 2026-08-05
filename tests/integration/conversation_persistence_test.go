@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	"github.com/PycMono/go-reagent/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
