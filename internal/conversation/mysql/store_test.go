@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/schema"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -37,9 +37,9 @@ func TestStoreLoadOrCreateLoadsOwnedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrCreate() error = %v", err)
 	}
-	wantMessages := []schema.Message{
-		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
-		{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+	wantMessages := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
+		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 	}
 	if snapshot.ConversationPK != 7 || snapshot.Version != 3 || !reflect.DeepEqual(snapshot.Messages, wantMessages) {
 		t.Fatalf("snapshot = %#v", snapshot)
@@ -68,9 +68,9 @@ func TestStoreAppendTurnCommitsMessagesAndVersion(t *testing.T) {
 		ConversationPK:  11,
 		ExpectedVersion: 7,
 		RunID:           "run-8",
-		Messages: []schema.Message{
-			{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
-			{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+		Messages: []ai.Message{
+			{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
+			{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 		},
 	})
 	if err != nil {
@@ -146,9 +146,9 @@ func TestStoreAppendTurnRejectsInvalidRequestBeforeTransaction(t *testing.T) {
 	}{
 		{name: "zero conversation primary key", mutate: func(r *conversation.AppendRequest) { r.ConversationPK = 0 }},
 		{name: "empty messages", mutate: func(r *conversation.AppendRequest) { r.Messages = nil }},
-		{name: "unknown role", mutate: func(r *conversation.AppendRequest) { r.Messages[1].Role = schema.RoleSystem }},
+		{name: "unknown role", mutate: func(r *conversation.AppendRequest) { r.Messages[1].Role = ai.RoleSystem }},
 		{name: "invalid JSON", mutate: func(r *conversation.AppendRequest) {
-			r.Messages[1].ToolCalls = []schema.ToolCall{{ID: "call", Name: "read", Arguments: []byte(`{"path":`)}}
+			r.Messages[1].ToolCalls = []ai.ToolCall{{ID: "call", Name: "read", Arguments: []byte(`{"path":`)}}
 		}},
 	}
 	store := NewStore(provider, provider)
@@ -293,10 +293,10 @@ func TestStoreLoadWindowDropsIncompleteOldestTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Role != schema.RoleUser || snapshot.Messages[1].Role != schema.RoleAssistant {
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Role != ai.RoleUser || snapshot.Messages[1].Role != ai.RoleAssistant {
 		t.Fatalf("Messages = %#v", snapshot.Messages)
 	}
-	if text, _ := schema.TextContent(snapshot.Messages[0].Content); text != "new question" {
+	if text, _ := ai.TextContent(snapshot.Messages[0].Content); text != "new question" {
 		t.Fatalf("first message = %q", text)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -430,9 +430,9 @@ func validAppendRequest() conversation.AppendRequest {
 		ConversationPK:  11,
 		ExpectedVersion: 7,
 		RunID:           "run-8",
-		Messages: []schema.Message{
-			{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("question")}},
-			{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}},
+		Messages: []ai.Message{
+			{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
+			{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 		},
 	}
 }

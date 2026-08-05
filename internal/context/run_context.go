@@ -8,13 +8,14 @@ import (
 	"strings"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // RunContext is the prepared message history and tool snapshot for one Agent run.
 type RunContext struct {
-	Messages []schema.Message
-	Tools    []schema.ToolDefinition
+	Messages []ai.Message
+	Tools    []ai.ToolDefinition
 	Metadata map[string]string
 }
 
@@ -33,7 +34,7 @@ func NewRunContextFactory(composer *PromptComposer, skillLoader *SkillLoader) *R
 func (f *RunContextFactory) Create(
 	ctx context.Context,
 	request schema.RunRequest,
-	definitions []schema.ToolDefinition,
+	definitions []ai.ToolDefinition,
 ) (RunContext, error) {
 	if ctx == nil {
 		return RunContext{}, errors.New("run context: context is required")
@@ -79,7 +80,7 @@ func (f *RunContextFactory) Create(
 		)
 	}
 
-	messages := make([]schema.Message, 0, 2+len(request.Context)+len(request.History))
+	messages := make([]ai.Message, 0, 2+len(request.Context)+len(request.History))
 	messages = append(messages, systemMessage)
 	contextBlocks := append([]schema.ContextBlock(nil), request.Context...)
 	sort.SliceStable(contextBlocks, func(i, j int) bool {
@@ -87,29 +88,29 @@ func (f *RunContextFactory) Create(
 	})
 
 	for _, block := range contextBlocks {
-		messages = append(messages, schema.Message{
-			Role: schema.RoleSystem,
-			Content: []schema.ContentBlock{schema.TextBlock(
+		messages = append(messages, ai.Message{
+			Role: ai.RoleSystem,
+			Content: []ai.ContentBlock{ai.TextBlock(
 				"# Context: " + strings.TrimSpace(block.Name) + "\n" + block.Content,
 			)},
 		})
 	}
-	messages = append(messages, append([]schema.Message(nil), request.History...)...)
+	messages = append(messages, append([]ai.Message(nil), request.History...)...)
 	messages = append(messages, request.Input)
 
 	return RunContext{
 		Messages: messages,
-		Tools:    append([]schema.ToolDefinition(nil), definitions...),
+		Tools:    append([]ai.ToolDefinition(nil), definitions...),
 		Metadata: cloneMetadata(request.Metadata),
 	}, nil
 }
 
 func validateRunRequest(request schema.RunRequest) error {
-	if request.Input.Role != schema.RoleUser {
+	if request.Input.Role != ai.RoleUser {
 		return fmt.Errorf("run context: input role must be user, got %q", request.Input.Role)
 	}
 
-	inputText, err := schema.TextContent(request.Input.Content)
+	inputText, err := ai.TextContent(request.Input.Content)
 	if err != nil {
 		return fmt.Errorf("run context: input content: %w", err)
 	}
@@ -144,7 +145,7 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 	return cloned
 }
 
-func hasToolDefinition(definitions []schema.ToolDefinition, name string) bool {
+func hasToolDefinition(definitions []ai.ToolDefinition, name string) bool {
 	for _, definition := range definitions {
 		if definition.Name == name {
 			return true

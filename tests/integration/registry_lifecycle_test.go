@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
@@ -41,7 +41,7 @@ func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 		t.Fatalf("tool names = %v, want %v", toolNames(registry.GetAvailableTools()), want)
 	}
 	for _, old := range []string{"read_file", "edit_file", "write_file"} {
-		result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "old", Name: old, Arguments: json.RawMessage(`{}`)}, nil)
+		result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "old", Name: old, Arguments: json.RawMessage(`{}`)}, nil)
 		if err != nil || !result.IsError {
 			t.Fatalf("old tool %q remained callable", old)
 		}
@@ -49,7 +49,7 @@ func TestRegistryResourcesCloseInFxLifecycleOrder(t *testing.T) {
 
 	marker := filepath.Join(t.TempDir(), "child-survived")
 	command := lifecycleHelperCommand("spawn-child", marker)
-	result, err := registry.Execute(context.Background(), schema.ToolCall{
+	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:        "background-exec",
 		Name:      "exec",
 		Arguments: json.RawMessage(fmt.Sprintf(`{"command":%q,"background":true}`, command)),
@@ -146,7 +146,7 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) {
 	t.Fatalf("timed out waiting for %s", path)
 }
 
-func toolNames(definitions []schema.ToolDefinition) []string {
+func toolNames(definitions []ai.ToolDefinition) []string {
 	names := make([]string, len(definitions))
 	for index := range definitions {
 		names[index] = definitions[index].Name
@@ -154,6 +154,6 @@ func toolNames(definitions []schema.ToolDefinition) []string {
 	return names
 }
 
-func schemaToolCall(id, name, arguments string) schema.ToolCall {
-	return schema.ToolCall{ID: id, Name: name, Arguments: []byte(arguments)}
+func schemaToolCall(id, name, arguments string) ai.ToolCall {
+	return ai.ToolCall{ID: id, Name: name, Arguments: []byte(arguments)}
 }

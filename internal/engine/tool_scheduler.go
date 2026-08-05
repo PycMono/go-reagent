@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
 )
@@ -23,8 +24,8 @@ func NewToolScheduler(registry tools.Registry, maxParallel int) *ToolScheduler {
 // Schedule executes consecutive parallel-safe calls together and treats every other call as a barrier.
 func (s *ToolScheduler) Schedule(
 	ctx context.Context,
-	calls []schema.ToolCall,
-	definitions []schema.ToolDefinition,
+	calls []ai.ToolCall,
+	definitions []ai.ToolDefinition,
 	observer tools.ToolEventObserver,
 ) ([]schema.ToolResult, error) {
 	if ctx == nil {
@@ -55,7 +56,7 @@ func (s *ToolScheduler) Schedule(
 }
 
 // Mode describes whether a batch is serial, parallel, or a mixture of both scheduling forms.
-func (s *ToolScheduler) Mode(calls []schema.ToolCall, definitions []schema.ToolDefinition) string {
+func (s *ToolScheduler) Mode(calls []ai.ToolCall, definitions []ai.ToolDefinition) string {
 	if len(calls) == 0 || s == nil || s.maxParallel <= 1 {
 		return "serial"
 	}
@@ -88,7 +89,7 @@ func (s *ToolScheduler) Mode(calls []schema.ToolCall, definitions []schema.ToolD
 	return "serial"
 }
 
-func definitionSafety(definitions []schema.ToolDefinition) map[string]bool {
+func definitionSafety(definitions []ai.ToolDefinition) map[string]bool {
 	parallelSafe := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
 		parallelSafe[definition.Name] = definition.ParallelSafe
@@ -98,7 +99,7 @@ func definitionSafety(definitions []schema.ToolDefinition) map[string]bool {
 
 func (s *ToolScheduler) executeWave(
 	ctx context.Context,
-	calls []schema.ToolCall,
+	calls []ai.ToolCall,
 	results []schema.ToolResult,
 	start int,
 	end int,
@@ -118,7 +119,7 @@ func (s *ToolScheduler) executeWave(
 	for index := start; index < end; index++ {
 		call := calls[index]
 		waitGroup.Add(1)
-		go func(index int, call schema.ToolCall) {
+		go func(index int, call ai.ToolCall) {
 			defer waitGroup.Done()
 			select {
 			case semaphore <- struct{}{}:

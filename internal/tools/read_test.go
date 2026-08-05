@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 func TestReadToolDefinitionDescribesPagination(t *testing.T) {
@@ -51,7 +51,7 @@ func TestReadToolReturnsStructuredPageDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := schema.TextContent(output.Content)
+	content, err := ai.TextContent(output.Content)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
@@ -46,7 +47,7 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 
 func TestRegisterRejectsDuplicateToolGroupNames(t *testing.T) {
 	duplicateRead := testTool("read", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("duplicate")}}, nil
+		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("duplicate")}}, nil
 	})
 	app := fx.New(
 		fx.NopLogger,
@@ -78,7 +79,7 @@ func TestRegisterSortsReversedMiddlewareGroupByOrderThenName(t *testing.T) {
 		}
 	}
 	probe := testTool("order_probe", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("ok")}}, nil
+		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 	})
 	var registry Registry
 	app := fxtest.New(t,
@@ -94,7 +95,7 @@ func TestRegisterSortsReversedMiddlewareGroupByOrderThenName(t *testing.T) {
 	app.RequireStart()
 	defer app.RequireStop()
 
-	result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "probe", Name: "order_probe", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "probe", Name: "order_probe", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
@@ -113,7 +114,7 @@ func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
 	app.RequireStart()
 	defer app.RequireStop()
 
-	for _, call := range []schema.ToolCall{
+	for _, call := range []ai.ToolCall{
 		{ID: "legacy-exec-timeout", Name: "exec", Arguments: json.RawMessage(`{"command":"true","timeout_ms":1000}`)},
 		{ID: "legacy-exec-yield", Name: "exec", Arguments: json.RawMessage(`{"command":"true","yield_ms":1}`)},
 		{ID: "legacy-process-session", Name: "process", Arguments: json.RawMessage(`{"action":"poll","session_id":"x"}`)},

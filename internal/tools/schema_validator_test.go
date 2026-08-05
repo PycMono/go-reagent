@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 func TestCompileSchemaValidatorRejectsMalformedSchema(t *testing.T) {
-	_, err := compileSchemaValidator(schema.ToolDefinition{
+	_, err := compileSchemaValidator(ai.ToolDefinition{
 		Name:        "broken",
 		InputSchema: map[string]any{"type": "definitely-not-a-json-schema-type"},
 	})
@@ -19,7 +19,7 @@ func TestCompileSchemaValidatorRejectsMalformedSchema(t *testing.T) {
 }
 
 func TestSchemaValidatorAcceptsJsonNumbersWithoutPrecisionLoss(t *testing.T) {
-	validate, err := compileSchemaValidator(schema.ToolDefinition{
+	validate, err := compileSchemaValidator(ai.ToolDefinition{
 		Name: "number",
 		InputSchema: map[string]any{
 			"type": "object",

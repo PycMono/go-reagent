@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
@@ -48,24 +49,24 @@ func TestMultiReporterSortsAndIsolatesPanic(t *testing.T) {
 }
 
 func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
-	provider := &fakeProvider{responses: []*schema.Message{
-		{Role: schema.RoleAssistant, Content: blocks("plan one")},
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, Content: blocks("plan one")},
 		{
-			Role:    schema.RoleAssistant,
+			Role:    ai.RoleAssistant,
 			Content: blocks("starting tool"),
-			ToolCalls: []schema.ToolCall{{
+			ToolCalls: []ai.ToolCall{{
 				ID:        "call-1",
 				Name:      "read",
 				Arguments: json.RawMessage(`{"path":"a.txt"}`),
 			}},
 		},
-		{Role: schema.RoleAssistant, Content: blocks("plan two")},
-		{Role: schema.RoleAssistant, Content: blocks("done")},
+		{Role: ai.RoleAssistant, Content: blocks("plan two")},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{
-		definitions: []schema.ToolDefinition{{Name: "read"}},
+		definitions: []ai.ToolDefinition{{Name: "read"}},
 		results: map[string]schema.ToolResult{
-			"read": toolResult(schema.ToolCall{ID: "call-1", Name: "read"}, "file A", false),
+			"read": toolResult(ai.ToolCall{ID: "call-1", Name: "read"}, "file A", false),
 		},
 	}
 	reporter := &recordingReporter{}
@@ -75,14 +76,14 @@ func TestAgentLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	call := schema.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	result := toolResult(call, "file A", false)
 	want := []schema.AgentEvent{
 		schema.NewThinkingEvent(),
 		schema.NewToolStartEvent(call),
 		schema.NewToolEndEvent(call, result),
 		schema.NewThinkingEvent(),
-		schema.NewMessageEvent(schema.Message{Role: schema.RoleAssistant, Content: blocks("done")}),
+		schema.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}),
 	}
 	if got := reporter.Events(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("events = %#v, want %#v", got, want)

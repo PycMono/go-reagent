@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/dispatch"
 	"github.com/PycMono/go-reagent/internal/engine"
@@ -49,9 +50,9 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	registrations = append(registrations, engine.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
 	reporter := engine.NewMultiReporter(registrations)
 	ctx := context.Background()
-	execCall := schema.ToolCall{ID: "exec-1", Name: "exec", Arguments: []byte(`{"command":"go test ./..."}`)}
+	execCall := ai.ToolCall{ID: "exec-1", Name: "exec", Arguments: []byte(`{"command":"go test ./..."}`)}
 	reporter.Report(ctx, schema.NewToolUpdateEvent(execCall, schema.ToolUpdate{
-		Content: []schema.ContentBlock{schema.TextBlock("streamed output")},
+		Content: []ai.ContentBlock{ai.TextBlock("streamed output")},
 	}))
 	mu.Lock()
 	requestsAfterUpdate := requests
@@ -64,12 +65,12 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	reporter.Report(ctx, schema.NewToolEndEvent(execCall, schema.ToolResult{
 		ToolCallID: execCall.ID,
 		ToolName:   execCall.Name,
-		Content:    []schema.ContentBlock{schema.TextBlock("exit status 1")},
+		Content:    []ai.ContentBlock{ai.TextBlock("exit status 1")},
 		IsError:    true,
 	}))
-	reporter.Report(ctx, schema.NewMessageEvent(schema.Message{
-		Role:    schema.RoleAssistant,
-		Content: []schema.ContentBlock{schema.TextBlock("final answer")},
+	reporter.Report(ctx, schema.NewMessageEvent(ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("final answer")},
 	}))
 	mu.Lock()
 	finalRequests := requests

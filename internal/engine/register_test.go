@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/provider"
@@ -16,15 +17,15 @@ import (
 
 type registerProvider struct{}
 
-func (*registerProvider) Generate(context.Context, []schema.Message, []schema.ToolDefinition) (*schema.Message, error) {
-	return &schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("done")}}, nil
+func (*registerProvider) Generate(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+	return &ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}, nil
 }
 
 type registerRegistry struct{}
 
-func (*registerRegistry) GetAvailableTools() []schema.ToolDefinition { return nil }
+func (*registerRegistry) GetAvailableTools() []ai.ToolDefinition { return nil }
 
-func (*registerRegistry) Execute(context.Context, schema.ToolCall, tools.ToolEventObserver) (schema.ToolResult, error) {
+func (*registerRegistry) Execute(context.Context, ai.ToolCall, tools.ToolEventObserver) (schema.ToolResult, error) {
 	return schema.ToolResult{}, nil
 }
 

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
@@ -56,7 +57,7 @@ func (r *WeComReporter) Report(ctx context.Context, event schema.AgentEvent) {
 		}
 		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", event.Tool.Call.Name, eventText(event.Tool.Result.Content)))
 	case schema.AgentEventMessage:
-		if event.Message == nil || event.Message.Role != schema.RoleAssistant {
+		if event.Message == nil || event.Message.Role != ai.RoleAssistant {
 			return
 		}
 		r.send(ctx, eventText(event.Message.Content))
@@ -129,8 +130,8 @@ func truncateUTF8(content string, maxBytes int) string {
 	return content[:limit] + truncationMarker
 }
 
-func eventText(content []schema.ContentBlock) string {
-	text, err := schema.TextContent(content)
+func eventText(content []ai.ContentBlock) string {
+	text, err := ai.TextContent(content)
 	if err != nil {
 		return ""
 	}

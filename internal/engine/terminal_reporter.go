@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -88,8 +89,8 @@ func terminalDisplayArguments(arguments string) string {
 	return string(runes[:terminalArgumentLimit]) + "... (已截断)"
 }
 
-func terminalEventText(content []schema.ContentBlock) string {
-	text, err := schema.TextContent(content)
+func terminalEventText(content []ai.ContentBlock) string {
+	text, err := ai.TextContent(content)
 	if err != nil {
 		return ""
 	}

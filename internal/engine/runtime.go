@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
 	"github.com/PycMono/go-reagent/internal/schema"
 	"github.com/PycMono/go-reagent/internal/tools"
@@ -15,11 +16,11 @@ type AgentRuntime interface {
 }
 
 type runContextCreator interface {
-	Create(context.Context, schema.RunRequest, []schema.ToolDefinition) (ctxpkg.RunContext, error)
+	Create(context.Context, schema.RunRequest, []ai.ToolDefinition) (ctxpkg.RunContext, error)
 }
 
 type agentLoopRunner interface {
-	Run(context.Context, ctxpkg.RunContext, Reporter) ([]schema.Message, error)
+	Run(context.Context, ctxpkg.RunContext, Reporter) ([]ai.Message, error)
 }
 
 type runtime struct {
@@ -60,7 +61,7 @@ func (r *runtime) Run(
 	}
 
 	newMessages, err := r.loop.Run(ctx, runContext, reporter)
-	result.NewMessages = append([]schema.Message(nil), newMessages...)
+	result.NewMessages = append([]ai.Message(nil), newMessages...)
 
 	return result, err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
@@ -22,14 +23,14 @@ type Key struct {
 type Snapshot struct {
 	ConversationPK uint64
 	Version        uint64
-	Messages       []schema.Message
+	Messages       []ai.Message
 }
 
 type AppendRequest struct {
 	ConversationPK  uint64
 	ExpectedVersion uint64
 	RunID           string
-	Messages        []schema.Message
+	Messages        []ai.Message
 }
 
 type Store interface {
@@ -41,7 +42,7 @@ type RunRequest struct {
 	UserID         string
 	ConversationID string
 	RunID          string
-	Input          schema.Message
+	Input          ai.Message
 	Context        []schema.ContextBlock
 	Metadata       map[string]string
 }

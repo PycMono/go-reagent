@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	"github.com/PycMono/go-reagent/internal/engine"
@@ -82,9 +83,9 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 	r.mu.Unlock()
 
 	go func() {
-		input := schema.Message{
-			Role:    schema.RoleUser,
-			Content: []schema.ContentBlock{schema.TextBlock(string(r.prompt))},
+		input := ai.Message{
+			Role:    ai.RoleUser,
+			Content: []ai.ContentBlock{ai.TextBlock(string(r.prompt))},
 		}
 		var err error
 		if r.persistenceEnabled {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -35,8 +36,8 @@ func NewWriteTool(workspace *Workspace) (*WriteTool, error) {
 	return &WriteTool{workspace: workspace}, nil
 }
 
-func (t *WriteTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *WriteTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:        "write",
 		Description: "创建或完整覆盖工作区内的 UTF-8 文本文件，并自动创建父目录。仅用于新文件或完整重写。",
 		InputSchema: map[string]any{
@@ -56,7 +57,7 @@ func (t *WriteTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateE
 	if err != nil {
 		return schema.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
+	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *WriteTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

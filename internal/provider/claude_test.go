@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 )
 
 func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
@@ -44,18 +44,18 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	defer server.Close()
 
 	p := newClaudeProvider("test-key", server.URL+"/", "test-model", "test")
-	messages := []schema.Message{
-		{Role: schema.RoleSystem, Content: []schema.ContentBlock{schema.TextBlock("system prompt")}},
-		{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("weather")}},
+	messages := []ai.Message{
+		{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock("system prompt")}},
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("weather")}},
 		{
-			Role: schema.RoleAssistant,
-			ToolCalls: []schema.ToolCall{
+			Role: ai.RoleAssistant,
+			ToolCalls: []ai.ToolCall{
 				{ID: "call-old", Name: "get_weather", Arguments: json.RawMessage(`{"city":"上海"}`)},
 			},
 		},
-		{Role: schema.RoleTool, Content: []schema.ContentBlock{schema.TextBlock("sunny")}, ToolCallID: "call-old"},
+		{Role: ai.RoleTool, Content: []ai.ContentBlock{ai.TextBlock("sunny")}, ToolCallID: "call-old"},
 	}
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{
 			Name:        "get_weather",
 			Description: "get weather",
@@ -73,7 +73,7 @@ func TestClaudeProviderTranslatesToolConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if text, err := schema.TextContent(result.Content); err != nil || text != "checking" || len(result.ToolCalls) != 1 {
+	if text, err := ai.TextContent(result.Content); err != nil || text != "checking" || len(result.ToolCalls) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 	call := result.ToolCalls[0]
@@ -116,7 +116,7 @@ func TestClaudeProviderOmitsToolsDuringThinking(t *testing.T) {
 	defer server.Close()
 
 	p := newClaudeProvider("test-key", server.URL+"/", "test-model", "test")
-	_, err := p.Generate(context.Background(), []schema.Message{{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("plan")}}}, nil)
+	_, err := p.Generate(context.Background(), []ai.Message{{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("plan")}}}, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -126,15 +126,15 @@ func TestClaudeProviderOmitsToolsDuringThinking(t *testing.T) {
 }
 
 func TestClaudeMessagesMapNativeToolResults(t *testing.T) {
-	message := schema.Message{
-		Role:       schema.RoleTool,
-		Content:    []schema.ContentBlock{schema.TextBlock("permission denied")},
+	message := ai.Message{
+		Role:       ai.RoleTool,
+		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		ToolCallID: "call-1",
 		ToolName:   "read",
 		IsError:    true,
 	}
 
-	messages, _, err := toClaudeMessages([]schema.Message{message})
+	messages, _, err := toClaudeMessages([]ai.Message{message})
 	if err != nil {
 		t.Fatalf("toClaudeMessages() error = %v", err)
 	}
@@ -157,9 +157,9 @@ func TestClaudeMessagesMapNativeToolResults(t *testing.T) {
 }
 
 func TestClaudeMessagesRejectToolResultWithoutCallID(t *testing.T) {
-	_, _, err := toClaudeMessages([]schema.Message{{
-		Role:    schema.RoleTool,
-		Content: []schema.ContentBlock{schema.TextBlock("permission denied")},
+	_, _, err := toClaudeMessages([]ai.Message{{
+		Role:    ai.RoleTool,
+		Content: []ai.ContentBlock{ai.TextBlock("permission denied")},
 	}})
 	if err == nil {
 		t.Fatal("toClaudeMessages() error = nil")

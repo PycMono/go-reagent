@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/PycMono/go-reagent/internal/schema"
+	"github.com/PycMono/go-reagent/ai"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-func compileSchemaValidator(definition schema.ToolDefinition) (func(json.RawMessage) error, error) {
+func compileSchemaValidator(definition ai.ToolDefinition) (func(json.RawMessage) error, error) {
 	schemaJSON, err := json.Marshal(definition.InputSchema)
 	if err != nil {
 		return nil, fmt.Errorf("marshal input schema for tool %q: %w", definition.Name, err)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -35,8 +36,8 @@ func (t *ApplyPatchTool) Name() string {
 	return "apply_patch"
 }
 
-func (t *ApplyPatchTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *ApplyPatchTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:        t.Name(),
 		Description: "使用 *** Begin Patch 结构化补丁在工作区内新增、更新、删除或移动多个文本文件。",
 		InputSchema: map[string]any{
@@ -58,7 +59,7 @@ func (t *ApplyPatchTool) Execute(ctx context.Context, args json.RawMessage, _ Up
 	if err != nil {
 		return schema.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
+	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *ApplyPatchTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

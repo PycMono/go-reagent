@@ -10,6 +10,7 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -38,8 +39,8 @@ func NewReadTool(workspace *Workspace) (*ReadTool, error) {
 	return &ReadTool{workspace: workspace}, nil
 }
 
-func (t *ReadTool) Definition() schema.ToolDefinition {
-	return schema.ToolDefinition{
+func (t *ReadTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
 		Name:         "read",
 		Description:  "按行读取工作区内指定相对路径的 UTF-8 文本文件。单页最多 2000 行且最终输出不超过 50 KiB；出现 Use offset=N to continue 时请用 offset 继续读取。",
 		ParallelSafe: true,
@@ -61,7 +62,7 @@ func (t *ReadTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEm
 	if err != nil {
 		return schema.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(output)}, Details: details}, nil
+	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *ReadTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

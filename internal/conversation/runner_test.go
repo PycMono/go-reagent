@@ -8,22 +8,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
-	history := schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("previous")}}
-	input := schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("next")}}
-	answer := schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}}
+	history := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("previous")}}
+	input := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("next")}}
+	answer := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}
 	store := &runnerStoreFake{snapshot: Snapshot{
 		ConversationPK: 42,
 		Version:        7,
-		Messages:       []schema.Message{history},
+		Messages:       []ai.Message{history},
 	}}
 	runtime := &runnerRuntimeFake{result: schema.RunResult{
 		RunID:       "run-1",
-		NewMessages: []schema.Message{answer},
+		NewMessages: []ai.Message{answer},
 	}}
 	runner := NewRunner(runtime, store, 100)
 
@@ -42,14 +43,14 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 	if store.loadCalls != 1 || store.loadedKey != (Key{UserID: "user-1", ConversationID: "conversation-1"}) || store.loadedLimit != 100 {
 		t.Fatalf("LoadOrCreate calls/key/limit = %d, %#v, %d", store.loadCalls, store.loadedKey, store.loadedLimit)
 	}
-	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, []schema.Message{history}) || !reflect.DeepEqual(runtime.request.Input, input) {
+	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, []ai.Message{history}) || !reflect.DeepEqual(runtime.request.Input, input) {
 		t.Fatalf("runtime call/request = %d, %#v", runtime.calls, runtime.request)
 	}
 	wantAppend := AppendRequest{
 		ConversationPK:  42,
 		ExpectedVersion: 7,
 		RunID:           "run-1",
-		Messages:        []schema.Message{input, answer},
+		Messages:        []ai.Message{input, answer},
 	}
 	if store.appendCalls != 1 || !reflect.DeepEqual(store.appended, wantAppend) {
 		t.Fatalf("AppendTurn calls/request = %d, %#v, want %#v", store.appendCalls, store.appended, wantAppend)
@@ -58,10 +59,10 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 
 func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
-	partial := schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("partial")}}
+	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Version: 2}}
 	runtime := &runnerRuntimeFake{
-		result: schema.RunResult{RunID: "run", NewMessages: []schema.Message{partial}},
+		result: schema.RunResult{RunID: "run", NewMessages: []ai.Message{partial}},
 		err:    runtimeErr,
 	}
 
@@ -69,7 +70,7 @@ func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 	if !errors.Is(err, runtimeErr) {
 		t.Fatalf("Run() error = %v, want runtime error", err)
 	}
-	if !reflect.DeepEqual(result.NewMessages, []schema.Message{partial}) || store.appendCalls != 1 || len(store.appended.Messages) != 2 {
+	if !reflect.DeepEqual(result.NewMessages, []ai.Message{partial}) || store.appendCalls != 1 || len(store.appended.Messages) != 2 {
 		t.Fatalf("result/append = %#v, %#v", result, store.appended)
 	}
 }
@@ -99,10 +100,10 @@ func TestRunnerStopsAfterLoadError(t *testing.T) {
 func TestRunnerJoinsRuntimeAndAppendErrors(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
 	appendErr := errors.New("append failed")
-	partial := schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("partial")}}
+	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1}, appendErr: appendErr}
 	runtime := &runnerRuntimeFake{
-		result: schema.RunResult{NewMessages: []schema.Message{partial}},
+		result: schema.RunResult{NewMessages: []ai.Message{partial}},
 		err:    runtimeErr,
 	}
 
@@ -117,8 +118,8 @@ func TestRunnerReturnsConflictWithoutRetry(t *testing.T) {
 		snapshot:  Snapshot{ConversationPK: 1},
 		appendErr: ErrConflict,
 	}
-	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []schema.Message{{
-		Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")},
+	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 
 	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
@@ -136,13 +137,13 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 	}{
 		{name: "empty user ID", mutate: func(r *RunRequest) { r.UserID = " " }, want: "user ID"},
 		{name: "empty conversation ID", mutate: func(r *RunRequest) { r.ConversationID = " " }, want: "conversation ID"},
-		{name: "non-user input", mutate: func(r *RunRequest) { r.Input.Role = schema.RoleAssistant }, want: "input role"},
+		{name: "non-user input", mutate: func(r *RunRequest) { r.Input.Role = ai.RoleAssistant }, want: "input role"},
 		{name: "empty input", mutate: func(r *RunRequest) { r.Input.Content = nil }, want: "input content"},
 		{name: "unsupported content", mutate: func(r *RunRequest) {
-			r.Input.Content = []schema.ContentBlock{{Type: "image", Text: "private content"}}
+			r.Input.Content = []ai.ContentBlock{{Type: "image", Text: "private content"}}
 		}, want: "unsupported content type"},
 		{name: "tool calls", mutate: func(r *RunRequest) {
-			r.Input.ToolCalls = []schema.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{}`)}}
+			r.Input.ToolCalls = []ai.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{}`)}}
 		}, want: "tool fields"},
 	}
 
@@ -190,16 +191,16 @@ func TestRunnerValidatesDependenciesAndCancellation(t *testing.T) {
 }
 
 func TestRunnerClonesBoundaryValues(t *testing.T) {
-	history := schema.Message{
-		Role:      schema.RoleAssistant,
-		ToolCalls: []schema.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{"path":"a"}`)}},
+	history := ai.Message{
+		Role:      ai.RoleAssistant,
+		ToolCalls: []ai.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{"path":"a"}`)}},
 	}
-	input := schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("input")}}
-	answer := schema.Message{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("answer")}}
+	input := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")}}
+	answer := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}
 	contextBlocks := []schema.ContextBlock{{Name: "profile", Content: "gold"}}
 	metadata := map[string]string{"tenant": "one"}
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Messages: []schema.Message{history}}}
-	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []schema.Message{answer}}}
+	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Messages: []ai.Message{history}}}
+	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{answer}}}
 	request := RunRequest{
 		UserID: " user ", ConversationID: " conversation ", RunID: "run",
 		Input: input, Context: contextBlocks, Metadata: metadata,
@@ -232,7 +233,7 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 func validConversationRunRequest() RunRequest {
 	return RunRequest{
 		UserID: "user", ConversationID: "conversation", RunID: "run",
-		Input: schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("input")}},
+		Input: ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")}},
 	}
 }
 

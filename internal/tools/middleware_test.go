@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -29,11 +30,11 @@ func TestMiddlewareRunsByOrderThenName(t *testing.T) {
 	}
 	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
 		sequence = append(sequence, "tool")
-		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock("ok")}}, nil
+		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 	})
 	registry := newTestRegistry(t, registrations, tool)
 
-	result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "call", Name: "echo", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "echo", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
@@ -49,7 +50,7 @@ func TestRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
 	})
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
 
-	result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "call", Name: "panic", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "panic", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	text := toolResultText(t, result)
 	if err != nil || !result.IsError || strings.Contains(text, "sensitive panic value") || !strings.Contains(text, "failed") {
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
@@ -62,7 +63,7 @@ func TestOutputMiddlewareMakesEmptySuccessExplicit(t *testing.T) {
 	})
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
 
-	result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "call", Name: "empty", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "empty", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	if err != nil || result.IsError || toolResultText(t, result) != "(no output)" {
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
@@ -71,11 +72,11 @@ func TestOutputMiddlewareMakesEmptySuccessExplicit(t *testing.T) {
 func TestOutputMiddlewareTruncatesOnUtf8Boundary(t *testing.T) {
 	content := strings.Repeat("a", maxToolOutputBytes-1) + "界" + strings.Repeat("z", 100)
 	tool := testTool("large", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []schema.ContentBlock{schema.TextBlock(content)}}, nil
+		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(content)}}, nil
 	})
 	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
 
-	result, err := registry.Execute(context.Background(), schema.ToolCall{ID: "call", Name: "large", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
+	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "large", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	text := toolResultText(t, result)
 	if err != nil || result.IsError || !utf8.ValidString(text) || !strings.Contains(text, toolOutputTruncationMarker) {
 		t.Fatalf("Execute() error=%v result=%#v valid=%v bytes=%d", err, result, utf8.ValidString(text), len(text))

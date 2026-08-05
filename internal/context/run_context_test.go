@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
@@ -31,7 +32,7 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 		t.Fatal(err)
 	}
 
-	definitions := []schema.ToolDefinition{
+	definitions := []ai.ToolDefinition{
 		{Name: "write", Description: "write files"},
 		{Name: "read", Description: "read files", ParallelSafe: true},
 	}
@@ -40,7 +41,7 @@ func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testin
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if len(runContext.Messages) != 2 || runContext.Messages[0].Role != schema.RoleSystem || runContext.Messages[1].Role != schema.RoleUser {
+	if len(runContext.Messages) != 2 || runContext.Messages[0].Role != ai.RoleSystem || runContext.Messages[1].Role != ai.RoleUser {
 		t.Fatalf("Messages = %#v", runContext.Messages)
 	}
 	systemText := runContextMessageText(t, runContext.Messages[0])
@@ -67,7 +68,7 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	workDir := t.TempDir()
 	writeValidAgentWorkspace(t, workDir)
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
-	history := []schema.Message{{Role: schema.RoleAssistant, Content: []schema.ContentBlock{schema.TextBlock("previous answer")}}}
+	history := []ai.Message{{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("previous answer")}}}
 	contextBlocks := []schema.ContextBlock{
 		{Name: "preferences", Content: "prefers concise replies", Priority: 10},
 		{Name: "customer", Content: "customer tier is gold", Priority: 100},
@@ -76,27 +77,27 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	request := schema.RunRequest{
 		RunID:   "run-1",
 		History: history,
-		Input: schema.Message{
-			Role:    schema.RoleUser,
-			Content: []schema.ContentBlock{schema.TextBlock("where is my order?")},
+		Input: ai.Message{
+			Role:    ai.RoleUser,
+			Content: []ai.ContentBlock{ai.TextBlock("where is my order?")},
 		},
 		Context:  contextBlocks,
 		Metadata: metadata,
 	}
 
-	runContext, err := factory.Create(context.Background(), request, []schema.ToolDefinition{{Name: "read"}})
+	runContext, err := factory.Create(context.Background(), request, []ai.ToolDefinition{{Name: "read"}})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if len(runContext.Messages) != 5 {
 		t.Fatalf("Messages count = %d, want 5: %#v", len(runContext.Messages), runContext.Messages)
 	}
-	wantRoles := []schema.Role{
-		schema.RoleSystem,
-		schema.RoleSystem,
-		schema.RoleSystem,
-		schema.RoleAssistant,
-		schema.RoleUser,
+	wantRoles := []ai.Role{
+		ai.RoleSystem,
+		ai.RoleSystem,
+		ai.RoleSystem,
+		ai.RoleAssistant,
+		ai.RoleUser,
 	}
 	for index, want := range wantRoles {
 		if got := runContext.Messages[index].Role; got != want {
@@ -115,7 +116,7 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 		}
 	}
 
-	history[0] = schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("mutated history")}}
+	history[0] = ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("mutated history")}}
 	contextBlocks[0] = schema.ContextBlock{Name: "mutated", Content: "mutated", Priority: 1000}
 	metadata["conversationId"] = "mutated"
 	if got := runContextMessageText(t, runContext.Messages[3]); got != "previous answer" {
@@ -130,7 +131,7 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 }
 
 func TestRunContextFactoryRejectsInvalidStructuredRequest(t *testing.T) {
-	validInput := schema.Message{Role: schema.RoleUser, Content: []schema.ContentBlock{schema.TextBlock("hello")}}
+	validInput := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}}
 	tests := []struct {
 		name    string
 		ctx     context.Context
@@ -145,34 +146,34 @@ func TestRunContextFactoryRejectsInvalidStructuredRequest(t *testing.T) {
 		{
 			name: "non-user input",
 			ctx:  context.Background(),
-			request: schema.RunRequest{Input: schema.Message{
-				Role:    schema.RoleAssistant,
-				Content: []schema.ContentBlock{schema.TextBlock("hello")},
+			request: schema.RunRequest{Input: ai.Message{
+				Role:    ai.RoleAssistant,
+				Content: []ai.ContentBlock{ai.TextBlock("hello")},
 			}},
 			want: "input role must be user",
 		},
 		{
 			name:    "empty input",
 			ctx:     context.Background(),
-			request: schema.RunRequest{Input: schema.Message{Role: schema.RoleUser}},
+			request: schema.RunRequest{Input: ai.Message{Role: ai.RoleUser}},
 			want:    "input content must not be empty",
 		},
 		{
 			name: "input tool calls",
 			ctx:  context.Background(),
-			request: schema.RunRequest{Input: schema.Message{
-				Role:      schema.RoleUser,
-				Content:   []schema.ContentBlock{schema.TextBlock("hello")},
-				ToolCalls: []schema.ToolCall{{ID: "call-1", Name: "read"}},
+			request: schema.RunRequest{Input: ai.Message{
+				Role:      ai.RoleUser,
+				Content:   []ai.ContentBlock{ai.TextBlock("hello")},
+				ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read"}},
 			}},
 			want: "input must not contain tool fields",
 		},
 		{
 			name: "input tool result fields",
 			ctx:  context.Background(),
-			request: schema.RunRequest{Input: schema.Message{
-				Role:       schema.RoleUser,
-				Content:    []schema.ContentBlock{schema.TextBlock("hello")},
+			request: schema.RunRequest{Input: ai.Message{
+				Role:       ai.RoleUser,
+				Content:    []ai.ContentBlock{ai.TextBlock("hello")},
 				ToolCallID: "call-1",
 				ToolName:   "read",
 			}},
@@ -214,7 +215,7 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	}
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 
-	_, err := factory.Create(context.Background(), runRequest("review"), []schema.ToolDefinition{{Name: "read_file"}})
+	_, err := factory.Create(context.Background(), runRequest("review"), []ai.ToolDefinition{{Name: "read_file"}})
 	if err == nil || err.Error() != "agent runtime: required tool read is not registered" {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -232,9 +233,9 @@ func TestRunContextFactoryHonorsCancellation(t *testing.T) {
 }
 
 func runRequest(input string) schema.RunRequest {
-	return schema.RunRequest{Input: schema.Message{
-		Role:    schema.RoleUser,
-		Content: []schema.ContentBlock{schema.TextBlock(input)},
+	return schema.RunRequest{Input: ai.Message{
+		Role:    ai.RoleUser,
+		Content: []ai.ContentBlock{ai.TextBlock(input)},
 	}}
 }
 
@@ -251,9 +252,9 @@ func writeValidAgentWorkspace(t *testing.T, workDir string) {
 	}
 }
 
-func runContextMessageText(t *testing.T, message schema.Message) string {
+func runContextMessageText(t *testing.T, message ai.Message) string {
 	t.Helper()
-	text, err := schema.TextContent(message.Content)
+	text, err := ai.TextContent(message.Content)
 	if err != nil {
 		t.Fatalf("TextContent() error = %v", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/PycMono/go-reagent/ai"
 )
 
 func (c *Config) normalizeAndValidate() error {
@@ -25,8 +27,8 @@ func (c *Config) normalizeAndValidate() error {
 	ids := make(map[string]struct{}, len(c.Platforms))
 	for index := range c.Platforms {
 		platform := &c.Platforms[index]
-		platform.normalize()
-		if err := platform.validate(index); err != nil {
+		normalizePlatform(platform)
+		if err := validatePlatform(platform, index); err != nil {
 			return err
 		}
 		if _, exists := ids[platform.ID]; exists {
@@ -103,23 +105,23 @@ func (c *BotConfig) normalizeAndValidate() error {
 	return nil
 }
 
-func (p *PlatformConfig) normalize() {
+func normalizePlatform(p *ai.PlatformConfig) {
 	p.ID = strings.TrimSpace(p.ID)
-	p.Protocol = strings.ToLower(strings.TrimSpace(p.Protocol))
+	p.Protocol = ai.Protocol(strings.ToLower(strings.TrimSpace(string(p.Protocol))))
 	p.BaseURL = strings.TrimSpace(p.BaseURL)
 	p.APIKey = strings.TrimSpace(p.APIKey)
 	p.Model = strings.TrimSpace(p.Model)
 }
 
-func (p *PlatformConfig) validate(index int) error {
+func validatePlatform(p *ai.PlatformConfig, index int) error {
 	prefix := fmt.Sprintf("platforms[%d]", index)
 	if p.ID == "" {
 		return fmt.Errorf("%s.id 不能为空", prefix)
 	}
-	if p.Protocol != ProtocolOpenAI && p.Protocol != ProtocolAnthropic {
-		return fmt.Errorf("%s.protocol %q 不受支持，可选值: %s, %s", prefix, p.Protocol, ProtocolOpenAI, ProtocolAnthropic)
+	if p.Protocol != ai.ProtocolOpenAI && p.Protocol != ai.ProtocolAnthropic {
+		return fmt.Errorf("%s.protocol %q 不受支持，可选值: %s, %s", prefix, p.Protocol, ai.ProtocolOpenAI, ai.ProtocolAnthropic)
 	}
-	if err := p.normalizeBaseURL(); err != nil {
+	if err := normalizeBaseURL(p); err != nil {
 		return fmt.Errorf("%s.baseURL: %w", prefix, err)
 	}
 	if p.Model == "" {
@@ -128,7 +130,7 @@ func (p *PlatformConfig) validate(index int) error {
 	return nil
 }
 
-func (p *PlatformConfig) normalizeBaseURL() error {
+func normalizeBaseURL(p *ai.PlatformConfig) error {
 	parsed, err := url.Parse(p.BaseURL)
 	if err != nil {
 		return fmt.Errorf("不是合法 URL: %w", err)

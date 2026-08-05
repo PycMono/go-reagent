@@ -4,15 +4,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 )
 
 func TestNewLLMProviderBuildsCurrentPlatform(t *testing.T) {
 	cfg := &config.Config{
 		CurrentPlatform: "test-platform",
-		Platforms: []config.PlatformConfig{{
+		Platforms: []ai.PlatformConfig{{
 			ID:       "test-platform",
-			Protocol: config.ProtocolOpenAI,
+			Protocol: ai.ProtocolOpenAI,
 			BaseURL:  "https://example.com/v1/",
 			APIKey:   "test-key",
 			Model:    "test-model",
