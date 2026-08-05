@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
 	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
@@ -35,9 +35,9 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	}
 
 	lifecycle := fxtest.NewLifecycle(t)
-	connection, err := drivermysql.NewConnection(lifecycle, &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true, HistoryMessageLimit: 100},
-		MySQL: config.MySQLConfig{
+	connection, err := drivermysql.NewConnection(lifecycle, &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true, HistoryMessageLimit: 100},
+		MySQL: reagent.MySQLConfig{
 			Host: host, Port: port, Database: database, User: user, Password: password,
 			MaxOpen: 10, MaxIdle: 2, ConnLifetime: 60, ConnTimeout: 3, LogLevel: 3, SlowThreshold: 500,
 		},

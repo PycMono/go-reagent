@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
@@ -48,7 +49,7 @@ func TestAgentRunnerUsesStatelessRuntimeWhenPersistenceDisabled(t *testing.T) {
 		t.Error("ConversationRunner.Run should not be called")
 		return agent.RunResult{}, nil
 	})
-	runner, err := NewAgentRunner(runtime, conversationRunner, &config.Config{}, config.Prompt("test prompt"), nil)
+	runner, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{}, config.Prompt("test prompt"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +90,8 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 		called <- struct{}{}
 		return agent.RunResult{}, nil
 	})
-	runner, err := NewAgentRunner(runtime, conversationRunner, &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
+	runner, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
 	}, config.Prompt("test prompt"), reporter)
 	if err != nil {
 		t.Fatal(err)
@@ -118,18 +119,18 @@ func TestNewAgentRunnerValidatesPersistenceIdentityOnlyWhenEnabled(t *testing.T)
 	})
 	t.Setenv("AGENT_USER_ID", "")
 	t.Setenv("AGENT_CONVERSATION_ID", "")
-	if _, err := NewAgentRunner(runtime, nil, &config.Config{}, "test", nil); err != nil {
+	if _, err := NewAgentRunner(runtime, nil, &reagent.Config{}, "test", nil); err != nil {
 		t.Fatalf("disabled NewAgentRunner() error = %v", err)
 	}
-	_, err := NewAgentRunner(runtime, conversationRunner, &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
+	_, err := NewAgentRunner(runtime, conversationRunner, &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
 	}, "test", nil)
 	if err == nil || !strings.Contains(err.Error(), "AGENT_USER_ID") {
 		t.Fatalf("missing user ID error = %v", err)
 	}
 	t.Setenv("AGENT_USER_ID", "user")
-	_, err = NewAgentRunner(runtime, conversationRunner, &config.Config{
-		Conversation: config.ConversationConfig{Enabled: true},
+	_, err = NewAgentRunner(runtime, conversationRunner, &reagent.Config{
+		Conversation: reagent.ConversationConfig{Enabled: true},
 	}, "test", nil)
 	if err == nil || !strings.Contains(err.Error(), "AGENT_CONVERSATION_ID") {
 		t.Fatalf("missing conversation ID error = %v", err)
@@ -147,7 +148,7 @@ func TestAgentRunnerReportsConversationError(t *testing.T) {
 		conversationFunc(func(context.Context, conversation.RunRequest, agent.Reporter) (agent.RunResult, error) {
 			return agent.RunResult{}, want
 		}),
-		&config.Config{Conversation: config.ConversationConfig{Enabled: true}},
+		&reagent.Config{Conversation: reagent.ConversationConfig{Enabled: true}},
 		"test",
 		nil,
 	)
@@ -181,7 +182,7 @@ func TestAgentRunnerStopCancelsSelectedConversationRunner(t *testing.T) {
 			close(canceled)
 			return agent.RunResult{}, ctx.Err()
 		}),
-		&config.Config{Conversation: config.ConversationConfig{Enabled: true}},
+		&reagent.Config{Conversation: reagent.ConversationConfig{Enabled: true}},
 		"test",
 		nil,
 	)
@@ -326,7 +327,7 @@ func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 
 func newStatelessAgentRunner(t *testing.T, runtime agent.Runner, prompt config.Prompt, reporter agent.Reporter) *AgentRunner {
 	t.Helper()
-	runner, err := NewAgentRunner(runtime, nil, &config.Config{}, prompt, reporter)
+	runner, err := NewAgentRunner(runtime, nil, &reagent.Config{}, prompt, reporter)
 	if err != nil {
 		t.Fatalf("NewAgentRunner() error = %v", err)
 	}

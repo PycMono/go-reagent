@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
@@ -37,7 +38,7 @@ type AgentRunner struct {
 func NewAgentRunner(
 	runtime agent.Runner,
 	conversationRunner conversation.Runner,
-	cfg *config.Config,
+	cfg *reagent.Config,
 	prompt config.Prompt,
 	reporter agent.Reporter,
 ) (*AgentRunner, error) {

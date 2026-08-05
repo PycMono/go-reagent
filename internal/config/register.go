@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 )
@@ -22,8 +23,8 @@ var Register = fx.Options(
 )
 
 // NewConfig loads the process configuration selected by CONFIG_PATH.
-func NewConfig() (*Config, error) {
-	return Load(configurationPath())
+func NewConfig() (*reagent.Config, error) {
+	return reagent.LoadConfig(configurationPath())
 }
 
 // NewWorkDir resolves the current process directory as the Agent workspace.

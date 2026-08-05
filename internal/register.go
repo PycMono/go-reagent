@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/ai/providers"
 	"github.com/PycMono/go-reagent/internal/app"
@@ -34,7 +35,7 @@ var Register = fx.Options(
 	app.Register,
 )
 
-func newAIClient(cfg *config.Config) (ai.Client, error) {
+func newAIClient(cfg *reagent.Config) (ai.Client, error) {
 	if cfg == nil {
 		return nil, errors.New("初始化模型 Provider: 配置不能为空")
 	}

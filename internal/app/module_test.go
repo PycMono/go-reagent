@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
@@ -88,7 +89,7 @@ func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) 
 				return agent.RunResult{}, runError
 			})
 		}),
-		fx.Supply(&config.Config{Conversation: config.ConversationConfig{Enabled: persistenceEnabled}}),
+		fx.Supply(&reagent.Config{Conversation: reagent.ConversationConfig{Enabled: persistenceEnabled}}),
 		fx.Supply(config.Prompt("test")),
 		fx.Provide(func() agent.Reporter { return nil }),
 		Register,
