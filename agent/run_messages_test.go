@@ -1,4 +1,4 @@
-package engine_test
+package agent_test
 
 import (
 	"context"
@@ -8,8 +8,6 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/engine"
 )
 
 func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
@@ -18,8 +16,8 @@ func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
 		Content: blocks("done"),
 	}}}
 	registry := &fakeRegistry{}
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 1), false)
-	runContext := ctxpkg.RunContext{Messages: []ai.Message{
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 1), false)
+	runContext := agent.RunContext{Messages: []ai.Message{
 		{Role: ai.RoleSystem, Content: blocks("system")},
 		{Role: ai.RoleUser, Content: blocks("hello")},
 	}}
@@ -45,8 +43,8 @@ func TestAgentLoopReturnsToolConversationInOrder(t *testing.T) {
 			"echo": toolResult(call, "hello", false),
 		},
 	}
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 1), false)
-	runContext := ctxpkg.RunContext{
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 1), false)
+	runContext := agent.RunContext{
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
 		Tools:    registry.definitions,
 	}
@@ -75,8 +73,8 @@ func TestAgentLoopExcludesThinkingScaffoldingFromIncrement(t *testing.T) {
 		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
 	registry := &fakeRegistry{}
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 1), true)
-	runContext := ctxpkg.RunContext{Messages: []ai.Message{
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 1), true)
+	runContext := agent.RunContext{Messages: []ai.Message{
 		{Role: ai.RoleUser, Content: blocks("hello")},
 	}}
 
@@ -101,8 +99,8 @@ func TestAgentLoopReturnsCompletedMessagesWithProviderError(t *testing.T) {
 			"echo": toolResult(call, "completed before failure", false),
 		},
 	}
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 1), false)
-	runContext := ctxpkg.RunContext{
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 1), false)
+	runContext := agent.RunContext{
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
 		Tools:    registry.definitions,
 	}

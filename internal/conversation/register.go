@@ -1,12 +1,12 @@
 package conversation
 
 import (
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"go.uber.org/fx"
 )
 
-func newRegisteredRunner(runtime engine.AgentRuntime, store Store, cfg *config.Config) Runner {
+func newRegisteredRunner(runtime agent.Runner, store Store, cfg *config.Config) Runner {
 	return NewRunner(runtime, store, cfg.Conversation.HistoryMessageLimit)
 }
 

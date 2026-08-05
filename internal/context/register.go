@@ -1,6 +1,7 @@
 package context
 
 import (
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
 	"go.uber.org/fx"
 )
@@ -10,7 +11,7 @@ var Register = fx.Options(
 	fx.Provide(
 		newPromptComposer,
 		newSkillLoader,
-		NewRunContextFactory,
+		fx.Annotate(NewRunContextFactory, fx.As(new(agent.ContextFactory))),
 	),
 )
 

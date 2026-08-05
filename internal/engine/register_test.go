@@ -29,9 +29,9 @@ func (*registerRegistry) Execute(context.Context, ai.ToolCall, agent.ToolEventOb
 
 func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
 	var (
-		runtime   AgentRuntime
-		scheduler *ToolScheduler
-		loop      *AgentLoop
+		runtime   agent.Runner
+		scheduler *agent.Scheduler
+		loop      *agent.Loop
 	)
 	app := fxtest.New(t,
 		fx.Provide(func() ai.Client { return &registerProvider{} }),
@@ -46,9 +46,6 @@ func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
 
 	if runtime == nil || scheduler == nil || loop == nil {
 		t.Fatalf("runtime stack = runtime:%T scheduler:%#v loop:%#v", runtime, scheduler, loop)
-	}
-	if scheduler.maxParallel != defaultMaxParallelTools || !loop.enableThinking {
-		t.Fatalf("runtime defaults = parallel:%d thinking:%v", scheduler.maxParallel, loop.enableThinking)
 	}
 }
 

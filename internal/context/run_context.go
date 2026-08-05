@@ -12,13 +12,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 )
 
-// RunContext is the prepared message history and tool snapshot for one Agent run.
-type RunContext struct {
-	Messages []ai.Message
-	Tools    []ai.ToolDefinition
-	Metadata map[string]string
-}
-
 // RunContextFactory prepares workspace-specific context for one Agent run.
 type RunContextFactory struct {
 	composer    *PromptComposer
@@ -35,36 +28,36 @@ func (f *RunContextFactory) Create(
 	ctx context.Context,
 	request agent.RunRequest,
 	definitions []ai.ToolDefinition,
-) (RunContext, error) {
+) (agent.RunContext, error) {
 	if ctx == nil {
-		return RunContext{}, errors.New("run context: context is required")
+		return agent.RunContext{}, errors.New("run context: context is required")
 	}
 	if f == nil || f.composer == nil || f.skillLoader == nil {
-		return RunContext{}, errors.New("run context: composer and skill loader are required")
+		return agent.RunContext{}, errors.New("run context: composer and skill loader are required")
 	}
 	if err := ctx.Err(); err != nil {
-		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
+		return agent.RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 	if !hasToolDefinition(definitions, "read") {
-		return RunContext{}, errors.New("agent runtime: required tool read is not registered")
+		return agent.RunContext{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
 	snapshot, err := f.skillLoader.Discover(DefaultSkillEnvironment())
 	if err != nil {
-		return RunContext{}, fmt.Errorf("发现 Agent Skills 失败: %w", err)
+		return agent.RunContext{}, fmt.Errorf("发现 Agent Skills 失败: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
+		return agent.RunContext{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
 	if len(snapshot.Skills()) == 0 {
-		return RunContext{}, errors.New("agent workspace: at least one eligible Skill is required")
+		return agent.RunContext{}, errors.New("agent workspace: at least one eligible Skill is required")
 	}
 
 	systemMessage, promptReport, err := f.composer.Build(snapshot)
 	if err != nil {
-		return RunContext{}, err
+		return agent.RunContext{}, err
 	}
 
 	if promptReport.Truncated {
@@ -95,7 +88,7 @@ func (f *RunContextFactory) Create(
 	messages = append(messages, append([]ai.Message(nil), request.History...)...)
 	messages = append(messages, request.Input)
 
-	return RunContext{
+	return agent.RunContext{
 		Messages: messages,
 		Tools:    append([]ai.ToolDefinition(nil), definitions...),
 		Metadata: cloneMetadata(request.Metadata),

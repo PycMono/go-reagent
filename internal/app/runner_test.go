@@ -12,7 +12,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/engine"
 )
 
 type runtimeFunc func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error)
@@ -325,7 +324,7 @@ func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	}
 }
 
-func newStatelessAgentRunner(t *testing.T, runtime engine.AgentRuntime, prompt config.Prompt, reporter agent.Reporter) *AgentRunner {
+func newStatelessAgentRunner(t *testing.T, runtime agent.Runner, prompt config.Prompt, reporter agent.Reporter) *AgentRunner {
 	t.Helper()
 	runner, err := NewAgentRunner(runtime, nil, &config.Config{}, prompt, reporter)
 	if err != nil {

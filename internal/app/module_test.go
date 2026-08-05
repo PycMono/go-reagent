@@ -9,7 +9,6 @@ import (
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/conversation"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
@@ -79,7 +78,7 @@ func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) 
 	}
 	return fxtest.New(t,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
-		fx.Provide(func() engine.AgentRuntime {
+		fx.Provide(func() agent.Runner {
 			return runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
 				return agent.RunResult{}, runError
 			})

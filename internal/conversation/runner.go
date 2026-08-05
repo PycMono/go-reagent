@@ -8,16 +8,15 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/engine"
 )
 
 type runner struct {
-	runtime      engine.AgentRuntime
+	runtime      agent.Runner
 	store        Store
 	historyLimit int
 }
 
-func NewRunner(runtime engine.AgentRuntime, store Store, historyLimit int) Runner {
+func NewRunner(runtime agent.Runner, store Store, historyLimit int) Runner {
 	return &runner{runtime: runtime, store: store, historyLimit: historyLimit}
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx/fxtest"
 )
@@ -84,8 +83,11 @@ func TestAgentRuntimeProgressivelyReadsSkillWithRealReadTool(t *testing.T) {
 		ctxpkg.NewPromptComposer(workDir),
 		ctxpkg.NewSkillLoader(workDir),
 	)
-	loop := engine.NewAgentLoop(provider, engine.NewToolScheduler(registry, 4), true)
-	runtime := engine.NewAgentRuntime(factory, loop, registry)
+	loop := agent.NewLoop(provider, agent.NewScheduler(registry, 4), true)
+	runtime, err := agent.New(factory, loop, registry)
+	if err != nil {
+		t.Fatalf("agent.New() error = %v", err)
+	}
 
 	_, err = runtime.Run(context.Background(), agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
