@@ -45,7 +45,7 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 				},
 				"finish_reason":"tool_calls"
 			}],
-			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+			"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}
 		}`))
 	}))
 	defer server.Close()
@@ -83,6 +83,9 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("tool calls = %#v", result.ToolCalls)
 	}
+	if result.Usage == nil || result.Usage.InputTokens != 123 || result.Usage.OutputTokens != 45 {
+		t.Fatalf("Usage = %#v, want input=123 output=45", result.Usage)
+	}
 	call := result.ToolCalls[0]
 	if call.ID != "call-new" || call.Name != "get_weather" || string(call.Arguments) != `{"city":"北京"}` {
 		t.Fatalf("tool call = %#v", call)
@@ -101,6 +104,42 @@ func TestOpenAICompatibleProviderTranslatesToolConversation(t *testing.T) {
 	}
 	if tools, ok := body["tools"].([]any); !ok || len(tools) != 1 {
 		t.Fatalf("tools = %#v", body["tools"])
+	}
+}
+
+func TestOpenAICompatibleProviderTracksUsagePresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		usageJSON string
+		wantNil   bool
+	}{
+		{name: "omitted", wantNil: true},
+		{name: "explicit zero", usageJSON: `,"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"chatcmpl-usage","object":"chat.completion","created":1,"model":"test-model",` +
+					`"choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]` +
+					tt.usageJSON + `}`))
+			}))
+			defer server.Close()
+
+			client := New(ai.PlatformConfig{ID: "test", APIKey: "test-key", BaseURL: server.URL + "/", Model: "test-model"})
+			result, err := client.Generate(context.Background(), []ai.Message{{
+				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")},
+			}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantNil && result.Usage != nil {
+				t.Fatalf("Usage = %#v, want nil", result.Usage)
+			}
+			if !tt.wantNil && (result.Usage == nil || result.Usage.InputTokens != 0 || result.Usage.OutputTokens != 0) {
+				t.Fatalf("Usage = %#v, want present zero usage", result.Usage)
+			}
+		})
 	}
 }
 
