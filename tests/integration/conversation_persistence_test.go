@@ -64,9 +64,10 @@ func (r *acceptanceRuntime) Run(_ context.Context, request agent.RunRequest, _ a
 }
 
 type acceptanceConversation struct {
-	pk       uint64
-	version  uint64
-	messages []ai.Message
+	pk          uint64
+	version     uint64
+	messages    []ai.Message
+	invocations []agent.ModelInvocation
 }
 
 type acceptanceConversationStore struct {
@@ -110,10 +111,15 @@ func (s *acceptanceConversationStore) AppendTurn(_ context.Context, request conv
 			return conversation.ErrConflict
 		}
 		item.messages = append(item.messages, cloneAcceptanceMessages(request.Messages)...)
+		item.invocations = append(item.invocations, cloneAcceptanceInvocations(request.Invocations)...)
 		item.version++
 		return nil
 	}
 	return conversation.ErrNotFound
+}
+
+func cloneAcceptanceInvocations(invocations []agent.ModelInvocation) []agent.ModelInvocation {
+	return append([]agent.ModelInvocation(nil), invocations...)
 }
 
 func cloneAcceptanceMessages(messages []ai.Message) []ai.Message {

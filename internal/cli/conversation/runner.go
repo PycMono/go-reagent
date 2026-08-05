@@ -56,6 +56,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter agent.Rep
 		ExpectedVersion: snapshot.Version,
 		RunID:           request.RunID,
 		Messages:        messages,
+		Invocations:     cloneInvocations(runtimeResult.Invocations),
 	})
 	return runtimeResult, errors.Join(runErr, persistErr)
 }
@@ -101,6 +102,10 @@ func cloneMessages(messages []ai.Message) []ai.Message {
 func cloneMessage(message ai.Message) ai.Message {
 	cloned := message
 	cloned.Content = append([]ai.ContentBlock(nil), message.Content...)
+	if message.Usage != nil {
+		usage := *message.Usage
+		cloned.Usage = &usage
+	}
 	if message.ToolCalls != nil {
 		cloned.ToolCalls = make([]ai.ToolCall, len(message.ToolCalls))
 		for index, call := range message.ToolCalls {
@@ -109,6 +114,10 @@ func cloneMessage(message ai.Message) ai.Message {
 		}
 	}
 	return cloned
+}
+
+func cloneInvocations(invocations []agent.ModelInvocation) []agent.ModelInvocation {
+	return append([]agent.ModelInvocation(nil), invocations...)
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

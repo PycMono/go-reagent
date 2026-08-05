@@ -30,6 +30,7 @@ type AppendRequest struct {
 	ExpectedVersion uint64
 	RunID           string
 	Messages        []ai.Message
+	Invocations     []agent.ModelInvocation
 }
 
 type Store interface {
