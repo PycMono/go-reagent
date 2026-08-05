@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent"
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
@@ -53,23 +54,34 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	if db == nil {
 		t.Fatal("MySQL connection returned nil database")
 	}
-	migration, err := os.ReadFile("../../../migrations/0001_conversation_persistence.up.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range strings.Split(string(migration), ";") {
-		statement = strings.TrimSpace(statement)
-		if statement == "" {
-			continue
+	for _, migrationPath := range []string{
+		"../../../../migrations/0001_conversation_persistence.up.sql",
+		"../../../../migrations/0002_model_invocation_observability.up.sql",
+	} {
+		migration, err := os.ReadFile(migrationPath)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err := db.Exec(statement).Error; err != nil {
-			t.Fatalf("apply migration: %v", err)
+		for _, statement := range strings.Split(string(migration), ";") {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+			if err := db.Exec(statement).Error; err != nil {
+				t.Fatalf("apply migration %s: %v", migrationPath, err)
+			}
 		}
 	}
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	key := conversation.Key{UserID: "go-reagent-test-user-" + suffix, ConversationID: "conversation-" + suffix}
+	var cleanupConversationPK uint64
 	t.Cleanup(func() {
+		if cleanupConversationPK != 0 {
+			if err := db.Exec("DELETE FROM agent_model_invocations WHERE conversation_pk = ?", cleanupConversationPK).Error; err != nil {
+				t.Errorf("cleanup invocations: %v", err)
+			}
+		}
 		if err := db.Exec("DELETE FROM agent_conversations WHERE user_id = ? AND conversation_id = ?", key.UserID, key.ConversationID).Error; err != nil {
 			t.Errorf("cleanup conversation: %v", err)
 		}
@@ -83,6 +95,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	if snapshot.ConversationPK == 0 || snapshot.Version != 0 || len(snapshot.Messages) != 0 {
 		t.Fatalf("initial snapshot = %#v", snapshot)
 	}
+	cleanupConversationPK = snapshot.ConversationPK
 	messages := []ai.Message{
 		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
 		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
@@ -90,8 +103,31 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	if err := store.AppendTurn(ctx, conversation.AppendRequest{
 		ConversationPK: snapshot.ConversationPK, ExpectedVersion: snapshot.Version,
 		RunID: "run-1", Messages: messages,
+		Invocations: []agent.ModelInvocation{{
+			Sequence: 1,
+			Phase:    agent.ModelInvocationPhaseAction,
+			Usage: ai.Usage{
+				InputTokens:                    120,
+				OutputTokens:                   30,
+				InputPriceUSDPerMillionTokens:  0.15,
+				OutputPriceUSDPerMillionTokens: 0.60,
+				CostUSD:                        0.000036,
+				LatencyMS:                      245,
+				PlatformID:                     "test",
+				Model:                          "test-model",
+			},
+		}},
 	}); err != nil {
 		t.Fatal(err)
+	}
+	var invocationCount int64
+	if err := db.Table("agent_model_invocations").
+		Where("conversation_pk = ?", snapshot.ConversationPK).
+		Count(&invocationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if invocationCount != 1 {
+		t.Fatalf("invocation count = %d, want 1", invocationCount)
 	}
 	loaded, err := store.LoadOrCreate(ctx, key, 100)
 	if err != nil {
