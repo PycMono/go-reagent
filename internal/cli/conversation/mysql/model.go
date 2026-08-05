@@ -31,6 +31,26 @@ type messageRow struct {
 
 func (messageRow) TableName() string { return "agent_messages" }
 
+type invocationRow struct {
+	ID                             uint64    `gorm:"column:id;primaryKey;autoIncrement"`
+	ConversationPK                 uint64    `gorm:"column:conversation_pk"`
+	TurnVersion                    uint64    `gorm:"column:turn_version"`
+	RunID                          *string   `gorm:"column:run_id"`
+	Sequence                       uint32    `gorm:"column:sequence"`
+	Phase                          string    `gorm:"column:phase"`
+	PlatformID                     string    `gorm:"column:platform_id"`
+	Model                          string    `gorm:"column:model"`
+	InputTokens                    uint64    `gorm:"column:input_tokens"`
+	OutputTokens                   uint64    `gorm:"column:output_tokens"`
+	InputPriceUSDPerMillionTokens  string    `gorm:"column:input_price_usd_per_million_tokens"`
+	OutputPriceUSDPerMillionTokens string    `gorm:"column:output_price_usd_per_million_tokens"`
+	CostUSD                        string    `gorm:"column:cost_usd"`
+	LatencyMS                      uint64    `gorm:"column:latency_ms"`
+	CreatedAt                      time.Time `gorm:"column:created_at"`
+}
+
+func (invocationRow) TableName() string { return "agent_model_invocations" }
+
 type jsonPayload []byte
 
 func (p jsonPayload) Value() (driver.Value, error) {
