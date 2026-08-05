@@ -1,0 +1,40 @@
+<h2>确认方向：pi/ 下不使用 internal</h2>
+<p class="subtitle">所有 Harness 组件都是普通 Go package；当前不承诺外部兼容，通过依赖测试保持单向边界。</p>
+
+<div class="mockup">
+  <div class="mockup-header">go-reagent 目标布局</div>
+  <div class="mockup-body" style="font-family:monospace;line-height:1.8">
+    go-reagent/<br>
+    ├── pi/<br>
+    │&nbsp;&nbsp;├── ai/<br>
+    │&nbsp;&nbsp;│&nbsp;&nbsp;└── providers/{openai,anthropic}<br>
+    │&nbsp;&nbsp;├── agent/<br>
+    │&nbsp;&nbsp;├── workspace/ &nbsp;&nbsp;# AGENTS、Skills、Context<br>
+    │&nbsp;&nbsp;├── tools/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 默认工具与进程监督<br>
+    │&nbsp;&nbsp;├── observability/<br>
+    │&nbsp;&nbsp;├── bootstrap/ &nbsp;&nbsp;# 默认组合图<br>
+    │&nbsp;&nbsp;├── agent.go &nbsp;&nbsp;&nbsp;&nbsp;# New、Run、Close<br>
+    │&nbsp;&nbsp;├── config.go<br>
+    │&nbsp;&nbsp;├── types.go<br>
+    │&nbsp;&nbsp;└── error.go / error_code.go<br>
+    ├── internal/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 业务服务<br>
+    │&nbsp;&nbsp;├── application/<br>
+    │&nbsp;&nbsp;├── conversation/<br>
+    │&nbsp;&nbsp;├── persistence/<br>
+    │&nbsp;&nbsp;└── transport/<br>
+    ├── cmd/reagent/<br>
+    └── migrations/
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <div class="label">必须由测试锁定的方向</div>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;text-align:center;line-height:2">
+      internal/application → pi → pi/bootstrap<br>
+      pi/bootstrap → pi/{workspace,tools,observability,agent,ai}<br>
+      pi/agent → pi/ai<br><br>
+      <strong>禁止：</strong>任何 pi/* → 根 internal/*、cmd/*、migrations
+    </div>
+  </div>
+</div>

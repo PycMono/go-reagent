@@ -1,0 +1,74 @@
+<h2>SDK 在业务服务仓库中的放置方式</h2>
+<p class="subtitle">目标：SDK 暂时只供 go-reagent 服务使用，但边界稳定后可以整体迁移到独立仓库。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;font-family:monospace;line-height:1.65">
+      go-reagent/<br>
+      ├── ai/<br>
+      ├── agent/<br>
+      ├── reagent.go<br>
+      ├── internal/service/<br>
+      └── cmd/server/
+    </div>
+    <div class="card-body">
+      <h3>A. 继续使用根目录公共包</h3>
+      <p>不新增 sdk/。服务层放入 internal/service，继续让根包承担 SDK facade。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>改动最少</li><li>符合常见 Go 仓库布局</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>SDK 不是物理上的可搬迁单元</li><li>仓库根身份仍偏 SDK</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)" style="border-color:var(--accent, #6c7cff)">
+    <div class="card-image" style="padding:18px;font-family:monospace;line-height:1.65">
+      go-reagent/<br>
+      ├── sdk/ &nbsp;← 可抽离岛<br>
+      │&nbsp;&nbsp;├── ai/<br>
+      │&nbsp;&nbsp;├── agent/<br>
+      │&nbsp;&nbsp;├── sdk.go<br>
+      │&nbsp;&nbsp;└── internal/{workspace,tools,...}<br>
+      ├── internal/service/<br>
+      └── cmd/reagent/
+    </div>
+    <div class="card-body">
+      <h3>B. 单模块中的 sdk/ 可抽离岛（推荐）</h3>
+      <p>服务只能依赖 sdk 的公共 API；sdk 不得依赖任何服务包。未来把 sdk/ 内容整体搬到新仓库。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>职责和目录身份清楚</li><li>当前仍保持一个 go.mod</li><li>未来拆仓路径直观</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>现在需要一次 import path 迁移</li><li>拆仓时还会有一次机械路径替换</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;font-family:monospace;line-height:1.65">
+      go-reagent/<br>
+      ├── go.mod &nbsp;（服务）<br>
+      ├── sdk/<br>
+      │&nbsp;&nbsp;├── go.mod &nbsp;（独立模块）<br>
+      │&nbsp;&nbsp;├── ai/<br>
+      │&nbsp;&nbsp;└── agent/<br>
+      └── go.work
+    </div>
+    <div class="card-body">
+      <h3>C. sdk/ 直接做嵌套 Go Module</h3>
+      <p>从现在开始模拟两个仓库，以 go.mod 强制隔离依赖。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>边界最强</li><li>未来拆仓最接近直接移动</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>测试、发布、CI 和依赖版本管理更复杂</li><li>SDK 尚未稳定时维护成本偏高</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <div class="label">推荐依赖方向</div>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;text-align:center;line-height:2">
+      cmd/reagent → internal/service → sdk → sdk/agent → sdk/ai<br>
+      <strong>禁止：</strong>sdk → internal/service
+    </div>
+  </div>
+</div>

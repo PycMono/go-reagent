@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/transport"
 )
 
 func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
@@ -30,7 +30,7 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registrations, err := dispatch.NewReporterRegistrations(&config.Config{
+	registrations, err := transport.NewReporterRegistrations(&config.Config{
 		Bot: config.BotConfig{
 			WeCom: config.WeComConfig{WebhookURL: server.URL},
 		},
@@ -44,7 +44,7 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	}
 	originalStdout := os.Stdout
 	os.Stdout = writeEnd
-	terminal := dispatch.NewTerminalReporter()
+	terminal := transport.NewTerminalReporter()
 	os.Stdout = originalStdout
 	registrations = append(registrations, agent.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
 	reporter := agent.NewMultiReporter(registrations)

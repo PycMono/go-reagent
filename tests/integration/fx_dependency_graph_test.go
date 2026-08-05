@@ -6,8 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/PycMono/go-reagent/internal/cli"
-	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
+	"github.com/PycMono/go-reagent/application"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
@@ -39,9 +38,8 @@ func TestCLIModulesPopulateStructuredRuntimeGraph(t *testing.T) {
 	)
 	app := fx.New(
 		fx.NopLogger,
-		pi.Module,
-		cli.Module,
-		fx.Replace(pi.WorkDir(workDir), cliapp.Prompt("test")),
+		application.Module,
+		fx.Replace(pi.WorkDir(workDir), application.Prompt("test")),
 		fx.Replace(fx.Annotate(&dependencyGraphProvider{}, fx.As(new(ai.Client)))),
 		fx.Populate(&runtime, &registry, &workspace, &supervisor),
 	)

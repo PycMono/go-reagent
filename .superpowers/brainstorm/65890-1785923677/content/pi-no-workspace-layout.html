@@ -1,0 +1,43 @@
+<h2>Pi 没有 workspace/：对应职责拆分</h2>
+<p class="subtitle">取消 pi/workspace，资源加载属于根 pi package；文件边界属于 tools。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Pi 当前源码</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.9">
+      coding-agent/src/core/<br>
+      ├── resource-loader.ts<br>
+      ├── session-cwd.ts<br>
+      ├── skills.ts<br>
+      ├── system-prompt.ts<br>
+      ├── sdk.ts<br>
+      └── tools/<br><br>
+      没有 workspace/ 目录
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">go-reagent 建议映射</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.9">
+      pi/<br>
+      ├── resource_loader.go<br>
+      ├── skills.go<br>
+      ├── system_prompt.go<br>
+      ├── run_context.go<br>
+      ├── bootstrap.go<br>
+      └── tools/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;└── workspace.go &nbsp;# os.Root 文件边界<br><br>
+      不创建 pi/workspace/
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <div class="label">概念拆分</div>
+  <div class="mockup">
+    <div class="mockup-body" style="line-height:1.9">
+      <strong>资源上下文：</strong>发现 AGENTS.md、Skills，构造 System Prompt → 根 pi package<br>
+      <strong>工具文件边界：</strong>限制 read/write/edit 的工作目录 → pi/tools<br>
+      <strong>进程 cwd：</strong>工具执行参数，不是单独领域 package
+    </div>
+  </div>
+</div>
