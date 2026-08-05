@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 // TestPromptComposerBuildsCoreAgentsAndSkillCatalogInOrder 验证系统提示词按核心纪律、Agent 定义和 Skill 目录的顺序组合，且不会泄露 Skill Body。

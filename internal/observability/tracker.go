@@ -9,7 +9,7 @@ import (
 	"time"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 // Pricing is an immutable USD-per-million-token price snapshot.

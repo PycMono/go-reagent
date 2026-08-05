@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 	openaisdk "github.com/openai/openai-go/v3"
 )
 

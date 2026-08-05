@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 func TestPlatformPricingValidation(t *testing.T) {

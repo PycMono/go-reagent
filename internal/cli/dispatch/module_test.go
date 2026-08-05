@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/agent"
+	"github.com/PycMono/go-reagent/pi/agent"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )

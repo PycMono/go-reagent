@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/internal/cli/app"
 	"github.com/PycMono/go-reagent/internal/workspace"
 )

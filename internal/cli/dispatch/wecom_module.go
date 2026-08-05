@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/PycMono/go-reagent"
-	"github.com/PycMono/go-reagent/agent"
+	"github.com/PycMono/go-reagent/pi/agent"
 )
 
 // NewReporterRegistrations creates the optional enterprise WeChat registration.
