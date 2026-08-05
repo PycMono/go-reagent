@@ -1,9 +1,12 @@
 package bootstrap
 
 import (
+	"errors"
+
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/ai/providers"
+	"github.com/PycMono/go-reagent/internal/observability"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
@@ -18,7 +21,17 @@ type registryParams struct {
 }
 
 func newClient(config ai.PlatformConfig) (ai.Client, error) {
-	return providers.New(config)
+	if config.Pricing == nil {
+		return nil, errors.New("model pricing is required")
+	}
+	next, err := providers.New(config)
+	if err != nil {
+		return nil, err
+	}
+	return observability.NewCostTracker(next, config.ID, config.Model, observability.Pricing{
+		InputUSDPerMillionTokens:  config.Pricing.InputUSDPerMillionTokens,
+		OutputUSDPerMillionTokens: config.Pricing.OutputUSDPerMillionTokens,
+	})
 }
 
 func newRegistry(params registryParams) (agent.Registry, error) {

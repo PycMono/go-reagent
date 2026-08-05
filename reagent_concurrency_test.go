@@ -243,6 +243,7 @@ func writeOpenAIMessage(t *testing.T, w http.ResponseWriter, content string) {
 			"message":       map[string]any{"role": "assistant", "content": content},
 			"finish_reason": "stop",
 		}},
+		"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
 	}); err != nil {
 		t.Errorf("encode response: %v", err)
 	}

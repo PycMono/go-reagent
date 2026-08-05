@@ -87,6 +87,7 @@ func writeOpenAIToolCall(t *testing.T, w http.ResponseWriter, id, name, argument
 			},
 			"finish_reason": "tool_calls",
 		}},
+		"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
 	}); err != nil {
 		t.Errorf("encode tool call response: %v", err)
 	}
