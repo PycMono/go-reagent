@@ -1,4 +1,4 @@
-package cli
+package application
 
 import (
 	"os"
@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
-	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
@@ -18,9 +17,9 @@ func TestNewConfigLoadsTrimmedConfigurationPath(t *testing.T) {
 	path := writeRuntimeConfig(t)
 	t.Setenv("CONFIG_PATH", "  "+path+"  ")
 
-	cfg, err := NewConfig()
+	cfg, err := config.NewFromEnvironment()
 	if err != nil {
-		t.Fatalf("NewConfig() error = %v", err)
+		t.Fatalf("config.NewFromEnvironment() error = %v", err)
 	}
 	current, err := cfg.Pi.Current()
 	if err != nil {
@@ -57,7 +56,7 @@ func TestNewWorkDirUsesCurrentDirectory(t *testing.T) {
 
 func TestNewPromptUsesEnvironmentOverrideAndDefault(t *testing.T) {
 	t.Setenv("AGENT_PROMPT", "custom prompt")
-	if got := NewPrompt(); got != cliapp.Prompt("custom prompt") {
+	if got := NewPrompt(); got != Prompt("custom prompt") {
 		t.Fatalf("NewPrompt() = %q", got)
 	}
 
@@ -75,16 +74,16 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 		cfg      *config.Config
 		platform ai.PlatformConfig
 		workDir  pi.WorkDir
-		prompt   cliapp.Prompt
+		prompt   Prompt
 	)
 	app := fxtest.New(t,
-		fx.Provide(NewConfig, NewPlatform, NewWorkDir, NewPrompt),
+		fx.Provide(config.NewFromEnvironment, config.NewPlatform, NewWorkDir, NewPrompt),
 		fx.Populate(&cfg, &platform, &workDir, &prompt),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
-	if cfg == nil || platform.ID != "test-platform" || workDir == "" || prompt != cliapp.Prompt("registered prompt") {
+	if cfg == nil || platform.ID != "test-platform" || workDir == "" || prompt != Prompt("registered prompt") {
 		t.Fatalf("registered values = (%#v, %#v, %q, %q)", cfg, platform, workDir, prompt)
 	}
 }

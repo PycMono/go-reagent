@@ -1,4 +1,4 @@
-package app
+package application
 
 import (
 	"context"
@@ -91,6 +91,7 @@ func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) 
 		fx.Supply(&config.Config{Conversation: config.ConversationConfig{Enabled: persistenceEnabled}}),
 		fx.Supply(Prompt("test")),
 		fx.Provide(func() agent.Reporter { return nil }),
-		Module,
+		fx.Provide(NewAgentRunner),
+		fx.Invoke(RegisterAgentLifecycle),
 	)
 }

@@ -1,0 +1,71 @@
+<h2>go-reagent：Pi Harness 与业务服务完整分区</h2>
+<p class="subtitle">迁移只调整归属与 import path；首轮保持现有 CLI、MySQL、WeCom 和运行行为。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">pi/ — 未来可抽离 Harness</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.72;font-size:13px">
+      pi/<br>
+      ├── ai/<br>
+      │&nbsp;&nbsp;└── providers/{openai,anthropic}<br>
+      ├── agent/<br>
+      ├── tools/<br>
+      ├── observability/<br>
+      ├── agent.go<br>
+      ├── bootstrap.go<br>
+      ├── config.go<br>
+      ├── config_validate.go<br>
+      ├── types.go<br>
+      ├── error.go / error_code.go<br>
+      ├── resource_loader.go<br>
+      ├── run_context.go<br>
+      ├── system_prompt.go<br>
+      ├── skills.go<br>
+      ├── skill_discovery.go<br>
+      ├── skill_snapshot.go<br>
+      ├── skill_prompt.go<br>
+      └── xml_text.go<br><br>
+      同目录保留 *_test.go
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">internal/ — go-reagent 业务服务</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.72;font-size:13px">
+      internal/<br>
+      ├── config/<br>
+      │&nbsp;&nbsp;├── config.go<br>
+      │&nbsp;&nbsp;└── validate.go<br>
+      ├── application/<br>
+      │&nbsp;&nbsp;├── runner.go<br>
+      │&nbsp;&nbsp;├── prompt.go<br>
+      │&nbsp;&nbsp;└── module.go<br>
+      ├── conversation/<br>
+      │&nbsp;&nbsp;├── runner.go<br>
+      │&nbsp;&nbsp;├── store.go<br>
+      │&nbsp;&nbsp;└── module.go<br>
+      ├── persistence/mysql/<br>
+      │&nbsp;&nbsp;├── connection.go<br>
+      │&nbsp;&nbsp;├── store.go / model.go / codec.go<br>
+      │&nbsp;&nbsp;├── window.go / invocation.go<br>
+      │&nbsp;&nbsp;└── module.go<br>
+      └── transport/<br>
+      &nbsp;&nbsp;&nbsp;├── terminal.go<br>
+      &nbsp;&nbsp;&nbsp;├── wecom.go<br>
+      &nbsp;&nbsp;&nbsp;└── module.go<br><br>
+      cmd/、migrations/、AGENTS.md、skills/ 留在服务根
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <div class="label">依赖方向</div>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;text-align:center;line-height:2">
+      cmd/reagent → internal/application → internal/{conversation,transport,config}<br>
+      internal/* → pi → pi/agent → pi/ai<br>
+      pi/bootstrap → pi/{tools,observability,agent,ai}<br><br>
+      <strong>禁止：</strong>任何 pi/* → 根 internal/*、cmd/*、migrations/*
+    </div>
+  </div>
+</div>

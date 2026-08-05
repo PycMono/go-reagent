@@ -1,0 +1,61 @@
+<h2>最终候选：全仓无 internal，Pi 风格 Tool 组织</h2>
+<p class="subtitle">pi/ 是可抽离 Harness；业务服务包全部位于仓库一级；tools 包含具体 Tool 与 Tool 专用支撑代码。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">pi/ — Agent Harness</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.65;font-size:13px">
+      pi/<br>
+      ├── ai/providers/{openai,anthropic}<br>
+      ├── agent/<br>
+      ├── tools/<br>
+      │&nbsp;&nbsp;├── read.go / write.go / edit.go<br>
+      │&nbsp;&nbsp;├── apply_patch.go / parser.go<br>
+      │&nbsp;&nbsp;├── exec.go / process.go<br>
+      │&nbsp;&nbsp;├── filesystem.go / path.go<br>
+      │&nbsp;&nbsp;├── process_supervisor.go<br>
+      │&nbsp;&nbsp;├── output.go / truncate.go<br>
+      │&nbsp;&nbsp;└── process_{unix,windows}.go<br>
+      ├── observability/tracker.go<br>
+      ├── agent.go / bootstrap.go<br>
+      ├── config.go / config_validate.go<br>
+      ├── resource_loader.go / run_context.go<br>
+      ├── skills*.go / system_prompt.go<br>
+      ├── types.go / error*.go<br>
+      └── *_test.go
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">仓库一级 — 业务服务</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.65;font-size:13px">
+      config/<br>
+      ├── config.go / validate.go<br>
+      application/<br>
+      ├── runner.go / prompt.go / bootstrap.go<br>
+      conversation/<br>
+      ├── runner.go / store.go<br>
+      persistence/mysql/<br>
+      ├── connection.go / store.go<br>
+      ├── model.go / codec.go<br>
+      └── window.go / invocation.go<br>
+      transport/<br>
+      ├── terminal.go / wecom.go / reporter.go<br>
+      cmd/{reagent,ping}/<br>
+      migrations/<br>
+      tests/integration/<br>
+      AGENTS.md / skills/ / docs/<br>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <div class="label">固定依赖方向</div>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;text-align:center;line-height:2">
+      cmd → application → conversation / persistence / transport / config<br>
+      application → pi → pi/agent → pi/ai<br>
+      pi/bootstrap → pi/tools + pi/observability<br><br>
+      <strong>禁止：</strong>pi/* 依赖任何服务一级包
+    </div>
+  </div>
+</div>

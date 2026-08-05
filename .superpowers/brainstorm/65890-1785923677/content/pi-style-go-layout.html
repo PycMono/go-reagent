@@ -1,0 +1,51 @@
+<h2>修正版：参考 Pi 的同级分层，不增加 sdk/ 或 reagent/ 容器</h2>
+<p class="subtitle">可抽离边界由依赖方向和边界测试保证，不依赖一个物理父目录。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Pi</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.8">
+      packages/<br>
+      ├── ai/<br>
+      ├── agent/<br>
+      ├── coding-agent/<br>
+      └── tui/<br><br>
+      coding-agent → agent → ai
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">go-reagent（推荐）</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.8">
+      go-reagent/<br>
+      ├── ai/<br>
+      ├── agent/<br>
+      ├── agent.go / config.go / error.go<br>
+      ├── internal/<br>
+      │&nbsp;&nbsp;├── harness/{bootstrap,workspace,tools,observability}<br>
+      │&nbsp;&nbsp;└── service/{application,conversation,persistence,transport}<br>
+      └── cmd/reagent/<br><br>
+      service → reagent(root) → agent → ai
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <div class="label">为什么仍然容易拆仓</div>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;line-height:1.9">
+      未来 SDK 仓库 = 根 facade 文件 + ai/ + agent/ + internal/harness/<br>
+      当前业务服务 = internal/service/ + cmd/ + migrations/<br><br>
+      <strong>边界测试：</strong>SDK 集合不得 import internal/service、transport、persistence、cmd
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve-pi-style" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>采用 Pi 风格同级分层</h3>
+      <p>不新增 sdk/、pi/、reagent/；将内部实现按 harness 与 service 分区。</p>
+    </div>
+  </div>
+</div>

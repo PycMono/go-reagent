@@ -1,4 +1,4 @@
-package dispatch_test
+package transport_test
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/PycMono/go-reagent/internal/cli/dispatch"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/transport"
 )
 
 type webhookRequest struct {
@@ -46,7 +46,7 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter, err := dispatch.NewWeComReporter(server.URL, server.Client())
+	reporter, err := transport.NewWeComReporter(server.URL, server.Client())
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter, err := dispatch.NewWeComReporter(server.URL, server.Client())
+	reporter, err := transport.NewWeComReporter(server.URL, server.Client())
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter, err := dispatch.NewWeComReporter(server.URL, server.Client())
+	reporter, err := transport.NewWeComReporter(server.URL, server.Client())
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
