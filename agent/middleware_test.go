@@ -1,4 +1,4 @@
-package tools
+package agent
 
 import (
 	"context"
@@ -8,14 +8,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestMiddlewareRunsByOrderThenName(t *testing.T) {
 	var sequence []string
 	middleware := func(name string) Middleware {
 		return func(next Handler) Handler {
-			return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+			return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 				sequence = append(sequence, name+":before")
 				output, err := next(ctx, execution, emit)
 				sequence = append(sequence, name+":after")
@@ -28,9 +27,9 @@ func TestMiddlewareRunsByOrderThenName(t *testing.T) {
 		{Name: "beta", Order: 50, Middleware: middleware("beta")},
 		{Name: "alpha", Order: 50, Middleware: middleware("alpha")},
 	}
-	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
 		sequence = append(sequence, "tool")
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
+		return ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 	})
 	registry := newTestRegistry(t, registrations, tool)
 
@@ -45,10 +44,10 @@ func TestMiddlewareRunsByOrderThenName(t *testing.T) {
 }
 
 func TestRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
-	tool := testTool("panic", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+	tool := testTool("panic", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
 		panic("sensitive panic value")
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 
 	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "panic", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	text := toolResultText(t, result)
@@ -58,10 +57,10 @@ func TestRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
 }
 
 func TestOutputMiddlewareMakesEmptySuccessExplicit(t *testing.T) {
-	tool := testTool("empty", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{}, nil
+	tool := testTool("empty", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
+		return ToolOutput{}, nil
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 
 	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "empty", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	if err != nil || result.IsError || toolResultText(t, result) != "(no output)" {
@@ -71,10 +70,10 @@ func TestOutputMiddlewareMakesEmptySuccessExplicit(t *testing.T) {
 
 func TestOutputMiddlewareTruncatesOnUtf8Boundary(t *testing.T) {
 	content := strings.Repeat("a", maxToolOutputBytes-1) + "界" + strings.Repeat("z", 100)
-	tool := testTool("large", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(content)}}, nil
+	tool := testTool("large", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
+		return ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(content)}}, nil
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 
 	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "large", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	text := toolResultText(t, result)

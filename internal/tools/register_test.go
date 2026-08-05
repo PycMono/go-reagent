@@ -6,16 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/schema"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
 
 func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 	var (
-		registry   Registry
+		registry   agent.Registry
 		workspace  *Workspace
 		supervisor *ProcessSupervisor
 	)
@@ -46,66 +46,26 @@ func TestRegisterProvidesRuntimeRegistry(t *testing.T) {
 }
 
 func TestRegisterRejectsDuplicateToolGroupNames(t *testing.T) {
-	duplicateRead := testTool("read", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("duplicate")}}, nil
-	})
+	duplicateRead := registerTestTool{name: "read", execute: func(context.Context, json.RawMessage, agent.UpdateEmitter) (agent.ToolOutput, error) {
+		return agent.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("duplicate")}}, nil
+	}}
 	app := fx.New(
 		fx.NopLogger,
 		fx.Supply(config.WorkDir(t.TempDir())),
 		Register,
 		fx.Provide(fx.Annotate(
-			func() Tool { return duplicateRead },
+			func() agent.Tool { return duplicateRead },
 			fx.ResultTags(`group:"agent_tools"`),
 		)),
-		fx.Invoke(func(Registry) {}),
+		fx.Invoke(func(agent.Registry) {}),
 	)
 	if err := app.Err(); err == nil || !strings.Contains(err.Error(), "already registered") {
 		t.Fatalf("app.Err() = %v, want duplicate registration error", err)
 	}
 }
 
-func TestRegisterSortsReversedMiddlewareGroupByOrderThenName(t *testing.T) {
-	var sequence []string
-	registration := func(name string) MiddlewareRegistration {
-		return MiddlewareRegistration{
-			Name:  name,
-			Order: 1000,
-			Middleware: func(next Handler) Handler {
-				return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
-					sequence = append(sequence, name)
-					return next(ctx, execution, emit)
-				}
-			},
-		}
-	}
-	probe := testTool("order_probe", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
-	})
-	var registry Registry
-	app := fxtest.New(t,
-		fx.Supply(config.WorkDir(t.TempDir())),
-		Register,
-		fx.Provide(
-			fx.Annotate(func() Tool { return probe }, fx.ResultTags(`group:"agent_tools"`)),
-			fx.Annotate(func() MiddlewareRegistration { return registration("zeta") }, fx.ResultTags(`group:"tool_middlewares"`)),
-			fx.Annotate(func() MiddlewareRegistration { return registration("alpha") }, fx.ResultTags(`group:"tool_middlewares"`)),
-		),
-		fx.Populate(&registry),
-	)
-	app.RequireStart()
-	defer app.RequireStop()
-
-	result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "probe", Name: "order_probe", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
-	if err != nil || result.IsError {
-		t.Fatalf("Execute() = (%#v, %v)", result, err)
-	}
-	if got := strings.Join(sequence, ","); got != "alpha,zeta" {
-		t.Fatalf("middleware sequence = %q, want alpha,zeta", got)
-	}
-}
-
 func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
-	var registry Registry
+	var registry agent.Registry
 	app := fxtest.New(t,
 		fx.Supply(config.WorkDir(t.TempDir())),
 		Register,
@@ -125,4 +85,21 @@ func TestRuntimeRegistryRejectsLegacyExecAndProcessFields(t *testing.T) {
 			t.Fatalf("Execute(%s) = (%#v, %v)", call.ID, result, err)
 		}
 	}
+}
+
+type registerTestTool struct {
+	name    string
+	execute func(context.Context, json.RawMessage, agent.UpdateEmitter) (agent.ToolOutput, error)
+}
+
+func (t registerTestTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name:        t.name,
+		Description: "test tool",
+		InputSchema: map[string]any{"type": "object"},
+	}
+}
+
+func (t registerTestTool) Execute(ctx context.Context, raw json.RawMessage, emit agent.UpdateEmitter) (agent.ToolOutput, error) {
+	return t.execute(ctx, raw, emit)
 }

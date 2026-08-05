@@ -1,4 +1,4 @@
-package tools
+package agent
 
 import (
 	"context"
@@ -9,12 +9,11 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type stubTool struct {
 	definition ai.ToolDefinition
-	execute    func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error)
+	execute    func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error)
 }
 
 func (t *stubTool) Definition() ai.ToolDefinition { return t.definition }
@@ -23,11 +22,11 @@ func (t *stubTool) Execute(
 	ctx context.Context,
 	args json.RawMessage,
 	emit UpdateEmitter,
-) (schema.ToolOutput, error) {
+) (ToolOutput, error) {
 	return t.execute(ctx, args, emit)
 }
 
-func testTool(name string, execute func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error)) *stubTool {
+func testTool(name string, execute func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error)) *stubTool {
 	return &stubTool{
 		definition: ai.ToolDefinition{
 			Name:        name,
@@ -47,7 +46,7 @@ func testTool(name string, execute func(context.Context, json.RawMessage, Update
 
 func newTestRegistry(t *testing.T, registrations []MiddlewareRegistration, tools ...Tool) Registry {
 	t.Helper()
-	registry, err := NewRegistry(RegistryParams{Tools: tools, Middlewares: registrations})
+	registry, err := NewRegistry(RegistryOptions{Tools: tools, Middlewares: registrations})
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
@@ -55,10 +54,10 @@ func newTestRegistry(t *testing.T, registrations []MiddlewareRegistration, tools
 }
 
 func TestRegistrySortsDefinitions(t *testing.T) {
-	execute := func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
+	execute := func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
+		return ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 	}
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), testTool("zeta", execute), testTool("alpha", execute))
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), testTool("zeta", execute), testTool("alpha", execute))
 
 	definitions := registry.GetAvailableTools()
 	if len(definitions) != 2 || definitions[0].Name != "alpha" || definitions[1].Name != "zeta" {
@@ -68,11 +67,11 @@ func TestRegistrySortsDefinitions(t *testing.T) {
 
 func TestRegistryRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
 	var calls atomic.Int32
-	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
 		calls.Add(1)
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("unexpected")}}, nil
+		return ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("unexpected")}}, nil
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 
 	tests := []struct {
 		name string
@@ -86,15 +85,15 @@ func TestRegistryRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var events []schema.ToolEvent
+			var events []ToolEvent
 			call := ai.ToolCall{ID: "call-" + tt.name, Name: "echo", Arguments: tt.args}
-			result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+			result, err := registry.Execute(context.Background(), call, func(_ context.Context, event ToolEvent) {
 				events = append(events, event)
 			})
 			if err != nil || !result.IsError {
 				t.Fatalf("Execute() = (%#v, %v), want ordinary error result", result, err)
 			}
-			if len(events) != 2 || events[0].Phase != schema.ToolEventStart || events[1].Phase != schema.ToolEventEnd {
+			if len(events) != 2 || events[0].Phase != ToolEventStart || events[1].Phase != ToolEventEnd {
 				t.Fatalf("events = %#v, want start/end", events)
 			}
 		})
@@ -105,15 +104,15 @@ func TestRegistryRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
 }
 
 func TestRegistryEmitsStartUpdateEndOnceWithCallIdentity(t *testing.T) {
-	tool := testTool("echo", func(_ context.Context, _ json.RawMessage, emit UpdateEmitter) (schema.ToolOutput, error) {
-		emit(schema.ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}, Details: "progress"})
-		return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("done")}, Details: "final"}, nil
+	tool := testTool("echo", func(_ context.Context, _ json.RawMessage, emit UpdateEmitter) (ToolOutput, error) {
+		emit(ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}, Details: "progress"})
+		return ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("done")}, Details: "final"}, nil
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 	call := ai.ToolCall{ID: "call-42", Name: "echo", Arguments: json.RawMessage(`{"text":"hello"}`)}
-	var events []schema.ToolEvent
+	var events []ToolEvent
 
-	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event ToolEvent) {
 		events = append(events, event)
 	})
 	if err != nil || result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || result.Details != "final" {
@@ -122,7 +121,7 @@ func TestRegistryEmitsStartUpdateEndOnceWithCallIdentity(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("events = %#v, want exactly three", events)
 	}
-	for index, phase := range []schema.ToolEventPhase{schema.ToolEventStart, schema.ToolEventUpdate, schema.ToolEventEnd} {
+	for index, phase := range []ToolEventPhase{ToolEventStart, ToolEventUpdate, ToolEventEnd} {
 		if events[index].Phase != phase || events[index].Call.ID != call.ID || events[index].Call.Name != call.Name {
 			t.Fatalf("events[%d] = %#v", index, events[index])
 		}
@@ -138,22 +137,22 @@ func TestRegistryEmitsStartUpdateEndOnceWithCallIdentity(t *testing.T) {
 func TestRegistryNormalizesOrdinaryAndContextErrors(t *testing.T) {
 	tests := []struct {
 		name       string
-		output     schema.ToolOutput
+		output     ToolOutput
 		executeErr error
 		wantGoErr  error
 		wantText   string
 	}{
 		{name: "ordinary error uses error text", executeErr: errors.New("disk failed"), wantText: "disk failed"},
-		{name: "ordinary error retains output", output: schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("partial")}, Details: "kept"}, executeErr: errors.New("disk failed"), wantText: "partial"},
+		{name: "ordinary error retains output", output: ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("partial")}, Details: "kept"}, executeErr: errors.New("disk failed"), wantText: "partial"},
 		{name: "canceled", executeErr: context.Canceled, wantGoErr: context.Canceled, wantText: "context canceled"},
 		{name: "deadline", executeErr: context.DeadlineExceeded, wantGoErr: context.DeadlineExceeded, wantText: "context deadline exceeded"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+			tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
 				return tt.output, tt.executeErr
 			})
-			registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+			registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 			result, err := registry.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "echo", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 			if !result.IsError || !strings.Contains(toolResultText(t, result), tt.wantText) {
 				t.Fatalf("result = %#v", result)
@@ -169,10 +168,10 @@ func TestRegistryNormalizesOrdinaryAndContextErrors(t *testing.T) {
 }
 
 func TestRegistryUsesConcreteToolErrorTextWhenAdapterOutputIsEmpty(t *testing.T) {
-	tool := testTool("concrete", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
-		return textToolOutput(""), errors.New("concrete operation failed")
+	tool := testTool("concrete", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
+		return ToolOutput{}, errors.New("concrete operation failed")
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 
 	result, err := registry.Execute(context.Background(), ai.ToolCall{
 		ID:        "call-concrete",
@@ -189,16 +188,16 @@ func TestRegistryUsesConcreteToolErrorTextWhenAdapterOutputIsEmpty(t *testing.T)
 
 func TestRegistryPreCanceledContextSkipsToolAndEvents(t *testing.T) {
 	var calls atomic.Int32
-	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (schema.ToolOutput, error) {
+	tool := testTool("echo", func(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error) {
 		calls.Add(1)
-		return schema.ToolOutput{}, nil
+		return ToolOutput{}, nil
 	})
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), tool)
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations(), tool)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	var events []schema.ToolEvent
+	var events []ToolEvent
 
-	result, err := registry.Execute(ctx, ai.ToolCall{ID: "call", Name: "echo"}, func(_ context.Context, event schema.ToolEvent) {
+	result, err := registry.Execute(ctx, ai.ToolCall{ID: "call", Name: "echo"}, func(_ context.Context, event ToolEvent) {
 		events = append(events, event)
 	})
 	if !errors.Is(err, context.Canceled) || len(result.Content) != 0 || calls.Load() != 0 || len(events) != 0 {
@@ -207,10 +206,10 @@ func TestRegistryPreCanceledContextSkipsToolAndEvents(t *testing.T) {
 }
 
 func TestRegistryUnknownToolReturnsErrorResultWithoutEvents(t *testing.T) {
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations())
-	var events []schema.ToolEvent
+	registry := newTestRegistry(t, DefaultMiddlewareRegistrations())
+	var events []ToolEvent
 	call := ai.ToolCall{ID: "missing-id", Name: "missing"}
-	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event schema.ToolEvent) {
+	result, err := registry.Execute(context.Background(), call, func(_ context.Context, event ToolEvent) {
 		events = append(events, event)
 	})
 	if err != nil || !result.IsError || result.ToolCallID != call.ID || result.ToolName != call.Name || !strings.Contains(toolResultText(t, result), "not registered") || len(events) != 0 {
@@ -218,7 +217,7 @@ func TestRegistryUnknownToolReturnsErrorResultWithoutEvents(t *testing.T) {
 	}
 }
 
-func toolResultText(t *testing.T, result schema.ToolResult) string {
+func toolResultText(t *testing.T, result ToolResult) string {
 	t.Helper()
 	return toolEventText(t, result.Content)
 }

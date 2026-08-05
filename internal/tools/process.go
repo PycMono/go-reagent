@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
@@ -35,7 +35,7 @@ type ProcessTool struct {
 	supervisor *ProcessSupervisor
 }
 
-var _ Tool = (*ProcessTool)(nil)
+var _ agent.Tool = (*ProcessTool)(nil)
 
 func NewProcessTool(supervisor *ProcessSupervisor) *ProcessTool {
 	return &ProcessTool{supervisor: supervisor}
@@ -66,19 +66,19 @@ func (t *ProcessTool) Definition() ai.ToolDefinition {
 	}
 }
 
-func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ agent.UpdateEmitter) (agent.ToolOutput, error) {
 	if t == nil || t.supervisor == nil {
-		return schema.ToolOutput{}, errors.New("process 未初始化")
+		return agent.ToolOutput{}, errors.New("process 未初始化")
 	}
 	if ctx == nil {
-		return schema.ToolOutput{}, errors.New("context 不能为空")
+		return agent.ToolOutput{}, errors.New("context 不能为空")
 	}
 	if err := t.supervisor.ensureOpen(); err != nil {
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
 	input, err := decodeProcessArgs(args)
 	if err != nil {
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
 	input.Action = strings.TrimSpace(input.Action)
 	switch input.Action {
@@ -91,24 +91,24 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 
 	case "poll":
 		if err := requireProcessSessionID(input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		timeoutMS := 0
 		if input.Timeout != nil {
 			timeoutMS = *input.Timeout
 		}
 		if timeoutMS < 0 || timeoutMS > maxProcessWaitMS {
-			return schema.ToolOutput{}, fmt.Errorf("timeout 必须在 0..%d 毫秒", maxProcessWaitMS)
+			return agent.ToolOutput{}, fmt.Errorf("timeout 必须在 0..%d 毫秒", maxProcessWaitMS)
 		}
 		snapshot, err := t.supervisor.Poll(ctx, input.SessionID, time.Duration(timeoutMS)*time.Millisecond)
 		if err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		return processSnapshotOutput(input.Action, snapshot, fmt.Sprintf("session %s is %s", snapshot.SessionID, snapshot.Status)), nil
 
 	case "log":
 		if err := requireProcessSessionID(input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		offset := int64(0)
 		if input.Offset != nil {
@@ -119,14 +119,14 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 			limit = *input.Limit
 		}
 		if offset < 0 {
-			return schema.ToolOutput{}, errors.New("offset 不能小于 0")
+			return agent.ToolOutput{}, errors.New("offset 不能小于 0")
 		}
 		if limit < 1 || limit > maxProcessLogSize {
-			return schema.ToolOutput{}, fmt.Errorf("limit 必须在 1..%d", maxProcessLogSize)
+			return agent.ToolOutput{}, fmt.Errorf("limit 必须在 1..%d", maxProcessLogSize)
 		}
 		page, err := t.supervisor.Log(input.SessionID, offset, limit)
 		if err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		content := page.Content
 		if content == "" {
@@ -142,24 +142,24 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 
 	case "write":
 		if err := requireProcessSessionID(input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		if input.Data == nil && !input.EOF {
-			return schema.ToolOutput{}, errors.New("write action 需要 data 或 eof=true")
+			return agent.ToolOutput{}, errors.New("write action 需要 data 或 eof=true")
 		}
 		snapshot, err := t.supervisor.Write(ctx, input.SessionID, input.Data, input.EOF)
 		if err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		return processSnapshotOutput(input.Action, snapshot, fmt.Sprintf("wrote to session %s", snapshot.SessionID)), nil
 
 	case "kill":
 		if err := requireProcessSessionID(input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		snapshot, err := t.supervisor.Kill(ctx, input.SessionID)
 		if err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		return processSnapshotOutput(input.Action, snapshot, fmt.Sprintf("killed session %s", snapshot.SessionID)), nil
 
@@ -172,10 +172,10 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 
 	case "remove":
 		if err := requireProcessSessionID(input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		if err := t.supervisor.Remove(ctx, input.SessionID); err != nil {
-			return schema.ToolOutput{}, err
+			return agent.ToolOutput{}, err
 		}
 		return processOutput(fmt.Sprintf("removed session %s", input.SessionID), ProcessDetails{
 			Action:    input.Action,
@@ -185,11 +185,11 @@ func (t *ProcessTool) Execute(ctx context.Context, args json.RawMessage, _ Updat
 		}), nil
 
 	default:
-		return schema.ToolOutput{}, errors.New("action 必须是 list、poll、log、write、kill、clear 或 remove")
+		return agent.ToolOutput{}, errors.New("action 必须是 list、poll、log、write、kill、clear 或 remove")
 	}
 }
 
-func processSnapshotOutput(action string, snapshot ProcessSnapshot, content string) schema.ToolOutput {
+func processSnapshotOutput(action string, snapshot ProcessSnapshot, content string) agent.ToolOutput {
 	return processOutput(content, ProcessDetails{
 		Action:    action,
 		SessionID: snapshot.SessionID,
@@ -199,8 +199,8 @@ func processSnapshotOutput(action string, snapshot ProcessSnapshot, content stri
 	})
 }
 
-func processOutput(content string, details ProcessDetails) schema.ToolOutput {
-	return schema.ToolOutput{
+func processOutput(content string, details ProcessDetails) agent.ToolOutput {
+	return agent.ToolOutput{
 		Content: []ai.ContentBlock{ai.TextBlock(content)},
 		Details: details,
 	}

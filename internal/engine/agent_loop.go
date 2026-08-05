@@ -8,9 +8,9 @@ import (
 	"slices"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // AgentLoop owns provider phases, message history, validation, and tool scheduling for one run.
@@ -26,7 +26,7 @@ func NewAgentLoop(p ai.Client, scheduler *ToolScheduler, enableThinking bool) *A
 }
 
 // Run executes provider turns until an Action response has no tool calls.
-func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, reporter Reporter) ([]ai.Message, error) {
+func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, reporter agent.Reporter) ([]ai.Message, error) {
 	if l == nil || l.provider == nil {
 		return nil, errors.New("agent loop: LLM provider is required")
 	}
@@ -60,7 +60,7 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 
 		if l.enableThinking {
 			if reporter != nil {
-				reporter.Report(ctx, schema.NewThinkingEvent())
+				reporter.Report(ctx, agent.NewThinkingEvent())
 			}
 			thinkResp, err := l.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
@@ -100,7 +100,7 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 		newMessages = append(newMessages, *actionResp)
 		if len(actionResp.ToolCalls) == 0 {
 			if reporter != nil {
-				reporter.Report(ctx, schema.NewMessageEvent(*actionResp))
+				reporter.Report(ctx, agent.NewMessageEvent(*actionResp))
 			}
 			return finish(nil)
 		}
@@ -115,9 +115,9 @@ func (l *AgentLoop) Run(ctx context.Context, runContext ctxpkg.RunContext, repor
 			logsdk.Any("tool_count", len(actionResp.ToolCalls)),
 			logsdk.Any("execution_mode", mode),
 		)
-		observer := func(ctx context.Context, event schema.ToolEvent) {
+		observer := func(ctx context.Context, event agent.ToolEvent) {
 			if reporter != nil {
-				reporter.Report(ctx, schema.NewAgentToolEvent(event))
+				reporter.Report(ctx, agent.NewAgentToolEvent(event))
 			}
 		}
 		results, err := l.scheduler.Schedule(ctx, actionResp.ToolCalls, availableTools, observer)

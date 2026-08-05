@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	reagentinternal "github.com/PycMono/go-reagent/internal"
 	"github.com/PycMono/go-reagent/internal/config"
@@ -32,7 +33,7 @@ func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {
 	workDir := t.TempDir()
 	var (
 		runtime    engine.AgentRuntime
-		registry   tools.Registry
+		registry   agent.Registry
 		workspace  *tools.Workspace
 		supervisor *tools.ProcessSupervisor
 	)

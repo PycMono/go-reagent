@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestPromptComposerBuildsGenericServicePrompt(t *testing.T) {
@@ -73,8 +73,8 @@ func TestRunContextFactoryRequiresEligibleSkill(t *testing.T) {
 	}
 }
 
-func validWorkspaceRunRequest() schema.RunRequest {
-	return schema.RunRequest{Input: ai.Message{
+func validWorkspaceRunRequest() agent.RunRequest {
+	return agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
 		Content: []ai.ContentBlock{ai.TextBlock("hello")},
 	}}

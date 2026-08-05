@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/engine"
 	"go.uber.org/fx"
 )
 
@@ -20,7 +20,7 @@ var Register = fx.Options(
 )
 
 // NewReporterRegistrations creates the optional enterprise WeChat registration.
-func NewReporterRegistrations(cfg *config.Config) ([]engine.ReporterRegistration, error) {
+func NewReporterRegistrations(cfg *config.Config) ([]agent.ReporterRegistration, error) {
 	if cfg == nil {
 		return nil, errors.New("初始化 Reporter: 配置不能为空")
 	}
@@ -32,5 +32,5 @@ func NewReporterRegistrations(cfg *config.Config) ([]engine.ReporterRegistration
 		return nil, fmt.Errorf("初始化企业微信群 Reporter: %w", err)
 	}
 
-	return []engine.ReporterRegistration{{Name: "wecom", Order: 200, Reporter: weComReporter}}, nil
+	return []agent.ReporterRegistration{{Name: "wecom", Order: 200, Reporter: weComReporter}}, nil
 }

@@ -1,25 +1,25 @@
-package schema_test
+package agent_test
 
 import (
 	"encoding/json"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestAgentEventConstructorsSetDiscriminatedPayloads(t *testing.T) {
 	call := ai.ToolCall{ID: "call-1", Name: "exec", Arguments: json.RawMessage(`{"command":"pwd"}`)}
-	start := schema.NewToolStartEvent(call)
-	if start.Type != schema.AgentEventToolStart || start.Tool == nil || start.Tool.Phase != schema.ToolEventStart {
+	start := agent.NewToolStartEvent(call)
+	if start.Type != agent.AgentEventToolStart || start.Tool == nil || start.Tool.Phase != agent.ToolEventStart {
 		t.Fatalf("start = %#v", start)
 	}
 
-	message := schema.NewMessageEvent(ai.Message{
+	message := agent.NewMessageEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("done")},
 	})
-	if message.Type != schema.AgentEventMessage || message.Message == nil || message.Tool != nil {
+	if message.Type != agent.AgentEventMessage || message.Message == nil || message.Tool != nil {
 		t.Fatalf("message = %#v", message)
 	}
 }

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const defaultWrittenFileMode = 0o644
@@ -27,7 +27,7 @@ type WriteDetails struct {
 // WriteTool creates or overwrites UTF-8 text files in the shared workspace.
 type WriteTool struct{ workspace *Workspace }
 
-var _ Tool = (*WriteTool)(nil)
+var _ agent.Tool = (*WriteTool)(nil)
 
 func NewWriteTool(workspace *Workspace) (*WriteTool, error) {
 	if workspace == nil {
@@ -52,12 +52,12 @@ func (t *WriteTool) Definition() ai.ToolDefinition {
 	}
 }
 
-func (t *WriteTool) Execute(ctx context.Context, args json.RawMessage, _ UpdateEmitter) (schema.ToolOutput, error) {
+func (t *WriteTool) Execute(ctx context.Context, args json.RawMessage, _ agent.UpdateEmitter) (agent.ToolOutput, error) {
 	output, details, err := t.executeWithDetails(ctx, args)
 	if err != nil {
-		return schema.ToolOutput{}, err
+		return agent.ToolOutput{}, err
 	}
-	return schema.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
+	return agent.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(output)}, Details: details}, nil
 }
 
 func (t *WriteTool) execute(ctx context.Context, args json.RawMessage) (string, error) {

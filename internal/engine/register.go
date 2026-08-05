@@ -1,8 +1,8 @@
 package engine
 
 import (
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
 
@@ -25,18 +25,18 @@ var Register = fx.Options(
 type reporterParams struct {
 	fx.In
 
-	Registrations []ReporterRegistration `group:"reporters"`
+	Registrations []agent.ReporterRegistration `group:"reporters"`
 }
 
-func newTerminalReporterRegistration() ReporterRegistration {
-	return ReporterRegistration{Name: "terminal", Order: 100, Reporter: NewTerminalReporter()}
+func newTerminalReporterRegistration() agent.ReporterRegistration {
+	return agent.ReporterRegistration{Name: "terminal", Order: 100, Reporter: NewTerminalReporter()}
 }
 
-func newRegisteredReporter(params reporterParams) Reporter {
-	return NewMultiReporter(params.Registrations)
+func newRegisteredReporter(params reporterParams) agent.Reporter {
+	return agent.NewMultiReporter(params.Registrations)
 }
 
-func newRegisteredToolScheduler(registry tools.Registry) *ToolScheduler {
+func newRegisteredToolScheduler(registry agent.Registry) *ToolScheduler {
 	return NewToolScheduler(registry, defaultMaxParallelTools)
 }
 

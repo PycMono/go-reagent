@@ -5,11 +5,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/config"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/schema"
-	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -24,8 +23,8 @@ type registerRegistry struct{}
 
 func (*registerRegistry) GetAvailableTools() []ai.ToolDefinition { return nil }
 
-func (*registerRegistry) Execute(context.Context, ai.ToolCall, tools.ToolEventObserver) (schema.ToolResult, error) {
-	return schema.ToolResult{}, nil
+func (*registerRegistry) Execute(context.Context, ai.ToolCall, agent.ToolEventObserver) (agent.ToolResult, error) {
+	return agent.ToolResult{}, nil
 }
 
 func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
@@ -36,7 +35,7 @@ func TestRegisterProvidesAgentRuntimeStack(t *testing.T) {
 	)
 	app := fxtest.New(t,
 		fx.Provide(func() ai.Client { return &registerProvider{} }),
-		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
+		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
 		fx.Supply(config.WorkDir(t.TempDir())),
 		ctxpkg.Register,
 		Register,
@@ -58,32 +57,32 @@ type namedRegisterReporter struct {
 	got  *[]string
 }
 
-func (r *namedRegisterReporter) Report(context.Context, schema.AgentEvent) {
+func (r *namedRegisterReporter) Report(context.Context, agent.AgentEvent) {
 	*r.got = append(*r.got, r.name)
 }
 
 func TestRegisterSortsReversedReporterGroupByOrderThenName(t *testing.T) {
 	var got []string
-	registration := func(name string) ReporterRegistration {
-		return ReporterRegistration{Name: name, Order: 50, Reporter: &namedRegisterReporter{name: name, got: &got}}
+	registration := func(name string) agent.ReporterRegistration {
+		return agent.ReporterRegistration{Name: name, Order: 50, Reporter: &namedRegisterReporter{name: name, got: &got}}
 	}
-	var reporter Reporter
+	var reporter agent.Reporter
 	app := fxtest.New(t,
 		fx.Provide(func() ai.Client { return &registerProvider{} }),
-		fx.Provide(func() tools.Registry { return &registerRegistry{} }),
+		fx.Provide(func() agent.Registry { return &registerRegistry{} }),
 		fx.Supply(config.WorkDir(t.TempDir())),
 		ctxpkg.Register,
 		Register,
 		fx.Provide(
-			fx.Annotate(func() ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),
-			fx.Annotate(func() ReporterRegistration { return registration("alpha") }, fx.ResultTags(`group:"reporters"`)),
+			fx.Annotate(func() agent.ReporterRegistration { return registration("zeta") }, fx.ResultTags(`group:"reporters"`)),
+			fx.Annotate(func() agent.ReporterRegistration { return registration("alpha") }, fx.ResultTags(`group:"reporters"`)),
 		),
 		fx.Populate(&reporter),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
-	reporter.Report(context.Background(), schema.NewThinkingEvent())
+	reporter.Report(context.Background(), agent.NewThinkingEvent())
 	if !slices.Equal(got, []string{"alpha", "zeta"}) {
 		t.Fatalf("reporter sequence = %v, want alpha,zeta", got)
 	}

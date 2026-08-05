@@ -5,19 +5,18 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
-	"github.com/PycMono/go-reagent/internal/tools"
 )
 
 // ToolScheduler partitions tool calls into ordered waves and executes parallel-safe waves with a bound.
 type ToolScheduler struct {
-	registry    tools.Registry
+	registry    agent.Registry
 	maxParallel int
 }
 
 // NewToolScheduler creates a scheduler backed by registry.
-func NewToolScheduler(registry tools.Registry, maxParallel int) *ToolScheduler {
+func NewToolScheduler(registry agent.Registry, maxParallel int) *ToolScheduler {
 	return &ToolScheduler{registry: registry, maxParallel: maxParallel}
 }
 
@@ -26,8 +25,8 @@ func (s *ToolScheduler) Schedule(
 	ctx context.Context,
 	calls []ai.ToolCall,
 	definitions []ai.ToolDefinition,
-	observer tools.ToolEventObserver,
-) ([]schema.ToolResult, error) {
+	observer agent.ToolEventObserver,
+) ([]agent.ToolResult, error) {
 	if ctx == nil {
 		return nil, errors.New("tool scheduler: context is required")
 	}
@@ -36,7 +35,7 @@ func (s *ToolScheduler) Schedule(
 	}
 
 	parallelSafe := definitionSafety(definitions)
-	results := make([]schema.ToolResult, len(calls))
+	results := make([]agent.ToolResult, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -100,10 +99,10 @@ func definitionSafety(definitions []ai.ToolDefinition) map[string]bool {
 func (s *ToolScheduler) executeWave(
 	ctx context.Context,
 	calls []ai.ToolCall,
-	results []schema.ToolResult,
+	results []agent.ToolResult,
 	start int,
 	end int,
-	observer tools.ToolEventObserver,
+	observer agent.ToolEventObserver,
 ) error {
 	limit := s.maxParallel
 	if limit <= 0 {

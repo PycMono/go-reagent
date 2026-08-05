@@ -11,11 +11,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
 	agentconfig "github.com/PycMono/go-reagent/internal/config"
 	"github.com/PycMono/go-reagent/internal/dispatch"
 	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
@@ -47,11 +47,11 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 	os.Stdout = writeEnd
 	terminal := engine.NewTerminalReporter()
 	os.Stdout = originalStdout
-	registrations = append(registrations, engine.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
-	reporter := engine.NewMultiReporter(registrations)
+	registrations = append(registrations, agent.ReporterRegistration{Name: "terminal", Order: 100, Reporter: terminal})
+	reporter := agent.NewMultiReporter(registrations)
 	ctx := context.Background()
 	execCall := ai.ToolCall{ID: "exec-1", Name: "exec", Arguments: []byte(`{"command":"go test ./..."}`)}
-	reporter.Report(ctx, schema.NewToolUpdateEvent(execCall, schema.ToolUpdate{
+	reporter.Report(ctx, agent.NewToolUpdateEvent(execCall, agent.ToolUpdate{
 		Content: []ai.ContentBlock{ai.TextBlock("streamed output")},
 	}))
 	mu.Lock()
@@ -61,14 +61,14 @@ func TestReporterRoutesExecUpdatesOnlyToTerminal(t *testing.T) {
 		t.Fatalf("WeCom requests after exec update = %d, want 0", requestsAfterUpdate)
 	}
 
-	reporter.Report(ctx, schema.NewToolStartEvent(execCall))
-	reporter.Report(ctx, schema.NewToolEndEvent(execCall, schema.ToolResult{
+	reporter.Report(ctx, agent.NewToolStartEvent(execCall))
+	reporter.Report(ctx, agent.NewToolEndEvent(execCall, agent.ToolResult{
 		ToolCallID: execCall.ID,
 		ToolName:   execCall.Name,
 		Content:    []ai.ContentBlock{ai.TextBlock("exit status 1")},
 		IsError:    true,
 	}))
-	reporter.Report(ctx, schema.NewMessageEvent(ai.Message{
+	reporter.Report(ctx, agent.NewMessageEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("final answer")},
 	}))

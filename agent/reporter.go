@@ -1,17 +1,15 @@
-package engine
+package agent
 
 import (
 	"cmp"
 	"context"
 	"slices"
 	"strings"
-
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // Reporter receives user-facing Agent lifecycle events.
 type Reporter interface {
-	Report(context.Context, schema.AgentEvent)
+	Report(context.Context, AgentEvent)
 }
 
 // ReporterRegistration describes one deterministic Reporter subscriber.
@@ -37,7 +35,7 @@ func NewMultiReporter(registrations []ReporterRegistration) Reporter {
 	return &multiReporter{registrations: filtered}
 }
 
-func (r *multiReporter) Report(ctx context.Context, event schema.AgentEvent) {
+func (r *multiReporter) Report(ctx context.Context, event AgentEvent) {
 	for _, registration := range r.registrations {
 		if strings.TrimSpace(registration.Name) == "" || registration.Reporter == nil {
 			continue
@@ -46,7 +44,7 @@ func (r *multiReporter) Report(ctx context.Context, event schema.AgentEvent) {
 	}
 }
 
-func reportSafely(ctx context.Context, reporter Reporter, event schema.AgentEvent) {
+func reportSafely(ctx context.Context, reporter Reporter, event AgentEvent) {
 	defer func() {
 		_ = recover()
 	}()

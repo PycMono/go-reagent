@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestProcessToolDefinitionUsesSevenActionCamelCaseSchema(t *testing.T) {
@@ -133,7 +133,7 @@ func TestProcessToolClearOnlyFinishedAndRemoveTerminatesThenDeletes(t *testing.T
 
 func TestProcessToolRejectsLegacyFieldsUnknownActionsAndInvalidActionArguments(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
-	registry := newTestRegistry(t, defaultMiddlewareRegistrations(), NewProcessTool(supervisor))
+	registry := newTestRegistry(t, agent.DefaultMiddlewareRegistrations(), NewProcessTool(supervisor))
 	tests := []struct {
 		input map[string]any
 		want  string
@@ -162,7 +162,7 @@ func TestProcessToolRejectsLegacyFieldsUnknownActionsAndInvalidActionArguments(t
 func TestProcessToolNeverInvokesUpdateEmitter(t *testing.T) {
 	supervisor := newProcessSupervisorForTest(t, t.TempDir())
 	var updates atomic.Int32
-	output, err := NewProcessTool(supervisor).Execute(context.Background(), processArguments(t, map[string]any{"action": "list"}), func(schema.ToolUpdate) {
+	output, err := NewProcessTool(supervisor).Execute(context.Background(), processArguments(t, map[string]any{"action": "list"}), func(agent.ToolUpdate) {
 		updates.Add(1)
 	})
 	if err != nil || updates.Load() != 0 || toolOutputText(t, output) == "" {
@@ -170,7 +170,7 @@ func TestProcessToolNeverInvokesUpdateEmitter(t *testing.T) {
 	}
 }
 
-func executeProcessOutput(t *testing.T, tool *ProcessTool, input map[string]any) schema.ToolOutput {
+func executeProcessOutput(t *testing.T, tool *ProcessTool, input map[string]any) agent.ToolOutput {
 	t.Helper()
 	output, err := tool.Execute(context.Background(), processArguments(t, input), nil)
 	if err != nil {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestRunContextFactoryDiscoversSkillsAndBuildsClonedInitialContext(t *testing.T) {
@@ -69,12 +69,12 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	writeValidAgentWorkspace(t, workDir)
 	factory := NewRunContextFactory(NewPromptComposer(workDir), NewSkillLoader(workDir))
 	history := []ai.Message{{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("previous answer")}}}
-	contextBlocks := []schema.ContextBlock{
+	contextBlocks := []agent.ContextBlock{
 		{Name: "preferences", Content: "prefers concise replies", Priority: 10},
 		{Name: "customer", Content: "customer tier is gold", Priority: 100},
 	}
 	metadata := map[string]string{"conversationId": "conversation-1"}
-	request := schema.RunRequest{
+	request := agent.RunRequest{
 		RunID:   "run-1",
 		History: history,
 		Input: ai.Message{
@@ -117,7 +117,7 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	}
 
 	history[0] = ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("mutated history")}}
-	contextBlocks[0] = schema.ContextBlock{Name: "mutated", Content: "mutated", Priority: 1000}
+	contextBlocks[0] = agent.ContextBlock{Name: "mutated", Content: "mutated", Priority: 1000}
 	metadata["conversationId"] = "mutated"
 	if got := runContextMessageText(t, runContext.Messages[3]); got != "previous answer" {
 		t.Fatalf("history was not cloned: %q", got)
@@ -127,80 +127,6 @@ func TestRunContextFactoryAssemblesStructuredRequest(t *testing.T) {
 	}
 	if got := runContext.Metadata["conversationId"]; got != "conversation-1" {
 		t.Fatalf("Metadata[conversationId] = %q, want conversation-1", got)
-	}
-}
-
-func TestRunContextFactoryRejectsInvalidStructuredRequest(t *testing.T) {
-	validInput := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}}
-	tests := []struct {
-		name    string
-		ctx     context.Context
-		request schema.RunRequest
-		want    string
-	}{
-		{
-			name:    "nil go context",
-			request: schema.RunRequest{Input: validInput},
-			want:    "context is required",
-		},
-		{
-			name: "non-user input",
-			ctx:  context.Background(),
-			request: schema.RunRequest{Input: ai.Message{
-				Role:    ai.RoleAssistant,
-				Content: []ai.ContentBlock{ai.TextBlock("hello")},
-			}},
-			want: "input role must be user",
-		},
-		{
-			name:    "empty input",
-			ctx:     context.Background(),
-			request: schema.RunRequest{Input: ai.Message{Role: ai.RoleUser}},
-			want:    "input content must not be empty",
-		},
-		{
-			name: "input tool calls",
-			ctx:  context.Background(),
-			request: schema.RunRequest{Input: ai.Message{
-				Role:      ai.RoleUser,
-				Content:   []ai.ContentBlock{ai.TextBlock("hello")},
-				ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read"}},
-			}},
-			want: "input must not contain tool fields",
-		},
-		{
-			name: "input tool result fields",
-			ctx:  context.Background(),
-			request: schema.RunRequest{Input: ai.Message{
-				Role:       ai.RoleUser,
-				Content:    []ai.ContentBlock{ai.TextBlock("hello")},
-				ToolCallID: "call-1",
-				ToolName:   "read",
-			}},
-			want: "input must not contain tool fields",
-		},
-		{
-			name:    "empty context name",
-			ctx:     context.Background(),
-			request: schema.RunRequest{Input: validInput, Context: []schema.ContextBlock{{Content: "value"}}},
-			want:    "context block 0 name must not be empty",
-		},
-		{
-			name:    "empty context content",
-			ctx:     context.Background(),
-			request: schema.RunRequest{Input: validInput, Context: []schema.ContextBlock{{Name: "profile"}}},
-			want:    "context block 0 content must not be empty",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
-			_, err := factory.Create(test.ctx, test.request, nil)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Create() error = %v, want containing %q", err, test.want)
-			}
-		})
 	}
 }
 
@@ -221,19 +147,28 @@ func TestRunContextFactoryRequiresReadWhenSkillsAreAvailable(t *testing.T) {
 	}
 }
 
+func TestRunContextFactoryRejectsNilContext(t *testing.T) {
+	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
+
+	_, err := factory.Create(nil, runRequest("unused"), []ai.ToolDefinition{{Name: "read"}})
+	if err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("Create() error = %v, want context is required", err)
+	}
+}
+
 func TestRunContextFactoryHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	factory := NewRunContextFactory(NewPromptComposer(t.TempDir()), NewSkillLoader(t.TempDir()))
 
-	_, err := factory.Create(ctx, runRequest("unused"), nil)
+	_, err := factory.Create(ctx, runRequest("unused"), []ai.ToolDefinition{{Name: "read"}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Create() error = %v, want context.Canceled", err)
 	}
 }
 
-func runRequest(input string) schema.RunRequest {
-	return schema.RunRequest{Input: ai.Message{
+func runRequest(input string) agent.RunRequest {
+	return agent.RunRequest{Input: ai.Message{
 		Role:    ai.RoleUser,
 		Content: []ai.ContentBlock{ai.TextBlock(input)},
 	}}

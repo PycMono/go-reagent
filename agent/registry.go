@@ -1,4 +1,4 @@
-package tools
+package agent
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 type registryEntry struct {
@@ -24,10 +23,10 @@ type registryImpl struct {
 	tools map[string]registryEntry
 }
 
-func NewRegistry(params RegistryParams) (Registry, error) {
-	registry := &registryImpl{tools: make(map[string]registryEntry, len(params.Tools))}
-	handler := composeHandler(params.Middlewares)
-	for _, tool := range params.Tools {
+func NewRegistry(options RegistryOptions) (Registry, error) {
+	registry := &registryImpl{tools: make(map[string]registryEntry, len(options.Tools))}
+	handler := composeHandler(options.Middlewares)
+	for _, tool := range options.Tools {
 		if isNilTool(tool) {
 			return nil, errors.New("tool must not be nil")
 		}
@@ -83,18 +82,18 @@ func (r *registryImpl) Execute(
 	ctx context.Context,
 	call ai.ToolCall,
 	observer ToolEventObserver,
-) (schema.ToolResult, error) {
+) (ToolResult, error) {
 	if ctx == nil {
 		return errorResult(call, errors.New("tool execution context is nil")), nil
 	}
 	if err := ctx.Err(); err != nil {
-		return schema.ToolResult{}, err
+		return ToolResult{}, err
 	}
 	entry, ok := r.tools[call.Name]
 	if !ok {
 		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
-	observe(ctx, observer, schema.NewToolStart(call))
+	observe(ctx, observer, NewToolStart(call))
 	execution := Execution{
 		Call:         call,
 		Definition:   entry.definition,
@@ -104,20 +103,20 @@ func (r *registryImpl) Execute(
 	}
 	output, err := entry.handler(ctx, execution, nil)
 	result := normalizeToolResult(call, output, err)
-	observe(ctx, observer, schema.NewToolEnd(call, result))
+	observe(ctx, observer, NewToolEnd(call, result))
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return result, err
 	}
 	return result, nil
 }
 
-func observe(ctx context.Context, observer ToolEventObserver, event schema.ToolEvent) {
+func observe(ctx context.Context, observer ToolEventObserver, event ToolEvent) {
 	if observer != nil {
 		observer(ctx, event)
 	}
 }
 
-func normalizeToolResult(call ai.ToolCall, output schema.ToolOutput, err error) schema.ToolResult {
+func normalizeToolResult(call ai.ToolCall, output ToolOutput, err error) ToolResult {
 	if err != nil && len(output.Content) == 0 {
 		output.Content = []ai.ContentBlock{ai.TextBlock(err.Error())}
 	}
@@ -125,7 +124,7 @@ func normalizeToolResult(call ai.ToolCall, output schema.ToolOutput, err error) 
 		output.Content = []ai.ContentBlock{ai.TextBlock("(no output)")}
 	}
 	output = limitToolOutput(output)
-	return schema.ToolResult{
+	return ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    output.Content,
@@ -134,8 +133,8 @@ func normalizeToolResult(call ai.ToolCall, output schema.ToolOutput, err error) 
 	}
 }
 
-func errorResult(call ai.ToolCall, err error) schema.ToolResult {
-	return normalizeToolResult(call, schema.ToolOutput{}, err)
+func errorResult(call ai.ToolCall, err error) ToolResult {
+	return normalizeToolResult(call, ToolOutput{}, err)
 }
 
 func isNilTool(tool Tool) bool {

@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/engine"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
@@ -22,7 +21,7 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 		Version:        7,
 		Messages:       []ai.Message{history},
 	}}
-	runtime := &runnerRuntimeFake{result: schema.RunResult{
+	runtime := &runnerRuntimeFake{result: agent.RunResult{
 		RunID:       "run-1",
 		NewMessages: []ai.Message{answer},
 	}}
@@ -62,7 +61,7 @@ func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Version: 2}}
 	runtime := &runnerRuntimeFake{
-		result: schema.RunResult{RunID: "run", NewMessages: []ai.Message{partial}},
+		result: agent.RunResult{RunID: "run", NewMessages: []ai.Message{partial}},
 		err:    runtimeErr,
 	}
 
@@ -103,7 +102,7 @@ func TestRunnerJoinsRuntimeAndAppendErrors(t *testing.T) {
 	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1}, appendErr: appendErr}
 	runtime := &runnerRuntimeFake{
-		result: schema.RunResult{NewMessages: []ai.Message{partial}},
+		result: agent.RunResult{NewMessages: []ai.Message{partial}},
 		err:    runtimeErr,
 	}
 
@@ -118,7 +117,7 @@ func TestRunnerReturnsConflictWithoutRetry(t *testing.T) {
 		snapshot:  Snapshot{ConversationPK: 1},
 		appendErr: ErrConflict,
 	}
-	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{{
+	runtime := &runnerRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 
@@ -197,10 +196,10 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 	}
 	input := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")}}
 	answer := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}
-	contextBlocks := []schema.ContextBlock{{Name: "profile", Content: "gold"}}
+	contextBlocks := []agent.ContextBlock{{Name: "profile", Content: "gold"}}
 	metadata := map[string]string{"tenant": "one"}
 	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Messages: []ai.Message{history}}}
-	runtime := &runnerRuntimeFake{result: schema.RunResult{NewMessages: []ai.Message{answer}}}
+	runtime := &runnerRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{answer}}}
 	request := RunRequest{
 		UserID: " user ", ConversationID: " conversation ", RunID: "run",
 		Input: input, Context: contextBlocks, Metadata: metadata,
@@ -238,14 +237,14 @@ func validConversationRunRequest() RunRequest {
 }
 
 type runnerRuntimeFake struct {
-	result  schema.RunResult
+	result  agent.RunResult
 	err     error
 	calls   int
-	request schema.RunRequest
-	run     func(schema.RunRequest)
+	request agent.RunRequest
+	run     func(agent.RunRequest)
 }
 
-func (f *runnerRuntimeFake) Run(_ context.Context, request schema.RunRequest, _ engine.Reporter) (schema.RunResult, error) {
+func (f *runnerRuntimeFake) Run(_ context.Context, request agent.RunRequest, _ agent.Reporter) (agent.RunResult, error) {
 	f.calls++
 	f.request = request
 	if f.run != nil {

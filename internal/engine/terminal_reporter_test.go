@@ -10,8 +10,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
@@ -21,25 +21,25 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
 	execCall := ai.ToolCall{ID: "call-2", Name: "exec", Arguments: json.RawMessage(`{"command":"go test"}`)}
 
-	reporter.Report(ctx, schema.NewThinkingEvent())
-	reporter.Report(ctx, schema.NewToolStartEvent(call))
-	reporter.Report(ctx, schema.NewToolUpdateEvent(execCall, schema.ToolUpdate{
+	reporter.Report(ctx, agent.NewThinkingEvent())
+	reporter.Report(ctx, agent.NewToolStartEvent(call))
+	reporter.Report(ctx, agent.NewToolUpdateEvent(execCall, agent.ToolUpdate{
 		Content: []ai.ContentBlock{ai.TextBlock("stderr chunk")},
 		Details: map[string]any{"stream": "stderr", "bytes": 4},
 	}))
-	reporter.Report(ctx, schema.NewToolEndEvent(call, schema.ToolResult{
+	reporter.Report(ctx, agent.NewToolEndEvent(call, agent.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    []ai.ContentBlock{ai.TextBlock("ok")},
 	}))
 	failedCall := ai.ToolCall{ID: "call-3", Name: "edit"}
-	reporter.Report(ctx, schema.NewToolEndEvent(failedCall, schema.ToolResult{
+	reporter.Report(ctx, agent.NewToolEndEvent(failedCall, agent.ToolResult{
 		ToolCallID: failedCall.ID,
 		ToolName:   failedCall.Name,
 		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		IsError:    true,
 	}))
-	reporter.Report(ctx, schema.NewMessageEvent(ai.Message{
+	reporter.Report(ctx, agent.NewMessageEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("完成")},
 	}))
@@ -75,7 +75,7 @@ func TestTerminalDisplayArgumentsTruncatesAtRuneBoundary(t *testing.T) {
 func TestTerminalReporterIgnoresEmptyMessageAndSerializesConcurrentEvents(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newTerminalReporter(&output)
-	reporter.Report(context.Background(), schema.NewMessageEvent(ai.Message{Role: ai.RoleAssistant}))
+	reporter.Report(context.Background(), agent.NewMessageEvent(ai.Message{Role: ai.RoleAssistant}))
 	if output.Len() != 0 {
 		t.Fatalf("empty message output = %q", output.String())
 	}
@@ -85,7 +85,7 @@ func TestTerminalReporterIgnoresEmptyMessageAndSerializesConcurrentEvents(t *tes
 		waitGroup.Add(1)
 		go func(index int) {
 			defer waitGroup.Done()
-			reporter.Report(context.Background(), schema.NewToolStartEvent(ai.ToolCall{
+			reporter.Report(context.Background(), agent.NewToolStartEvent(ai.ToolCall{
 				Name:      fmt.Sprintf("tool-%d", index),
 				Arguments: json.RawMessage(`{}`),
 			}))

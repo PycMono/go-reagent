@@ -1,4 +1,4 @@
-package tools
+package agent
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 const (
@@ -18,7 +17,8 @@ const (
 	toolOutputTruncationMarker = "\n[output truncated]"
 )
 
-func defaultMiddlewareRegistrations() []MiddlewareRegistration {
+// DefaultMiddlewareRegistrations returns a fresh ordered default middleware set.
+func DefaultMiddlewareRegistrations() []MiddlewareRegistration {
 	return []MiddlewareRegistration{
 		{Name: "recovery", Order: 10, Middleware: recoveryMiddleware()},
 		{Name: "context", Order: 20, Middleware: contextMiddleware()},
@@ -37,7 +37,7 @@ func composeHandler(registrations []MiddlewareRegistration) Handler {
 		}
 		return ordered[i].Name < ordered[j].Name
 	})
-	handler := Handler(func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+	handler := Handler(func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 		return execution.Tool.Execute(ctx, execution.Call.Arguments, emit)
 	})
 	for index := len(ordered) - 1; index >= 0; index-- {
@@ -48,7 +48,7 @@ func composeHandler(registrations []MiddlewareRegistration) Handler {
 
 func recoveryMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (output schema.ToolOutput, err error) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (output ToolOutput, err error) {
 			defer func() {
 				if recover() == nil {
 					return
@@ -60,7 +60,7 @@ func recoveryMiddleware() Middleware {
 					logsdk.Any("phase", "panic"),
 					logsdk.Any("stack", debug.Stack()),
 				)
-				output = schema.ToolOutput{}
+				output = ToolOutput{}
 				err = errors.New("tool execution failed")
 			}()
 			return next(ctx, execution, emit)
@@ -70,12 +70,12 @@ func recoveryMiddleware() Middleware {
 
 func contextMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 			if ctx == nil {
-				return schema.ToolOutput{}, errors.New("tool execution context is nil")
+				return ToolOutput{}, errors.New("tool execution context is nil")
 			}
 			if err := ctx.Err(); err != nil {
-				return schema.ToolOutput{}, err
+				return ToolOutput{}, err
 			}
 			output, err := next(ctx, execution, emit)
 			if contextErr := ctx.Err(); contextErr != nil {
@@ -88,10 +88,10 @@ func contextMiddleware() Middleware {
 
 func schemaValidationMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 			if execution.ValidateArgs != nil {
 				if err := execution.ValidateArgs(execution.Call.Arguments); err != nil {
-					return schema.ToolOutput{}, err
+					return ToolOutput{}, err
 				}
 			}
 			return next(ctx, execution, emit)
@@ -101,7 +101,7 @@ func schemaValidationMiddleware() Middleware {
 
 func loggingMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 			fields := []logsdk.Fields{
 				logsdk.Any("component", "tool_runtime"),
 				logsdk.Any("tool", execution.Definition.Name),
@@ -125,7 +125,7 @@ func loggingMiddleware() Middleware {
 
 func outputLimitMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
 			output, err := next(ctx, execution, emit)
 			return limitToolOutput(output), err
 		}
@@ -134,10 +134,10 @@ func outputLimitMiddleware() Middleware {
 
 func eventForwardingMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (schema.ToolOutput, error) {
-			forward := func(update schema.ToolUpdate) {
+		return func(ctx context.Context, execution Execution, emit UpdateEmitter) (ToolOutput, error) {
+			forward := func(update ToolUpdate) {
 				if execution.Observer != nil {
-					execution.Observer(ctx, schema.NewToolUpdate(execution.Call, update))
+					execution.Observer(ctx, NewToolUpdate(execution.Call, update))
 				}
 				if emit != nil {
 					emit(update)
@@ -148,7 +148,7 @@ func eventForwardingMiddleware() Middleware {
 	}
 }
 
-func limitToolOutput(output schema.ToolOutput) schema.ToolOutput {
+func limitToolOutput(output ToolOutput) ToolOutput {
 	limited, truncated := limitContent(output.Content)
 	output.Content = limited
 	if truncated {

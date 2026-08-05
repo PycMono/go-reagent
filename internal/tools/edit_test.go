@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/PycMono/go-reagent/agent"
 )
 
 func TestFindUniqueTextMatchExact(t *testing.T) {
@@ -382,12 +384,12 @@ func requireSchemaObject(t *testing.T, value any) map[string]any {
 	return object
 }
 
-func newEditToolForTest(t *testing.T, workDir string) Tool {
+func newEditToolForTest(t *testing.T, workDir string) agent.Tool {
 	t.Helper()
 	return NewEditTool(newWorkspaceForTest(t, workDir))
 }
 
-func editToolForWorkspace(t *testing.T, workspace *Workspace) Tool {
+func editToolForWorkspace(t *testing.T, workspace *Workspace) agent.Tool {
 	t.Helper()
 	return NewEditTool(workspace)
 }
