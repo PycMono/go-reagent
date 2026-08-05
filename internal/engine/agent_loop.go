@@ -10,19 +10,18 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/ai"
 	ctxpkg "github.com/PycMono/go-reagent/internal/context"
-	"github.com/PycMono/go-reagent/internal/provider"
 	"github.com/PycMono/go-reagent/internal/schema"
 )
 
 // AgentLoop owns provider phases, message history, validation, and tool scheduling for one run.
 type AgentLoop struct {
-	provider       provider.LLMProvider
+	provider       ai.Client
 	scheduler      *ToolScheduler
 	enableThinking bool
 }
 
 // NewAgentLoop creates the state-machine boundary for Agent execution.
-func NewAgentLoop(p provider.LLMProvider, scheduler *ToolScheduler, enableThinking bool) *AgentLoop {
+func NewAgentLoop(p ai.Client, scheduler *ToolScheduler, enableThinking bool) *AgentLoop {
 	return &AgentLoop{provider: p, scheduler: scheduler, enableThinking: enableThinking}
 }
 

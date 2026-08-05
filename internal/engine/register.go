@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/PycMono/go-reagent/internal/provider"
+	"github.com/PycMono/go-reagent/ai"
 	"github.com/PycMono/go-reagent/internal/tools"
 	"go.uber.org/fx"
 )
@@ -40,6 +40,6 @@ func newRegisteredToolScheduler(registry tools.Registry) *ToolScheduler {
 	return NewToolScheduler(registry, defaultMaxParallelTools)
 }
 
-func newRegisteredAgentLoop(llmProvider provider.LLMProvider, scheduler *ToolScheduler) *AgentLoop {
+func newRegisteredAgentLoop(llmProvider ai.Client, scheduler *ToolScheduler) *AgentLoop {
 	return NewAgentLoop(llmProvider, scheduler, true)
 }
