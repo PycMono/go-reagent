@@ -12,19 +12,20 @@ import (
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	"go.uber.org/fx"
 )
 
 // AgentRunner executes the configured Agent task exactly once.
+type Prompt string
+
 type AgentRunner struct {
 	runtime            agent.Runner
 	conversationRunner conversation.Runner
 	persistenceEnabled bool
 	userID             string
 	conversationID     string
-	prompt             config.Prompt
+	prompt             Prompt
 	reporter           agent.Reporter
 
 	mu       sync.Mutex
@@ -39,7 +40,7 @@ func NewAgentRunner(
 	runtime agent.Runner,
 	conversationRunner conversation.Runner,
 	cfg *reagent.Config,
-	prompt config.Prompt,
+	prompt Prompt,
 	reporter agent.Reporter,
 ) (*AgentRunner, error) {
 	if runtime == nil {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 )
 
 func encodeMessage(message ai.Message) (messageRow, error) {

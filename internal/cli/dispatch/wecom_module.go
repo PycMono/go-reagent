@@ -6,17 +6,6 @@ import (
 
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
-	"go.uber.org/fx"
-)
-
-// Register contributes optional dispatch reporters to the shared reporter group.
-var Register = fx.Options(
-	fx.Provide(
-		fx.Annotate(
-			NewReporterRegistrations,
-			fx.ResultTags(`group:"reporters,flatten"`),
-		),
-	),
 )
 
 // NewReporterRegistrations creates the optional enterprise WeChat registration.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 )
 
 func TestConversationRunnerPersistsAndIsolatesHistory(t *testing.T) {

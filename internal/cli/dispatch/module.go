@@ -1,16 +1,20 @@
-package engine
+package dispatch
 
 import (
 	"github.com/PycMono/go-reagent/agent"
 	"go.uber.org/fx"
 )
 
-// Register provides reporting and the complete Agent runtime stack.
-var Register = fx.Options(
+// Module provides terminal and optional WeCom reporting.
+var Module = fx.Options(
 	fx.Provide(
 		fx.Annotate(
 			newTerminalReporterRegistration,
 			fx.ResultTags(`group:"reporters"`),
+		),
+		fx.Annotate(
+			NewReporterRegistrations,
+			fx.ResultTags(`group:"reporters,flatten"`),
 		),
 		newRegisteredReporter,
 	),

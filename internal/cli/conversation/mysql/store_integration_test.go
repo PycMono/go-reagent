@@ -14,9 +14,9 @@ import (
 
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/ai"
-	"github.com/PycMono/go-reagent/internal/conversation"
-	conversationmysql "github.com/PycMono/go-reagent/internal/conversation/mysql"
-	drivermysql "github.com/PycMono/go-reagent/internal/driver/mysql"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
+	conversationmysql "github.com/PycMono/go-reagent/internal/cli/conversation/mysql"
+	drivermysql "github.com/PycMono/go-reagent/internal/cli/driver/mysql"
 	"go.uber.org/fx/fxtest"
 )
 

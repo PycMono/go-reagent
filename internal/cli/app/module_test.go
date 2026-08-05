@@ -8,8 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/agent"
-	"github.com/PycMono/go-reagent/internal/config"
-	"github.com/PycMono/go-reagent/internal/conversation"
+	"github.com/PycMono/go-reagent/internal/cli/conversation"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
@@ -90,8 +89,8 @@ func newLifecycleTestApp(t *testing.T, persistenceEnabled bool, runError error) 
 			})
 		}),
 		fx.Supply(&reagent.Config{Conversation: reagent.ConversationConfig{Enabled: persistenceEnabled}}),
-		fx.Supply(config.Prompt("test")),
+		fx.Supply(Prompt("test")),
 		fx.Provide(func() agent.Reporter { return nil }),
-		Register,
+		Module,
 	)
 }

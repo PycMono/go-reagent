@@ -1,4 +1,4 @@
-package config
+package cli
 
 import (
 	"os"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/ai"
+	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
 	"github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -56,7 +57,7 @@ func TestNewWorkDirUsesCurrentDirectory(t *testing.T) {
 
 func TestNewPromptUsesEnvironmentOverrideAndDefault(t *testing.T) {
 	t.Setenv("AGENT_PROMPT", "custom prompt")
-	if got := NewPrompt(); got != Prompt("custom prompt") {
+	if got := NewPrompt(); got != cliapp.Prompt("custom prompt") {
 		t.Fatalf("NewPrompt() = %q", got)
 	}
 
@@ -74,16 +75,16 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 		cfg      *reagent.Config
 		platform ai.PlatformConfig
 		workDir  workspace.WorkDir
-		prompt   Prompt
+		prompt   cliapp.Prompt
 	)
 	app := fxtest.New(t,
-		Register,
+		fx.Provide(NewConfig, NewPlatform, NewWorkDir, NewPrompt),
 		fx.Populate(&cfg, &platform, &workDir, &prompt),
 	)
 	app.RequireStart()
 	defer app.RequireStop()
 
-	if cfg == nil || platform.ID != "test-platform" || workDir == "" || prompt != Prompt("registered prompt") {
+	if cfg == nil || platform.ID != "test-platform" || workDir == "" || prompt != cliapp.Prompt("registered prompt") {
 		t.Fatalf("registered values = (%#v, %#v, %q, %q)", cfg, platform, workDir, prompt)
 	}
 }

@@ -1,4 +1,4 @@
-package config
+package cli
 
 import (
 	"fmt"
@@ -7,21 +7,8 @@ import (
 
 	"github.com/PycMono/go-reagent"
 	"github.com/PycMono/go-reagent/ai"
+	"github.com/PycMono/go-reagent/internal/cli/app"
 	"github.com/PycMono/go-reagent/internal/workspace"
-	"go.uber.org/fx"
-)
-
-// Prompt is the one-shot task injected into the application runner.
-type Prompt string
-
-// Register provides process configuration values to the application graph.
-var Register = fx.Options(
-	fx.Provide(
-		NewConfig,
-		NewPlatform,
-		NewWorkDir,
-		NewPrompt,
-	),
 )
 
 // NewConfig loads the process configuration selected by CONFIG_PATH.
@@ -43,11 +30,11 @@ func NewWorkDir() (workspace.WorkDir, error) {
 }
 
 // NewPrompt returns the process override or the default one-shot task.
-func NewPrompt() Prompt {
+func NewPrompt() app.Prompt {
 	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
-		return Prompt(prompt)
+		return app.Prompt(prompt)
 	}
-	return Prompt(`我需要在当前目录下新建一个 ping.go，提供一个简单的 http ping 接口。 写完之后，帮我把代码用 git 提交一下。`)
+	return app.Prompt(`我需要在当前目录下新建一个 ping.go，提供一个简单的 http ping 接口。 写完之后，帮我把代码用 git 提交一下。`)
 }
 
 func configurationPath() string {

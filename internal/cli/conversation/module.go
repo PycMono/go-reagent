@@ -10,4 +10,4 @@ func newRegisteredRunner(runtime agent.Runner, store Store, cfg *reagent.Config)
 	return NewRunner(runtime, store, cfg.Conversation.HistoryMessageLimit)
 }
 
-var Register = fx.Options(fx.Provide(newRegisteredRunner))
+var Module = fx.Options(fx.Provide(newRegisteredRunner))

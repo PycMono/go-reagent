@@ -8,8 +8,9 @@ import (
 
 	"github.com/PycMono/go-reagent/agent"
 	"github.com/PycMono/go-reagent/ai"
-	reagentinternal "github.com/PycMono/go-reagent/internal"
-	"github.com/PycMono/go-reagent/internal/config"
+	"github.com/PycMono/go-reagent/internal/bootstrap"
+	"github.com/PycMono/go-reagent/internal/cli"
+	cliapp "github.com/PycMono/go-reagent/internal/cli/app"
 	"github.com/PycMono/go-reagent/internal/tools"
 	workspacepkg "github.com/PycMono/go-reagent/internal/workspace"
 	"go.uber.org/fx"
@@ -21,7 +22,7 @@ func (*dependencyGraphProvider) Generate(context.Context, []ai.Message, []ai.Too
 	return &ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}, nil
 }
 
-func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {
+func TestCLIModulesPopulateStructuredRuntimeGraph(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
 		"currentPlatform":"test",
@@ -39,8 +40,9 @@ func TestRootRegisterPopulatesStructuredRuntimeGraph(t *testing.T) {
 	)
 	app := fx.New(
 		fx.NopLogger,
-		reagentinternal.Register,
-		fx.Replace(workspacepkg.WorkDir(workDir), config.Prompt("test")),
+		bootstrap.Module,
+		cli.Module,
+		fx.Replace(workspacepkg.WorkDir(workDir), cliapp.Prompt("test")),
 		fx.Replace(fx.Annotate(&dependencyGraphProvider{}, fx.As(new(ai.Client)))),
 		fx.Populate(&runtime, &registry, &workspace, &supervisor),
 	)
