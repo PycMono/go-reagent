@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add durable, per-call LLM token, cost, and latency observability without persisting hidden thinking text or duplicating complete model request snapshots.
+Add mandatory, durable, per-call LLM token, cost, and latency observability without persisting hidden thinking text or duplicating complete model request snapshots.
 
 The implementation must preserve the current conversation contract: customer messages, visible assistant messages, tool calls, and tool results remain conversation data; model invocations form a separate billing ledger.
 
@@ -12,25 +12,26 @@ The implementation must preserve the current conversation contract: customer mes
 - Each platform configures its own input and output price in USD per one million tokens.
 - Customer input means the original message submitted for a conversation turn. The system prompt, accumulated history, tool definitions, and other complete provider request snapshots are not persisted again.
 - Visible Action responses remain persisted as assistant messages.
-- Every successfully metered provider call produces one invocation record, including Thinking calls and repeated Action calls in tool loops. A successful response whose upstream omitted Usage remains usable but cannot produce a trustworthy billing row.
+- Every successful provider call accepted by the Agent loop must have valid Usage, a calculated cost, and exactly one invocation record. This includes Thinking calls and every repeated Action call in tool loops.
+- A provider response with missing or invalid Usage is not accepted as a successful loop response. The tracker returns an explicit generation error so the run cannot silently continue without a trustworthy cost record.
 - Thinking invocation records contain metrics and a phase label only. Hidden thinking text is never added to `RunResult`, Reporter events, or durable storage.
 - The invocation ledger is the authoritative source for usage and cost aggregation. A visible assistant message also retains the usage of the provider call that created it for convenient inspection.
 
 ## Existing Architecture Constraints
 
-The repository supports both OpenAI-compatible Chat Completions and Anthropic Messages providers through `provider.LLMProvider`. The engine can issue multiple provider requests for one customer turn, and optional Thinking responses are deliberately excluded from `RunResult.NewMessages`.
+The repository supports both OpenAI-compatible Chat Completions and Anthropic Messages providers through the public `ai.Client` contract. `agent.Loop` can issue multiple provider requests for one customer turn, and optional Thinking responses are deliberately excluded from `agent.RunResult.NewMessages`.
 
-When conversation persistence is enabled, `conversation.Runner` appends the customer input and newly generated visible messages through `conversation.Store`. The MySQL implementation serializes the complete `schema.Message` as a JSON payload. Adding optional usage metadata to `schema.Message` therefore remains backward compatible with existing stored payloads and automatically preserves visible Action usage.
+When conversation persistence is enabled, `internal/cli/conversation.Runner` appends the customer input and newly generated visible messages through its Store. The MySQL implementation serializes the complete `ai.Message` as a JSON payload. Adding optional usage metadata to `ai.Message` therefore remains backward compatible with existing stored payloads and automatically preserves visible Action usage.
 
-The working tree already contains unrelated edits in conversation and run-context files. Implementation must preserve those edits and apply only focused changes needed by this feature.
+The current `master` moved public model contracts into `ai`, the runtime into `agent`, default construction into `internal/bootstrap`, and bundled persistence into `internal/cli`. The migration must preserve those package boundaries and must not restore the removed `internal/schema`, `internal/provider`, `internal/engine`, or `internal/conversation` packages.
 
 ## Architecture
 
 The feature has four focused layers:
 
-1. Provider adapters normalize vendor-native token counts into `schema.Usage`.
-2. `observability.CostTracker` decorates the configured provider, measures request latency, calculates USD cost using the selected platform's pricing, enriches successful response messages, and emits structured logs.
-3. The engine labels each successful call as Thinking or Action and appends an ordered `schema.ModelInvocation` entry to the run result. It never promotes Thinking content into visible messages.
+1. Provider adapters under `ai/providers` normalize vendor-native token counts into `ai.Usage`.
+2. `internal/observability.CostTracker` decorates the configured `ai.Client`, measures request latency, validates Usage, calculates USD cost using the selected platform's pricing, enriches successful response messages, and emits structured logs. Missing or invalid Usage becomes an error.
+3. `agent.Loop` labels each accepted call as Thinking or Action and appends an ordered `agent.ModelInvocation` entry to the run result. It never promotes Thinking content into visible messages.
 4. Conversation persistence writes the turn messages and invocation ledger entries in the same transaction.
 
 This avoids an in-memory Session accumulator. The current runtime is a stateless one-shot API, while the MySQL conversation store is already the durable ownership and transaction boundary.
@@ -39,7 +40,7 @@ This avoids an in-memory Session accumulator. The current runtime is a stateless
 
 ### Usage
 
-`schema.Message` gains an optional `Usage *Usage` field. `Usage` contains:
+`ai.Message` gains an optional `Usage *Usage` field. `ai.Usage` contains:
 
 - `InputTokens int64`
 - `OutputTokens int64`
@@ -54,21 +55,23 @@ JSON field names use snake case and include explicit units, for example `input_t
 
 The provider adapters initially set only normalized input and output token counts. The tracker fills platform, model, price snapshot, cost, and latency. Token values use `int64` to match both provider SDKs and avoid architecture-dependent narrowing.
 
+An accepted loop response must have non-negative token counts, non-empty platform and model identifiers, finite non-negative prices and cost, and non-negative latency. Zero token counts, zero prices, zero cost, and zero-millisecond latency remain valid. This lets the loop reject a raw or partially enriched Usage value while still supporting free models.
+
 ### Model invocation
 
-`schema.ModelInvocation` is the durable per-call record returned by the engine. It contains:
+`agent.ModelInvocation` is the durable per-call record returned by the Agent. It contains:
 
 - `Sequence uint32`, equal to the provider-call ordinal within a run, starting at 1
 - `Phase ModelInvocationPhase`, restricted to `thinking` or `action`
 - all fields from the enriched `Usage` value
 
-`schema.RunResult` gains `Invocations []ModelInvocation`. The slice includes every successful provider call with usage returned by the provider, including Thinking calls. It remains populated when a later provider or tool operation fails, just as `NewMessages` retains already completed visible work.
+`agent.RunResult` gains `Invocations []ModelInvocation`. The slice includes every successful provider call accepted by the loop, including Thinking calls and repeated Action calls. It remains populated when a later provider or tool operation fails, just as `NewMessages` retains already completed visible work.
 
-The engine copies values into invocation records. It does not retain pointers into response messages.
+The Agent copies values into invocation records. It does not retain pointers into response messages.
 
 ## Configuration
 
-Each `config.PlatformConfig` gains a required nested pricing block:
+Each public `ai.PlatformConfig` gains a required nested pricing block, also exposed through the root `reagent.PlatformConfig` alias:
 
 ```json
 {
@@ -94,15 +97,15 @@ The OpenAI-compatible adapter maps `response.Usage.PromptTokens` to `InputTokens
 
 The Anthropic adapter maps `response.Usage.InputTokens` to `InputTokens` and `response.Usage.OutputTokens` to `OutputTokens`. Anthropic's documented `InputTokens` is used directly; cache creation and cache read breakdowns are outside this feature's initial scope and are not added to the total a second time.
 
-A provider sets `Message.Usage` when its response contains a valid Usage object, including an explicit zero-token Usage object. Presence must be determined from the SDK response metadata where available, rather than by testing whether token counts are greater than zero. If a compatible upstream omits Usage entirely, the response remains usable and `Message.Usage` remains nil.
+A provider sets `Message.Usage` whenever its response contains a Usage object, including an explicit zero-token Usage object. Presence must be determined from SDK response metadata where available, rather than by testing whether token counts are greater than zero. If a compatible upstream omits Usage, the adapter may return the otherwise valid message with nil Usage, but the mandatory tracker rejects it before `agent.Loop` can accept it.
 
-Negative token counts are treated as invalid provider data: the response continues through normal message validation without usage, and the tracker emits a structured `usage_invalid` warning. No negative ledger values are persisted.
+Negative token counts are retained long enough for the tracker to distinguish invalid Usage from missing Usage. The tracker emits `usage_invalid` and returns an error. No invalid response enters loop history, visible messages, invocation results, or durable storage.
 
 ## Cost Tracker
 
 `internal/observability/tracker.go` defines a provider decorator and an immutable pricing value. Construction receives:
 
-- the next `provider.LLMProvider`
+- the next `ai.Client`
 - platform ID
 - model name
 - input and output USD prices per one million tokens
@@ -113,25 +116,26 @@ Negative token counts are treated as invalid provider data: the response continu
 cost_usd = (input_tokens × input_price + output_tokens × output_price) / 1,000,000
 ```
 
-It enriches the returned message and emits one structured success log with component, platform, model, input/output tokens, price snapshot, cost USD, and latency milliseconds. On success without Usage it emits `usage_missing`. On invalid Usage it emits `usage_invalid`. On provider failure it emits a structured failure log with latency and the sanitized error already returned by the provider, then returns the original response and error unchanged.
+It enriches the returned message and emits one structured success log with component, platform, model, input/output tokens, price snapshot, cost USD, and latency milliseconds. On success without Usage it emits `usage_missing` and returns an explicit error. On invalid Usage it emits `usage_invalid` and returns an explicit error. On provider failure it emits a structured failure log with latency and the sanitized error already returned by the provider, then returns the original response and error unchanged.
 
-The tracker does not own a Session, database connection, mutable aggregate, or phase detection. This keeps it concurrency-safe and reusable. The engine owns phase and sequence because only the engine knows why a provider call was made.
+The tracker does not own a Session, database connection, mutable aggregate, or phase detection. This keeps it concurrency-safe and reusable. `agent.Loop` owns phase and sequence because only the loop knows why a provider call was made.
 
-The `observability` Fx module decorates the configured `provider.LLMProvider` after the provider module constructs it and before the engine consumes it. This keeps package dependencies one-way (`observability` may import `provider`; `provider` never imports `observability`) and avoids an import cycle. The rest of the engine remains unaware of the concrete provider and pricing source.
+`internal/bootstrap` decorates the configured `ai.Client` with `internal/observability.CostTracker` after `ai/providers` constructs the vendor client and before `agent.Loop` consumes it. This keeps package dependencies one-way (`internal/observability` may import `ai`; `ai` never imports an internal package) and avoids an import cycle. The Agent remains unaware of the concrete provider and pricing source.
 
-## Engine Data Flow
+## Agent Loop Data Flow
 
-For each provider call, the engine performs these steps:
+For each provider call, the loop performs these steps:
 
 1. Call the tracked provider.
-2. Validate the returned message as it does today.
-3. If `Message.Usage` is present, append a copied invocation record using the current call ordinal and explicit current phase.
-4. For Thinking, use the response only in in-memory context and exclude its content from new messages and reporter events.
-5. For Action, append the response to context and `NewMessages` as today, retaining its optional Usage.
+2. Require the tracked client to return valid, fully enriched Usage. Missing platform/model identity, missing or invalid Usage, or non-finite/negative metrics returns an error and terminates the run.
+3. Validate the returned message as it does today.
+4. Append exactly one copied invocation record using the current call ordinal and explicit current phase.
+5. For Thinking, use the response only in in-memory context and exclude its content from new messages and reporter events.
+6. For Action, append the response to context and `NewMessages` as today, retaining its Usage.
 
-Invocation sequence follows provider-call order, not tool-call or message ordinal. A failed call or a successful call without Usage can therefore leave a sequence gap. Such calls do not create fabricated zero-value invocations; tracker logs are the observable indication that billing data is unavailable.
+Invocation sequence follows provider-call order, not tool-call or message ordinal. Every accepted call has one invocation. A provider error or rejected unmetered response terminates the run and may leave a final sequence ordinal without a ledger row, but no later call is allowed to continue past that gap.
 
-The internal loop result becomes a focused structure containing both `NewMessages` and `Invocations`, allowing `runtime.Run` to construct `schema.RunResult` without global state or context-value collectors.
+An internal loop result contains both `NewMessages` and `Invocations`, allowing `agent.Agent.Run` to construct `agent.RunResult` without global state or context-value collectors. The existing public `Loop.Run` signature remains source-compatible and returns messages only; `Agent.Run` uses the internal detailed execution path to expose invocations.
 
 ## Persistence
 
@@ -155,11 +159,11 @@ A second migration creates `agent_model_invocations` with:
 
 The migration adds a foreign key to `agent_conversations`, an index for conversation-time queries, and a uniqueness constraint on `(conversation_pk, turn_version, sequence)`. `turn_version` is assigned by the store from the same optimistic version increment used for message rows, so duplicate invocation writes are rejected even when the optional caller-owned `run_id` is empty.
 
-`conversation.AppendRequest` gains `Invocations`. `conversation.Runner` passes `runtimeResult.Invocations` alongside messages. The MySQL store validates phase, non-negative counts/prices/cost/latency, sequence ordering, and finite floating-point values before opening its transaction.
+`internal/cli/conversation.AppendRequest` gains `Invocations`. Its Runner passes `agent.RunResult.Invocations` alongside messages. The MySQL store validates phase, non-negative counts/prices/cost/latency, sequence ordering, and finite floating-point values before opening its transaction.
 
 The existing optimistic conversation version update, message insertion, and invocation insertion execute in one transaction. A failure in any insert rolls the whole turn back. Existing `AppendTurn` callers that provide messages and no invocations remain valid. An invocation-only append is not introduced: a run with no completed message remains a failed, non-persisted turn, while its failed request latency is available in logs.
 
-Database `DECIMAL` values are encoded from stable base-10 strings and decoded without routing through binary floating-point database columns. Application-facing schema values remain `float64`, matching the configuration and log APIs, while persisted decimal scale prevents database aggregation drift.
+Database `DECIMAL` values are encoded from stable base-10 strings and decoded without routing through binary floating-point database columns. Application-facing values remain `float64`, matching the configuration and log APIs, while persisted decimal scale prevents database aggregation drift.
 
 ## Message Persistence and Privacy
 
@@ -175,8 +179,9 @@ Visible assistant message payloads may contain their own `usage` object. This du
 
 ## Failure Semantics
 
-- A provider error has no usage or cost record because no trustworthy billing response exists. The tracker logs failure latency.
-- A successful response without Usage remains a valid model response; it produces no invocation row and emits `usage_missing`.
+- A provider error has no usage or cost record because no trustworthy billing response exists. The tracker logs failure latency and the run terminates.
+- A provider response without Usage is rejected with an explicit generation error after emitting `usage_missing`; it is not added to loop history or returned as a visible response.
+- A provider response with negative tokens or otherwise invalid Usage is rejected with an explicit generation error after emitting `usage_invalid`.
 - Successfully observed calls completed before a later run failure remain in `RunResult.Invocations`. If the run also contains completed messages, the current partial-turn persistence behavior stores those messages and invocation rows together.
 - Configuration rejects absent, negative, NaN, or infinite prices at startup.
 - Persistence rejects malformed invocation data before database writes.
@@ -201,13 +206,14 @@ This feature does not add a reporting CLI or HTTP endpoint. Structured logs, `Ru
 
 Tests follow red-green-refactor cycles and cover:
 
-- `schema.Message` Usage JSON round trips and omission when nil.
+- `ai.Message` Usage JSON round trips and omission when nil outside accepted loop responses.
 - OpenAI-compatible Usage presence and prompt/completion token mapping.
 - Anthropic Usage presence and input/output token mapping.
-- Missing and invalid Usage behavior.
+- Missing and invalid Usage terminate the run before the response is accepted.
 - Tracker price calculation, free pricing, latency population, delegated errors, and concurrency independence.
 - Platform pricing normalization and validation, including missing, negative, NaN, and infinite values.
-- Engine invocation phase labels and sequence across Thinking and repeated Action calls.
+- Agent invocation phase labels and sequence across Thinking and repeated Action calls.
+- Every accepted loop call has exactly one invocation with a calculated cost; direct `agent` callers supplying an unmetered custom `ai.Client` receive an error rather than an uncosted response.
 - Thinking content remains absent from `NewMessages`, reporter message events, and persisted message payloads.
 - `RunResult` retains completed invocation records on later failures.
 - Conversation cloning preserves Usage without pointer aliasing.
@@ -222,6 +228,6 @@ Tests follow red-green-refactor cycles and cover:
 - Streaming token usage.
 - Provider-specific cache-token price tiers or reasoning-token price tiers.
 - Currency conversion or CNY reporting.
-- Retry-attempt billing when the upstream does not return Usage.
+- Estimating token usage when the upstream does not return Usage.
 - Mutable session total fields.
 - A dashboard, billing API, or dedicated cost-report command.
