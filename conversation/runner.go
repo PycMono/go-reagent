@@ -62,7 +62,11 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Report
 	}
 	runtimeResult, runErr := r.runtime.Run(ctx, pi.RunRequest{
 		History: historyMessages,
-		Input:   inputText,
+		Input: pi.Message{
+			ContentType: "text",
+			Content:     inputText,
+			SenderType:  "customer",
+		},
 		Context: append([]pi.ContextBlock(nil), request.Context...),
 	}, reporter)
 	if runErr != nil && len(runtimeResult.NewMessages) == 0 {

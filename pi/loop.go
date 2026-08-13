@@ -11,6 +11,7 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
@@ -32,12 +33,12 @@ func NewLoop(provider ai.Provider, scheduler *Scheduler, enableThinking bool) *L
 }
 
 // Run executes provider turns until an Action response has no tool calls.
-func (l *Loop) Run(ctx context.Context, runContext RunContext, reporter Reporter) ([]ai.Message, error) {
+func (l *Loop) Run(ctx context.Context, runContext harness.Context, reporter Reporter) ([]ai.Message, error) {
 	result, err := l.runDetailed(ctx, runContext, reporter)
 	return result.newMessages, err
 }
 
-func (l *Loop) runDetailed(ctx context.Context, runContext RunContext, reporter Reporter) (loopResult, error) {
+func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, reporter Reporter) (loopResult, error) {
 	if err := ctx.Err(); err != nil {
 		return loopResult{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
@@ -200,6 +201,7 @@ func validateActionResponse(response *ai.Message) error {
 	if content == "" && len(response.ToolCalls) == 0 {
 		return errors.New("assistant message contains no content or tool calls")
 	}
+
 	return nil
 }
 
@@ -214,6 +216,7 @@ func validateToolCalls(calls []ai.ToolCall) error {
 		}
 		seen[call.ID] = struct{}{}
 	}
+
 	return nil
 }
 
@@ -233,16 +236,19 @@ func validateMeteredUsage(usage *ai.Usage) error {
 	if usage.LatencyMS < 0 {
 		return errors.New("usage latency must be non-negative")
 	}
+
 	if invalidUsageDecimal(usage.InputPriceUSDPerMillionTokens) ||
 		invalidUsageDecimal(usage.OutputPriceUSDPerMillionTokens) ||
 		invalidUsageDecimal(usage.CostUSD) {
 		return errors.New("usage prices and cost are outside the supported range")
 	}
+
 	expectedCost := (float64(usage.InputTokens)*usage.InputPriceUSDPerMillionTokens +
 		float64(usage.OutputTokens)*usage.OutputPriceUSDPerMillionTokens) / 1_000_000
 	if math.Abs(usage.CostUSD-expectedCost) > 1e-12 {
 		return errors.New("usage cost does not match token prices")
 	}
+
 	return nil
 }
 

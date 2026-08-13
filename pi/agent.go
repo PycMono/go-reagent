@@ -51,33 +51,41 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) 
 	return result, err
 }
 
-func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (RunContext, error) {
-	history, err := historyMessagesToAI(request.History)
+func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (harness.Context, error) {
+	history := make([]ai.Message, len(request.History))
+	for index, message := range request.History {
+		converted, err := message.Message2AI()
+		if err != nil {
+			return harness.Context{}, fmt.Errorf("history message %d: %w", index, err)
+		}
+		history[index] = converted
+	}
+	input, err := request.Input.Message2AI()
 	if err != nil {
-		return RunContext{}, err
+		return harness.Context{}, fmt.Errorf("input: %w", err)
+	}
+
+	if input.Role != ai.RoleUser {
+		return harness.Context{}, fmt.Errorf("%w: input sender type must be customer", pierrors.ErrRequestInvalid)
 	}
 	blocks := make([]harness.ContextBlock, len(request.Context))
 	for index, block := range request.Context {
 		blocks[index] = harness.ContextBlock{Name: block.Name, Content: block.Content, Priority: block.Priority}
 	}
+
 	prepared, err := a.builder.Build(ctx, harness.ContextRequest{
 		History: history,
-		Input: ai.Message{
-			Role:    ai.RoleUser,
-			Content: []ai.ContentBlock{ai.TextBlock(request.Input)},
-		},
+		Input:   input,
 		Context: blocks,
 	}, a.toolRuntime.Definitions())
 	if err != nil {
-		return RunContext{}, err
+		return harness.Context{}, err
 	}
-	return RunContext{Messages: prepared.Messages, Tools: prepared.Tools}, nil
+
+	return prepared, nil
 }
 
 func validateRunRequest(request RunRequest) error {
-	if strings.TrimSpace(request.Input) == "" {
-		return fmt.Errorf("%w: input content must not be empty", pierrors.ErrRequestInvalid)
-	}
 	for index, block := range request.Context {
 		if strings.TrimSpace(block.Name) == "" {
 			return fmt.Errorf("%w: context block %d name must not be empty", pierrors.ErrRequestInvalid, index)
@@ -86,5 +94,6 @@ func validateRunRequest(request RunRequest) error {
 			return fmt.Errorf("%w: context block %d content must not be empty", pierrors.ErrRequestInvalid, index)
 		}
 	}
+
 	return nil
 }

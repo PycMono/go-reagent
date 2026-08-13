@@ -8,6 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/harness"
 )
 
 func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
@@ -17,7 +18,7 @@ func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
 	}}}
 	toolRuntime := &fakeToolRuntime{}
 	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := pi.RunContext{Messages: []ai.Message{
+	runContext := harness.Context{Messages: []ai.Message{
 		{Role: ai.RoleSystem, Content: blocks("system")},
 		{Role: ai.RoleUser, Content: blocks("hello")},
 	}}
@@ -44,7 +45,7 @@ func TestAgentLoopReturnsToolConversationInOrder(t *testing.T) {
 		},
 	}
 	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := pi.RunContext{
+	runContext := harness.Context{
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
 		Tools:    toolRuntime.definitions,
 	}
@@ -74,7 +75,7 @@ func TestAgentLoopExcludesThinkingScaffoldingFromIncrement(t *testing.T) {
 	}}
 	toolRuntime := &fakeToolRuntime{}
 	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), true)
-	runContext := pi.RunContext{Messages: []ai.Message{
+	runContext := harness.Context{Messages: []ai.Message{
 		{Role: ai.RoleUser, Content: blocks("hello")},
 	}}
 
@@ -100,7 +101,7 @@ func TestAgentLoopReturnsCompletedMessagesWithProviderError(t *testing.T) {
 		},
 	}
 	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := pi.RunContext{
+	runContext := harness.Context{
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
 		Tools:    toolRuntime.definitions,
 	}

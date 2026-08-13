@@ -44,12 +44,13 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 	if store.findCalls != 1 || store.foundUserID != "user-1" || store.foundID != "conversation-1" || store.messageLimit != 100 {
 		t.Fatalf("FindByUserIDAndID calls/user/id/limit = %d, %q, %q, %d", store.findCalls, store.foundUserID, store.foundID, store.messageLimit)
 	}
-	wantHistory := []pi.HistoryMessage{{
-		ContentType: pi.HistoryContentTypeText,
+	wantHistory := []pi.Message{{
+		ContentType: "text",
 		Content:     "previous",
-		SenderType:  pi.HistorySenderTypeAI,
+		SenderType:  "ai",
 	}}
-	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, wantHistory) || runtime.request.Input != "next" {
+	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, wantHistory) ||
+		runtime.request.Input.Content != "next" || runtime.request.Input.SenderType != "customer" {
 		t.Fatalf("runtime call/request = %d, %#v", runtime.calls, runtime.request)
 	}
 	wantMessages := messagesToDomain([]ai.Message{input, answer}, "run-1")
@@ -276,7 +277,8 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 	if got := runtime.request.History[0].Content; got != "history" {
 		t.Fatalf("runtime history mutated: %q", got)
 	}
-	if runtime.request.Input != "input" || runtime.request.Context[0].Content != "gold" {
+	if runtime.request.Input.Content != "input" || runtime.request.Input.SenderType != "customer" ||
+		runtime.request.Context[0].Content != "gold" {
 		t.Fatalf("runtime request mutated: %#v", runtime.request)
 	}
 	if store.appendedMessages[0].Payload.Content[0].Text != "input" || store.appendedMessages[1].Payload.Content[0].Text != "answer" {

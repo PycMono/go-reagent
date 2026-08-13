@@ -53,7 +53,7 @@ func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
 				}, nil
 			})
 			loop := pi.NewLoop(provider, pi.NewScheduler(&fakeToolRuntime{}, 1), false)
-			messages, err := loop.Run(context.Background(), pi.RunContext{Messages: []ai.Message{{
+			messages, err := loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
 				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")},
 			}}}, nil)
 			if err == nil || !errors.Is(err, pierrors.ErrGeneration) {
@@ -241,7 +241,7 @@ func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter pi.Re
 	if err != nil {
 		return err
 	}
-	runContext := pi.RunContext{
+	runContext := harness.Context{
 		Messages: prepared.Messages,
 		Tools:    prepared.Tools,
 	}
@@ -371,7 +371,7 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 	}
 	reporter := &recordingReporter{}
 	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 2), true)
-	runContext := pi.RunContext{
+	runContext := harness.Context{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: blocks("system")},
 			{Role: ai.RoleUser, Content: blocks("do work")},

@@ -15,17 +15,23 @@ func TestValidateRunRequestRejectsInvalidInput(t *testing.T) {
 		request pi.RunRequest
 	}{
 		{name: "empty input", request: pi.RunRequest{}},
-		{name: "blank input", request: pi.RunRequest{Input: "  "}},
-		{name: "empty context name", request: pi.RunRequest{Input: "hello", Context: []pi.ContextBlock{{Content: "value"}}}},
-		{name: "empty context content", request: pi.RunRequest{Input: "hello", Context: []pi.ContextBlock{{Name: "profile"}}}},
-		{name: "unsupported history content type", request: pi.RunRequest{Input: "hello", History: []pi.HistoryMessage{{
-			ContentType: "image", SenderType: pi.HistorySenderTypeCustomer, Content: "content",
+		{name: "blank input", request: validAgentRequest("  ")},
+		{name: "AI input", request: pi.RunRequest{Input: pi.Message{
+			ContentType: "text", SenderType: "ai", Content: "content",
+		}}},
+		{name: "unsupported input content type", request: pi.RunRequest{Input: pi.Message{
+			ContentType: "image", SenderType: "customer", Content: "content",
+		}}},
+		{name: "empty context name", request: pi.RunRequest{Input: validAgentRequest("hello").Input, Context: []pi.ContextBlock{{Content: "value"}}}},
+		{name: "empty context content", request: pi.RunRequest{Input: validAgentRequest("hello").Input, Context: []pi.ContextBlock{{Name: "profile"}}}},
+		{name: "unsupported history content type", request: pi.RunRequest{Input: validAgentRequest("hello").Input, History: []pi.Message{{
+			ContentType: "image", SenderType: "customer", Content: "content",
 		}}}},
-		{name: "unsupported history sender type", request: pi.RunRequest{Input: "hello", History: []pi.HistoryMessage{{
-			ContentType: pi.HistoryContentTypeText, SenderType: "system", Content: "content",
+		{name: "unsupported history sender type", request: pi.RunRequest{Input: validAgentRequest("hello").Input, History: []pi.Message{{
+			ContentType: "text", SenderType: "system", Content: "content",
 		}}}},
-		{name: "empty history content", request: pi.RunRequest{Input: "hello", History: []pi.HistoryMessage{{
-			ContentType: pi.HistoryContentTypeText, SenderType: pi.HistorySenderTypeAI, Content: "  ",
+		{name: "empty history content", request: pi.RunRequest{Input: validAgentRequest("hello").Input, History: []pi.Message{{
+			ContentType: "text", SenderType: "ai", Content: "  ",
 		}}}},
 	}
 	runtime := newPublicAgent(t, &agentProviderFake{}, &agentToolRuntimeFake{})

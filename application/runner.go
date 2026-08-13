@@ -96,7 +96,11 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 				Input:          input,
 			}, r.reporter)
 		} else {
-			_, err = r.runtime.Run(ctx, pi.RunRequest{Input: string(r.prompt)}, r.reporter)
+			_, err = r.runtime.Run(ctx, pi.RunRequest{Input: pi.Message{
+				ContentType: "text",
+				Content:     string(r.prompt),
+				SenderType:  "customer",
+			}}, r.reporter)
 		}
 
 		r.mu.Lock()

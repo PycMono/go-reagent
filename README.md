@@ -62,8 +62,15 @@ if err := app.Start(ctx); err != nil {
 defer app.Stop(context.Background())
 
 result, err := runner.Run(ctx, pi.RunRequest{
-	History: history,
-	Input:   "Review the current workspace",
+	History: []pi.Message{
+		{ContentType: "text", SenderType: "customer", Content: "Earlier question"},
+		{ContentType: "text", SenderType: "ai", Content: "Earlier answer"},
+	},
+	Input: pi.Message{
+		ContentType: "text",
+		SenderType:  "customer",
+		Content:     "Review the current workspace",
+	},
 	Context: []pi.ContextBlock{
 		{Name: "customer-profile", Content: customerProfile, Priority: 100},
 	},
@@ -73,6 +80,8 @@ result, err := runner.Run(ctx, pi.RunRequest{
 ```
 
 `RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的 Assistant/Tool 消息，不重复返回 System Prompt、外部 Context、History、Input 或内部 Thinking 脚手架。一个 `Agent` 支持并发调用；取消一个 Run 不会取消其他 Run。
+
+`History` 和 `Input` 统一使用业务 `Message`。目前只接受 `content_type=text`，历史消息允许 `sender_type=customer/ai`，当前 Input 只允许 `customer`。`Message2AI` 将二者分别转换为模型的 User、Assistant；消息 ID、时间、昵称和文件地址不会发送给模型。完整的 `ai.Message` 只保留在需要表达 Assistant、ToolCall 和 ToolResult 的 `RunResult.NewMessages` 中。
 
 `RunResult.Invocations` 按真实模型调用顺序记录所有已完成的 Thinking 和 Action 调用。每条记录包含阶段、输入/输出 Token、平台、模型、配置单价、USD 成本和耗时。一次工具循环触发多次模型调用时会产生多条独立记录；隐藏 Thinking 文本不会进入 `NewMessages`，但其成本不会漏记。默认 SDK 会强制计量每次成功响应；上游缺少 Usage、Usage 非法或成本计算不一致都会让本次 Run 以 AI generation error 失败。
 
@@ -114,7 +123,7 @@ go-reagent/
 ├── pi/                        # 唯一 Agent Core 与默认 Fx 注册
 │   ├── agent.go               # Agent 与 Runner
 │   ├── contract.go            # Run 请求、结果与模型调用记录
-│   ├── context.go             # Agent 与 Loop 共享的运行上下文
+│   ├── message.go             # 面向业务的消息契约与内部转换
 │   ├── loop.go                # 模型/工具循环
 │   ├── scheduler.go           # 工具调度
 │   ├── register.go            # 默认 Harness 装配

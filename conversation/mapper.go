@@ -51,26 +51,26 @@ func messagesToDomain(messages []ai.Message, runID string) []*conversationentity
 	return converted
 }
 
-func messagesToHistory(messages []*conversationentity.Message) ([]pi.HistoryMessage, error) {
+func messagesToHistory(messages []*conversationentity.Message) ([]pi.Message, error) {
 	if messages == nil {
 		return nil, nil
 	}
-	converted := make([]pi.HistoryMessage, 0, len(messages))
+	converted := make([]pi.Message, 0, len(messages))
 	for index, message := range messages {
 		if message == nil {
 			continue
 		}
 
-		var senderType pi.HistorySenderType
+		var senderType string
 		switch message.Role {
 		case conversationentity.RoleUser:
-			senderType = pi.HistorySenderTypeCustomer
+			senderType = "customer"
 		case conversationentity.RoleAssistant:
 			if len(message.Payload.ToolCalls) != 0 || message.Payload.ToolCallID != "" ||
 				message.Payload.ToolName != "" || message.Payload.IsError {
 				continue
 			}
-			senderType = pi.HistorySenderTypeAI
+			senderType = "ai"
 		case conversationentity.RoleTool:
 			continue
 		default:
@@ -81,8 +81,8 @@ func messagesToHistory(messages []*conversationentity.Message) ([]pi.HistoryMess
 		if err != nil {
 			return nil, fmt.Errorf("conversation history message %d: %w", index, err)
 		}
-		historyMessage := pi.HistoryMessage{
-			ContentType: pi.HistoryContentTypeText,
+		historyMessage := pi.Message{
+			ContentType: "text",
 			Content:     content,
 			ID:          message.ID,
 			SenderType:  senderType,

@@ -26,6 +26,10 @@ func TestMessageDomainMappingPreservesHistoricalContent(t *testing.T) {
 		string(domain[0].Payload.ToolCalls[0].Arguments) != `{"path":"AGENTS.md"}` {
 		t.Fatalf("mapped domain message = %#v", domain[0])
 	}
+	want.ToolCalls[0].Arguments[0] = 'x'
+	if string(domain[0].Payload.ToolCalls[0].Arguments) != `{"path":"AGENTS.md"}` {
+		t.Fatalf("mapped domain message aliases runtime input: %#v", domain[0])
+	}
 }
 
 func TestMessagesToHistoryKeepsOnlyCustomerAndFinalAIText(t *testing.T) {
@@ -43,20 +47,20 @@ func TestMessagesToHistoryKeepsOnlyCustomerAndFinalAIText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []pi.HistoryMessage{{
-		ContentType: pi.HistoryContentTypeText,
+	want := []pi.Message{{
+		ContentType: "text",
 		CreateTime:  "2026-08-13 17:23:54",
 		CreateTS:    "1786613034000",
 		Content:     "问题",
 		ID:          "customer-1",
-		SenderType:  pi.HistorySenderTypeCustomer,
+		SenderType:  "customer",
 	}, {
-		ContentType: pi.HistoryContentTypeText,
+		ContentType: "text",
 		CreateTime:  "2026-08-13 17:23:54",
 		CreateTS:    "1786613034000",
 		Content:     "回答",
 		ID:          "assistant-1",
-		SenderType:  pi.HistorySenderTypeAI,
+		SenderType:  "ai",
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("history = %#v, want %#v", got, want)

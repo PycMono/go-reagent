@@ -48,8 +48,15 @@ if err := app.Start(ctx); err != nil {
 defer app.Stop(context.Background())
 
 result, err := runner.Run(ctx, pi.RunRequest{
-	History: history,
-	Input:   inputText,
+	History: []pi.Message{
+		{ContentType: "text", SenderType: "customer", Content: "Earlier question"},
+		{ContentType: "text", SenderType: "ai", Content: "Earlier answer"},
+	},
+	Input: pi.Message{
+		ContentType: "text",
+		SenderType:  "customer",
+		Content:     inputText,
+	},
 	Context: contextBlocks,
 }, nil)
 ```
@@ -61,7 +68,7 @@ type Runner interface {
 	Run(context.Context, RunRequest, Reporter) (RunResult, error)
 }
 
-func New(*harness.ContextBuilder, *Loop, Registry) *Agent
+func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 ```
 
 `pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。使用默认 Provider、工具、Workspace 和 Loop 时，把 `pi.Register` 加入 Fx 图。不再存在 `pi/agent` 子包或第二套 SDK 门面。
@@ -89,7 +96,7 @@ func New(*harness.ContextBuilder, *Loop, Registry) *Agent
     -> 业务按自己的事务策略持久化
 ```
 
-`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 RunID、UserID 或 ConversationID，也不做会话锁、重试、排队或摘要。`Input` 只接收用户文本；完整的 `ai.Message` 仅用于需要表达 Assistant、Tool 和 Tool Call 的 `History` 与 `NewMessages`。
+`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 RunID、UserID 或 ConversationID，也不做会话锁、重试、排队或摘要。`History` 和当前 `Input` 统一使用业务 `Message`，目前只接受文本；History 允许 `sender_type=customer/ai`，Input 只允许 `customer`。`Message2AI` 负责转换成模型的 User/Assistant；ID、时间、昵称和文件地址只供业务识别，不进入模型上下文。完整的 `ai.Message` 只用于 `NewMessages`，以表达 Assistant、ToolCall 和 ToolResult。
 
 `NewMessages` 只包含当前 Run 新增的 Assistant/Tool 消息，不包含 System、外部 Context、History、Input 或 Thinking 脚手架。运行中途失败时，已经完成的消息仍与错误一起返回；是否持久化部分结果由业务决定。
 
@@ -108,7 +115,7 @@ func New(*harness.ContextBuilder, *Loop, Registry) *Agent
 一个长生命周期 `*pi.Agent` 可以并发执行多个 Run：
 
 - 每个 Run 在本地维护需要追加、排序的顶层消息和工具切片，不把运行状态保存在 `Agent` 上；
-- 与 Pi agent-core 一样，SDK 不递归复制 History 中的 Message 和工具 JSON 参数；调用方在 Run 结束前不得并发修改这些值；
+- 每条业务 History 会在运行开始时转换为内部模型消息，调用方不需要接触 ToolCall、Usage 等模型协议字段；
 - 取消或超时一个 Run 不会影响其他 Run；
 - SDK 不按 ConversationID 串行化，并发控制仍由业务负责。
 
@@ -142,7 +149,7 @@ func New(*harness.ContextBuilder, *Loop, Registry) *Agent
 自带 CLI 通过 `application.Register` 组合 `pi`、基础设施、Conversation 业务和 Transport：
 
 ```text
-Find Conversation -> List Messages -> pi.Run -> AppendTurn
+Find Conversation -> List Messages -> pi.Runner.Run -> AppendTurn
 ```
 
-CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`；Terminal 和 WeCom 通过 Reporter 接收事件。这些业务适配不属于 `pi` SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。
+CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`。数据库保留完整的 Action/Tool 轨迹用于审计，但下一轮只将客户文本和不含 ToolCall 的最终 AI 文本映射为业务 `Message`，不会向公共历史暴露内部工具协议。Terminal 和 WeCom 通过 Reporter 接收事件。这些业务适配不属于 `pi` SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。
