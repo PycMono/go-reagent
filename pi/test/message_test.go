@@ -30,12 +30,12 @@ func TestRunRequestIgnoresRemovedTrackingFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{
 			"run_id":"run-1",
 			"metadata":{"tenant":"one"},
-			"input":"hello"
+			"input":{"content_type":"text","content":"hello","sender_type":"customer"}
 		}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	if request.Input != "hello" {
-		t.Fatalf("RunRequest.Input = %q, want hello", request.Input)
+	if request.Input.Content != "hello" || request.Input.SenderType != "customer" {
+		t.Fatalf("RunRequest.Input = %#v", request.Input)
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestRunRequestIgnoresRemovedTrackingFields(t *testing.T) {
 	}
 }
 
-func TestHistoryMessageJSONContract(t *testing.T) {
+func TestMessageJSONContract(t *testing.T) {
 	const source = `{
 		"content_type":"text",
 		"create_time":"2026-08-13 17:23:54",
@@ -57,19 +57,45 @@ func TestHistoryMessageJSONContract(t *testing.T) {
 		"id":"578633729103114240",
 		"sender_type":"ai"
 	}`
-	var message pi.HistoryMessage
+	var message pi.Message
 	if err := json.Unmarshal([]byte(source), &message); err != nil {
 		t.Fatal(err)
 	}
-	if message.ContentType != pi.HistoryContentTypeText ||
+	if message.ContentType != "text" ||
 		message.CreateTime != "2026-08-13 17:23:54" ||
 		message.CreateTS != "1786613034574" ||
 		message.FileURL != "" ||
 		message.TalkerName != "艾小小" ||
 		message.Content != "您好，感谢您的关注和信任。" ||
 		message.ID != "578633729103114240" ||
-		message.SenderType != pi.HistorySenderTypeAI {
-		t.Fatalf("HistoryMessage = %#v", message)
+		message.SenderType != "ai" {
+		t.Fatalf("Message = %#v", message)
+	}
+}
+
+func TestMessage2AIMapsBusinessSenders(t *testing.T) {
+	tests := []struct {
+		name       string
+		senderType string
+		wantRole   ai.Role
+	}{
+		{name: "customer", senderType: "customer", wantRole: ai.RoleUser},
+		{name: "AI", senderType: "ai", wantRole: ai.RoleAssistant},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := (pi.Message{
+				ContentType: "text",
+				Content:     "content",
+				SenderType:  test.senderType,
+			}).Message2AI()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Role != test.wantRole || len(got.Content) != 1 || got.Content[0] != ai.TextBlock("content") {
+				t.Fatalf("Message2AI() = %#v", got)
+			}
+		})
 	}
 }
 

@@ -63,7 +63,11 @@ func newPublicAgent(t *testing.T, provider ai.Provider, toolRuntime pi.ToolRunti
 }
 
 func validAgentRequest(input string) pi.RunRequest {
-	return pi.RunRequest{Input: input}
+	return pi.RunRequest{Input: pi.Message{
+		ContentType: "text",
+		Content:     input,
+		SenderType:  "customer",
+	}}
 }
 
 func TestAgentRunReturnsEveryCostedInvocationInCallOrder(t *testing.T) {
@@ -212,13 +216,13 @@ func TestAgentRunMapsHistoryMessagesInOriginalOrder(t *testing.T) {
 	provider := &agentProviderFake{responses: []*ai.Message{response}}
 	runtime := newPublicAgent(t, provider, &agentToolRuntimeFake{})
 	request := validAgentRequest("hello")
-	request.History = []pi.HistoryMessage{{
-		ContentType: pi.HistoryContentTypeText,
-		SenderType:  pi.HistorySenderTypeCustomer,
+	request.History = []pi.Message{{
+		ContentType: "text",
+		SenderType:  "customer",
 		Content:     "question",
 	}, {
-		ContentType: pi.HistoryContentTypeText,
-		SenderType:  pi.HistorySenderTypeAI,
+		ContentType: "text",
+		SenderType:  "ai",
 		Content:     "answer",
 	}}
 	_, err := runtime.Run(context.Background(), request, nil)

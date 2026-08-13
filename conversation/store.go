@@ -7,14 +7,21 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
+// RunRequest 保存会话业务执行一次 Agent 所需的输入。
 type RunRequest struct {
-	UserID         string            // 用户ID
-	ConversationID string            // 会话ID
-	RunID          string            // 运行ID
-	Input          ai.Message        // 用户输入
-	Context        []pi.ContextBlock //
+	// UserID 是会话所属的用户标识。
+	UserID string
+	// ConversationID 是业务侧的会话标识。
+	ConversationID string
+	// RunID 是本轮持久化和调用总账使用的追踪标识。
+	RunID string
+	// Input 是本轮用户消息。
+	Input ai.Message
+	// Context 是本轮额外注入的业务上下文。
+	Context []pi.ContextBlock
 }
 
+// Runner 定义带会话加载和持久化的一次运行行为。
 type Runner interface {
 	Run(context.Context, RunRequest, pi.Reporter) (pi.RunResult, error)
 }

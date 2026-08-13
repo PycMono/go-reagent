@@ -4,10 +4,10 @@ import "github.com/PycMono/go-reagent/pi/ai"
 
 // RunRequest 保存一次无状态运行所需的调用方输入。
 type RunRequest struct {
-	// History 是本轮运行开始前的会话历史。
-	History []HistoryMessage `json:"history,omitempty"`
-	// Input 是本轮用户输入文本。
-	Input string `json:"input"`
+	// History 是本轮运行开始前、面向业务的文本会话历史。
+	History []Message `json:"history,omitempty"`
+	// Input 是本轮用户输入消息。
+	Input Message `json:"input"`
 	// Context 是本轮额外注入的业务上下文。
 	Context []ContextBlock `json:"context,omitempty"`
 }

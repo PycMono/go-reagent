@@ -205,8 +205,9 @@ func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 	called := make(chan struct{}, 1)
 	reporter := &runnerReporterFake{}
 	runtime := runtimeFunc(func(_ context.Context, request pi.RunRequest, gotReporter pi.Reporter) (pi.RunResult, error) {
-		if request.Input != "test prompt" {
-			t.Errorf("Run(Input) = %q, want test prompt", request.Input)
+		if request.Input.Content != "test prompt" || request.Input.ContentType != "text" ||
+			request.Input.SenderType != "customer" {
+			t.Errorf("Run(Input) = %#v", request.Input)
 		}
 		if len(request.History) != 0 || len(request.Context) != 0 {
 			t.Errorf("Run(request) = %#v, want empty history and context", request)
