@@ -1,4 +1,4 @@
-package mysql
+package conversation
 
 import (
 	"context"
@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PycMono/go-reagent/conversation"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"gorm.io/gorm"
 )
@@ -26,49 +28,49 @@ type Store struct {
 	transactions TransactionManager
 }
 
-func NewStore(provider DBProvider, transactions TransactionManager) conversation.Store {
+func NewStore(provider DBProvider, transactions TransactionManager) conversationrepo.Store {
 	return &Store{provider: provider, transactions: transactions}
 }
 
-func (s *Store) LoadOrCreate(ctx context.Context, key conversation.Key, limit int) (conversation.Snapshot, error) {
+func (s *Store) LoadOrCreate(ctx context.Context, key conversationentity.Key, limit int) (conversationentity.Snapshot, error) {
 	if ctx == nil {
-		return conversation.Snapshot{}, errors.New("mysql conversation: context is required")
+		return conversationentity.Snapshot{}, errors.New("mysql conversation: context is required")
 	}
 	if s == nil || s.provider == nil || s.transactions == nil {
-		return conversation.Snapshot{}, errors.New("mysql conversation: database provider and transaction manager are required")
+		return conversationentity.Snapshot{}, errors.New("mysql conversation: database provider and transaction manager are required")
 	}
 	if err := ctx.Err(); err != nil {
-		return conversation.Snapshot{}, fmt.Errorf("mysql conversation: load canceled: %w", err)
+		return conversationentity.Snapshot{}, fmt.Errorf("mysql conversation: load canceled: %w", err)
 	}
 	key.UserID = strings.TrimSpace(key.UserID)
 	key.ConversationID = strings.TrimSpace(key.ConversationID)
 	if key.UserID == "" {
-		return conversation.Snapshot{}, errors.New("mysql conversation: user ID is required")
+		return conversationentity.Snapshot{}, errors.New("mysql conversation: user ID is required")
 	}
 	if key.ConversationID == "" {
-		return conversation.Snapshot{}, errors.New("mysql conversation: conversation ID is required")
+		return conversationentity.Snapshot{}, errors.New("mysql conversation: conversation ID is required")
 	}
 	if limit < 1 {
-		return conversation.Snapshot{}, errors.New("mysql conversation: history limit must be positive")
+		return conversationentity.Snapshot{}, errors.New("mysql conversation: history limit must be positive")
 	}
 
 	row, err := s.loadOwnedConversation(ctx, key)
 	if err == nil {
 		return s.loadSnapshot(ctx, row, limit)
 	}
-	if !errors.Is(err, conversation.ErrNotFound) {
-		return conversation.Snapshot{}, err
+	if !errors.Is(err, commonerrors.ErrConversationNotFound) {
+		return conversationentity.Snapshot{}, err
 	}
 
 	created := conversationRow{UserID: key.UserID, ConversationID: key.ConversationID}
 	createErr := s.provider.UseDB(ctx).Create(&created).Error
 	if createErr == nil {
-		return conversation.Snapshot{ConversationPK: created.ID, Version: created.Version}, nil
+		return conversationentity.Snapshot{ConversationPK: created.ID, Version: created.Version}, nil
 	}
 
 	winner, reloadErr := s.loadOwnedConversation(ctx, key)
 	if reloadErr != nil {
-		return conversation.Snapshot{}, errors.Join(
+		return conversationentity.Snapshot{}, errors.Join(
 			createErr,
 			fmt.Errorf("mysql conversation: reload after create failure: %w", reloadErr),
 		)
@@ -76,13 +78,13 @@ func (s *Store) LoadOrCreate(ctx context.Context, key conversation.Key, limit in
 	return s.loadSnapshot(ctx, winner, limit)
 }
 
-func (s *Store) loadOwnedConversation(ctx context.Context, key conversation.Key) (conversationRow, error) {
+func (s *Store) loadOwnedConversation(ctx context.Context, key conversationentity.Key) (conversationRow, error) {
 	var row conversationRow
 	err := s.provider.UseDB(ctx).
 		Where("user_id = ? AND conversation_id = ?", key.UserID, key.ConversationID).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return conversationRow{}, fmt.Errorf("mysql conversation: %w", conversation.ErrNotFound)
+		return conversationRow{}, commonerrors.ErrConversationNotFound.Wrap(err)
 	}
 	if err != nil {
 		return conversationRow{}, fmt.Errorf("mysql conversation: load owned conversation: %w", err)
@@ -90,7 +92,7 @@ func (s *Store) loadOwnedConversation(ctx context.Context, key conversation.Key)
 	return row, nil
 }
 
-func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int) (conversation.Snapshot, error) {
+func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int) (conversationentity.Snapshot, error) {
 	var rows []messageRow
 	err := s.provider.UseDB(ctx).
 		Where("conversation_pk = ?", row.ID).
@@ -98,7 +100,7 @@ func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int
 		Limit(limit + 1).
 		Find(&rows).Error
 	if err != nil {
-		return conversation.Snapshot{}, fmt.Errorf("mysql conversation: load messages: %w", err)
+		return conversationentity.Snapshot{}, fmt.Errorf("mysql conversation: load messages: %w", err)
 	}
 
 	window := safeWindow(rows, limit)
@@ -106,18 +108,18 @@ func (s *Store) loadSnapshot(ctx context.Context, row conversationRow, limit int
 	for index := range window {
 		message, err := decodeMessage(window[index])
 		if err != nil {
-			return conversation.Snapshot{}, fmt.Errorf("mysql conversation: decode message %d: %w", window[index].ID, err)
+			return conversationentity.Snapshot{}, fmt.Errorf("mysql conversation: decode message %d: %w", window[index].ID, err)
 		}
 		messages = append(messages, message)
 	}
-	return conversation.Snapshot{
+	return conversationentity.Snapshot{
 		ConversationPK: row.ID,
 		Version:        row.Version,
 		Messages:       messages,
 	}, nil
 }
 
-func (s *Store) AppendTurn(ctx context.Context, request conversation.AppendRequest) error {
+func (s *Store) AppendTurn(ctx context.Context, request conversationentity.AppendRequest) error {
 	if ctx == nil {
 		return errors.New("mysql conversation: context is required")
 	}
@@ -182,7 +184,7 @@ func (s *Store) AppendTurn(ctx context.Context, request conversation.AppendReque
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return conversation.ErrConflict
+			return commonerrors.ErrConversationConflict
 		}
 		if err := db.Create(&rows).Error; err != nil {
 			return err

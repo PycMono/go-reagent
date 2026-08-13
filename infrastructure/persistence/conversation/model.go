@@ -1,4 +1,4 @@
-package mysql
+package conversation
 
 import (
 	"database/sql/driver"

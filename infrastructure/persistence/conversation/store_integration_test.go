@@ -1,6 +1,6 @@
 //go:build integration
 
-package mysql_test
+package conversation_test
 
 import (
 	"context"
@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/conversation"
-	persistencemysql "github.com/PycMono/go-reagent/persistence/mysql"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	"github.com/PycMono/go-reagent/infrastructure/driver/mysql"
+	conversationpersistence "github.com/PycMono/go-reagent/infrastructure/persistence/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx/fxtest"
@@ -35,7 +37,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	}
 
 	lifecycle := fxtest.NewLifecycle(t)
-	connection, err := persistencemysql.NewConnection(lifecycle, &config.Config{
+	connection, err := mysql.NewConnection(lifecycle, &config.Config{
 		Conversation: config.ConversationConfig{Enabled: true, HistoryMessageLimit: 100},
 		MySQL: config.MySQLConfig{
 			Host: host, Port: port, Database: database, User: user, Password: password,
@@ -54,8 +56,8 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 		t.Fatal("MySQL connection returned nil database")
 	}
 	for _, migrationPath := range []string{
-		"../../../../migrations/0001_conversation_persistence.up.sql",
-		"../../../../migrations/0002_model_invocation_observability.up.sql",
+		"../../../migrations/0001_conversation_persistence.up.sql",
+		"../../../migrations/0002_model_invocation_observability.up.sql",
 	} {
 		migration, err := os.ReadFile(migrationPath)
 		if err != nil {
@@ -73,7 +75,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	}
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
-	key := conversation.Key{UserID: "go-reagent-test-user-" + suffix, ConversationID: "conversation-" + suffix}
+	key := conversationentity.Key{UserID: "go-reagent-test-user-" + suffix, ConversationID: "conversation-" + suffix}
 	var cleanupConversationPK uint64
 	t.Cleanup(func() {
 		if cleanupConversationPK != 0 {
@@ -86,7 +88,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 		}
 	})
 
-	store := persistencemysql.NewStore(connection, connection)
+	store := conversationpersistence.NewStore(connection, connection)
 	snapshot, err := store.LoadOrCreate(ctx, key, 100)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +101,7 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("question")}},
 		{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
 	}
-	if err := store.AppendTurn(ctx, conversation.AppendRequest{
+	if err := store.AppendTurn(ctx, conversationentity.AppendRequest{
 		ConversationPK: snapshot.ConversationPK, ExpectedVersion: snapshot.Version,
 		RunID: "run-1", Messages: messages,
 		Invocations: []agent.ModelInvocation{{
@@ -135,11 +137,11 @@ func TestMySQLStoreRoundTrip(t *testing.T) {
 	if loaded.Version != 1 || len(loaded.Messages) != 2 {
 		t.Fatalf("loaded snapshot = %#v", loaded)
 	}
-	err = store.AppendTurn(ctx, conversation.AppendRequest{
+	err = store.AppendTurn(ctx, conversationentity.AppendRequest{
 		ConversationPK: snapshot.ConversationPK, ExpectedVersion: snapshot.Version,
 		Messages: messages,
 	})
-	if !errors.Is(err, conversation.ErrConflict) {
+	if !errors.Is(err, commonerrors.ErrConversationConflict) {
 		t.Fatalf("stale AppendTurn() error = %v, want ErrConflict", err)
 	}
 }

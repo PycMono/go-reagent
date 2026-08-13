@@ -1,11 +1,10 @@
-package mysql
+package conversation
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
-	"github.com/PycMono/go-reagent/conversation"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
@@ -23,14 +22,13 @@ func encodeMessage(message ai.Message) (messageRow, error) {
 func decodeMessage(row messageRow) (ai.Message, error) {
 	var message ai.Message
 	if err := json.Unmarshal(row.Payload, &message); err != nil {
-		return ai.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("decode payload: %w", err))
+		return ai.Message{}, commonerrors.ErrConversationCorruptMessage.Wrap(fmt.Errorf("decode payload: %w", err))
 	}
 	if !isPersistedRole(message.Role) {
-		return ai.Message{}, errors.Join(conversation.ErrCorruptMessage, fmt.Errorf("unsupported payload role %q", message.Role))
+		return ai.Message{}, commonerrors.ErrConversationCorruptMessage.Wrap(fmt.Errorf("unsupported payload role %q", message.Role))
 	}
 	if row.Role != string(message.Role) {
-		return ai.Message{}, errors.Join(
-			conversation.ErrCorruptMessage,
+		return ai.Message{}, commonerrors.ErrConversationCorruptMessage.Wrap(
 			fmt.Errorf("stored role %q does not match payload role %q", row.Role, message.Role),
 		)
 	}
