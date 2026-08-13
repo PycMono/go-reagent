@@ -8,7 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi"
-	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -21,7 +21,7 @@ func TestNewConfigLoadsTrimmedConfigurationPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.NewFromEnvironment() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestRegisterProvidesProcessValues(t *testing.T) {
 	t.Setenv("AGENT_PROMPT", "registered prompt")
 	var (
 		cfg      *config.Config
-		platform ai.PlatformConfig
+		platform providers.Options
 		workDir  pi.WorkDir
 		prompt   Prompt
 	)

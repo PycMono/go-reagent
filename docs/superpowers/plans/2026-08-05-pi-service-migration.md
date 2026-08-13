@@ -14,7 +14,7 @@
 - Do not create any directory named `internal`, `sdk`, `reagent`, or `workspace`.
 - Keep one Go module; do not add a nested `go.mod` under `pi/`.
 - Preserve the six default tools and all current Tool safety behavior.
-- Preserve synchronous, concurrency-safe `pi.New`/`Run`/`Close` behavior.
+- Preserve synchronous `pi/agent.Runner.Run` behavior and Fx-owned resource lifecycle.
 - Preserve Configor and the current flattened `config.example.json` structure.
 - Preserve Terminal and WeCom progress reporting through the lower-level `pi/agent.Runner` service graph.
 - Preserve conversation partial-result persistence and invocation metrics.
@@ -40,14 +40,14 @@
 | `transport/**` | Terminal and WeCom reporters |
 | `cmd/**` | executable composition roots |
 
-Public facade signatures remain:
+The public runtime contract remains:
 
 ```go
-package pi
+package agent
 
-func New(config *Config) (*Agent, error)
-func (a *Agent) Run(context.Context, RunRequest) (RunResult, error)
-func (a *Agent) Close(context.Context) error
+type Runner interface {
+	Run(context.Context, RunRequest, Reporter) (RunResult, error)
+}
 ```
 
 The service graph consumes the lower-level runtime:
@@ -126,15 +126,15 @@ git commit -m "refactor: move agent foundations under pi"
 **Files:**
 - Move/rewrite: `internal/workspace/composer.go` -> `pi/system_prompt.go`
 - Move/rewrite: `internal/workspace/run_context.go` -> `pi/run_context.go`
-- Move/rewrite: `internal/workspace/workspace.go` -> `pi/resource_loader.go`
+- Fold `internal/workspace/workspace.go` adapters into `pi/register.go`
 - Move/rewrite: `internal/workspace/skill*.go` -> `pi/skill*.go` and `pi/skills.go`
 - Move: `internal/workspace/xml_text.go` -> `pi/xml_text.go`
 - Move: `internal/tools/*.go` -> `pi/tools/*.go` and `pi/utils/*.go`
 - Move: `internal/observability/*.go` -> `pi/observability/*.go`
-- Merge: `internal/{bootstrap,tools,workspace}/module.go` -> `pi/bootstrap.go`
+- Merge: `internal/{bootstrap,tools,workspace}/module.go` -> `pi/register.go`
 
 **Interfaces:**
-- Consumes: `pi/ai.Client`, `pi/agent.Tool`, `pi/agent.ContextFactory`, Fx lifecycle.
+- Consumes: `pi/ai.Provider`, `pi/agent.Tool`, `pi/agent.ContextFactory`, Fx lifecycle.
 - Produces: the default Pi Fx options and the existing six Tool registrations.
 
 - [ ] **Step 1: Add a package-boundary test for Pi**
@@ -177,7 +177,7 @@ Expected: FAIL because the final `pi/...` package graph does not exist yet.
 - [ ] **Step 3: Move resource-loading code into focused Pi root files**
 
 Use package `pi` for all moved files. Rename `Skill`'s source file to
-`skills.go`, retain `WorkDir` as an ordinary type in `resource_loader.go`, and
+`skills.go`, retain `WorkDir` as an ordinary type in `register.go`, and
 update imports from `internal/workspace` to the Pi root package only where a
 subpackage needs those public types.
 
@@ -225,12 +225,12 @@ working directory, validates and appends environment overrides using the
 current `processEnvironment` rules, and calls `ConfigureProcessGroup`.
 `ProcessSupervisor.Start` is its caller.
 
-- [ ] **Step 6: Merge default assembly into `pi/bootstrap.go`**
+- [ ] **Step 6: Merge default assembly into `pi/register.go`**
 
 Define one exported Fx option:
 
 ```go
-var Module = fx.Options(
+var Register = fx.Options(
 	fx.Provide(
 		newToolRoot,
 		tools.NewWorkspace,
@@ -253,14 +253,14 @@ var Module = fx.Options(
 )
 ```
 
-`Module` consumes `*pi.Config` and `pi.WorkDir`. Define `type WorkDir string` in
-`resource_loader.go`; `bootstrap.go` converts it to `tools.Root` before
-constructing the guarded filesystem. The AI-client provider defensively clones
-and normalizes `*pi.Config` before selecting its current platform, so both the
-public facade and service graph receive identical validation.
+`Register` consumes `providers.Options` and `pi.WorkDir`. Define `type WorkDir string` in
+`register.go`, which converts it to `tools.Root` before
+constructing the guarded filesystem. `providers.Options` owns the normalization
+required to construct one Provider; the business `config` package owns the
+platform list and current-platform selection.
 
 Delete the three old `module.go` files after all providers are represented in
-`pi.Module`.
+`pi.Register`.
 
 - [ ] **Step 7: Verify reusable Pi components**
 
@@ -279,17 +279,17 @@ git add pi internal tests/integration/package_boundaries_test.go
 git commit -m "refactor: assemble reusable pi runtime"
 ```
 
-### Task 3: Move the Public Facade and Split Configuration
+### Task 3: Finalize the Runtime Contract and Split Configuration
 
 **Files:**
-- Move: `reagent.go` -> `pi/agent.go`
-- Move: root `bootstrap.go` -> merge into `pi/bootstrap.go`
-- Move: root `types.go`, `error.go`, `error_code.go` -> `pi/`
-- Split: root `config.go`, `config_validate.go` -> `pi/config*.go` and `config/{config,load,validate}.go`
+- Remove the module-root Agent facade and keep `pi/agent.Agent` as the only Agent type.
+- Move the reusable Fx graph into `pi/register.go`.
+- Move stable errors into `pi/errors/`; do not retain root type aliases.
+- Move platform-list configuration and validation into `config/{config,load,platform,validate}.go`.
 - Move: all corresponding root tests next to their new owners.
 
 **Interfaces:**
-- Produces: `pi.Config`, `pi.New`, `(*pi.Agent).Run`, `(*pi.Agent).Close`.
+- Produces: `pi.Register` and the single `pi/agent.Runner` contract.
 - Produces: `config.Config`, `config.Load(path string) (*Config, error)`.
 
 - [ ] **Step 1: Add flattened-config compatibility coverage**
@@ -297,8 +297,8 @@ git commit -m "refactor: assemble reusable pi runtime"
 Create `config/load_test.go` that writes the current JSON shape and asserts:
 
 ```go
-if got.Pi.CurrentPlatform != "test" {
-	t.Fatalf("current platform = %q", got.Pi.CurrentPlatform)
+if got.CurrentPlatform != "test" {
+	t.Fatalf("current platform = %q", got.CurrentPlatform)
 }
 if got.Conversation.HistoryMessageLimit != 100 {
 	t.Fatalf("history limit = %d", got.Conversation.HistoryMessageLimit)
@@ -311,19 +311,15 @@ Move facade files to package `pi` and replace root-package imports with
 `github.com/PycMono/go-reagent/pi`. Preserve the exact public behavior and
 error classification already covered by the facade tests.
 
-- [ ] **Step 3: Define the Pi-only configuration**
+- [ ] **Step 3: Make Pi registration consume one Provider configuration**
 
 ```go
-package pi
-
-type Config struct {
-	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
-	Platforms       []ai.PlatformConfig `json:"platforms" yaml:"platforms" toml:"platforms"`
-}
+var Register = fx.Options(/* providers and runtime graph */)
 ```
 
-Retain `Current`, normalization, platform validation, and defensive cloning in
-package `pi`.
+Do not define a Pi-level platform list, selection object, or second Agent
+facade. Normalize the single Provider profile through `providers.Options`
+before constructing the `pi/agent.Agent` in the Fx graph.
 
 - [ ] **Step 4: Define service configuration with flattened decoding**
 
@@ -331,28 +327,29 @@ package `pi`.
 package config
 
 type Config struct {
-	Pi           pi.Config
-	Bot          BotConfig
-	Conversation ConversationConfig
-	MySQL        MySQLConfig
+	CurrentPlatform string
+	Platforms       []providers.Options
+	Bot             BotConfig
+	Conversation    ConversationConfig
+	MySQL           MySQLConfig
 }
 ```
 
 `Load` must decode the existing top-level `currentPlatform` and `platforms`
-fields and populate `Config.Pi`; it must keep `bot`, `conversation`, and
-`mysql` at their existing locations. Configor remains the only loader. Expose
+fields directly into `Config`; it must keep `bot`, `conversation`, and `mysql`
+at their existing locations. Configor remains the only loader. Expose
 these exact service constructors:
 
 ```go
 func Load(path string) (*Config, error)
 func NewFromEnvironment() (*Config, error)
-func NewPiConfig(config *Config) *pi.Config
+func NewPlatform(config *Config) (providers.Options, error)
 ```
 
 `NewFromEnvironment` reads `CONFIG_PATH`, defaults it to `config.json`, and
-calls `Load`; `NewPiConfig` returns a defensive copy of `config.Pi`. Pi runtime
-validation remains inside `pi.Module`, while `config.Load` validates and
-normalizes Bot, Conversation, and MySQL fields.
+calls `Load`; `NewPlatform` returns the selected Provider profile. Platform-list
+selection and validation stay in `config`, while `providers.Options` validates
+the fields required to construct one Provider.
 
 - [ ] **Step 5: Verify facade and configuration behavior**
 
@@ -398,7 +395,7 @@ and tests. Resolve the two existing `module.go` names by creating:
 
 ```go
 var Module = fx.Options(
-	fx.Provide(NewConnection),
+	fx.Provide(NewProvider, NewTransactionManager),
 	fx.Provide(NewStore),
 )
 ```
@@ -430,17 +427,17 @@ git commit -m "refactor: lift conversation persistence packages"
 - Move: `internal/cli/dispatch/*.go` -> `transport/*.go`
 - Move: `internal/cli/app/*.go` -> `application/*.go`
 - Split: `internal/cli/config.go` -> `config/load.go` and `application/prompt.go`
-- Merge: `internal/cli/module.go` -> `application/bootstrap.go`
+- Merge: `internal/cli/module.go` -> `application/register.go`
 
 **Interfaces:**
-- Consumes: `pi.Module`, `pi/agent.Runner`, `conversation.Runner`,
-  `persistence/mysql.Module`, `config.Config`.
-- Produces: complete service `application.Module` and transport Reporter.
+- Consumes: `pi.Register`, `pi/agent.Runner`, `conversation.Runner`,
+  `infrastructure.Register`, `config.Config`.
+- Produces: complete service `application.Register` and transport Reporter.
 
 - [ ] **Step 1: Move reporters into `transport`**
 
 Use package `transport`; replace all Agent imports with `pi/agent`. Merge
-`module.go` and `wecom_module.go` registration into `transport/bootstrap.go`
+`module.go` and `wecom_module.go` registration into `transport/register.go`
 without changing reporter order (`terminal` remains order 100) or optional
 WeCom behavior.
 
@@ -452,15 +449,15 @@ to `prompt.go`.
 
 - [ ] **Step 3: Assemble the service graph**
 
-Define `application.Module` in `application/bootstrap.go` using:
+Define `application.Register` in `application/register.go` using:
 
 ```go
-var Module = fx.Options(
-	pi.Module,
-	persistencemysql.Module,
-	conversation.Module,
-	transport.Module,
-	fx.Provide(config.NewFromEnvironment, config.NewPiConfig, NewWorkDir, NewPrompt, NewAgentRunner),
+var Register = fx.Options(
+	pi.Register,
+	infrastructure.Register,
+	conversation.Register,
+	transport.Register,
+	fx.Provide(config.NewFromEnvironment, config.NewPlatform, NewWorkDir, NewPrompt, NewAgentRunner),
 	fx.Invoke(RegisterAgentLifecycle),
 )
 ```
@@ -551,7 +548,7 @@ dependency direction. Update README examples to import:
 "github.com/PycMono/go-reagent/pi"
 ```
 
-and construct `pi.Config`/`pi.New`.
+and supply `providers.Options` to `pi.Register`.
 
 - [ ] **Step 5: Build commands and run the full suite**
 

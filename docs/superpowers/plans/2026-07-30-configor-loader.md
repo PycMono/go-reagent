@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Use Configor v1.2.2 through its native package-level `Load` function without compatibility options.
-- Preserve the public `Config`, `PlatformConfig`, `Load`, and `Current` APIs.
+- Preserve the public `Config`, `Options`, `Load`, and `Current` APIs.
 - Preserve all existing normalization, URL/protocol/model/platform, duplicate-ID, and API-key validation.
 - Accept Configor defaults: unknown fields and trailing JSON are not rejected.
 - Do not modify Engine, Provider, Schema, Registry, Tools, or CLI behavior.
@@ -77,7 +77,7 @@ go get github.com/jinzhu/configor@v1.2.2
 
 - [ ] **Step 2: Implement the minimum loader replacement**
 
-Add matching `json`, `yaml`, and `toml` tags to `Config` and `PlatformConfig`. Replace direct file opening and `json.Decoder` usage with:
+Add matching `json`, `yaml`, and `toml` tags to `Config` and `Options`. Replace direct file opening and `json.Decoder` usage with:
 
 ```go
 var cfg Config

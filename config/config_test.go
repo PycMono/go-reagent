@@ -125,7 +125,7 @@ func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -139,8 +139,8 @@ func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 	if current.APIKey != "deep-key" || current.Model != "deepseek-chat" {
 		t.Fatalf("current credentials/model = %#v", current)
 	}
-	if cfg.Pi.Platforms[1].APIKey != "" {
-		t.Fatalf("inactive platform APIKey = %q", cfg.Pi.Platforms[1].APIKey)
+	if cfg.Platforms[1].APIKey != "" {
+		t.Fatalf("inactive platform APIKey = %q", cfg.Platforms[1].APIKey)
 	}
 }
 
@@ -243,7 +243,7 @@ output_usd_per_million_tokens = 0.60
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			current, err := cfg.Pi.Current()
+			current, err := cfg.CurrentPlatformOptions()
 			if err != nil {
 				t.Fatalf("Current() error = %v", err)
 			}
@@ -275,7 +275,7 @@ func TestLoadConfigAppliesShellEnvironmentOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -300,7 +300,7 @@ func TestLoadConfigAppliesEnvironmentFileOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -323,7 +323,7 @@ func TestLoadConfigFallsBackToExampleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
@@ -345,7 +345,7 @@ func TestLoadConfigUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	current, err := cfg.Pi.Current()
+	current, err := cfg.CurrentPlatformOptions()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}

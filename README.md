@@ -16,7 +16,7 @@ Agent Loop
    │
    ├── Thinking 开启时：隐藏工具，生成规划 Trace
    │
-   ├── Action 阶段：恢复工具，调用 ai.Client.Generate
+   ├── Action 阶段：恢复工具，调用 ai.Provider.Generate
    │
    ├── 没有 Tool Call ──────────────► 输出最终响应并结束运行
    │
@@ -36,29 +36,38 @@ Agent Loop
 
 ## SDK 快速开始
 
-上层业务读取配置并创建一个可长期复用的 `Agent`。历史加载和消息持久化由业务负责；根 SDK 的 `Run` 只同步执行一次无状态运行：
+上层业务读取业务配置并选择当前模型平台，再通过 `pi.Register` 组装唯一的 `pi.Runner`。历史加载和消息持久化由业务负责；Runner 只同步执行一次无状态运行：
 
 ```go
-config, err := reagent.LoadConfig("config.json")
+cfg, err := config.Load("config.json")
 if err != nil {
 	return err
 }
 
-sdk, err := reagent.New(config)
+platform, err := cfg.CurrentPlatformOptions()
 if err != nil {
 	return err
 }
-defer sdk.Close(context.Background())
 
-result, err := sdk.Run(ctx, reagent.RunRequest{
-	RunID:   "run-123",
+var runner pi.Runner
+app := fx.New(
+	fx.NopLogger,
+	fx.Supply(platform, pi.WorkDir(workDir)),
+	pi.Register,
+	fx.Populate(&runner),
+)
+if err := app.Start(ctx); err != nil {
+	return err
+}
+defer app.Stop(context.Background())
+
+result, err := runner.Run(ctx, pi.RunRequest{
 	History: history,
-	Input:   reagent.UserMessage("Review the current workspace"),
-	Context: []reagent.ContextBlock{
+	Input:   "Review the current workspace",
+	Context: []pi.ContextBlock{
 		{Name: "customer-profile", Content: customerProfile, Priority: 100},
 	},
-	Metadata: map[string]string{"conversation_id": conversationID},
-})
+}, nil)
 // 业务事务负责持久化 Input 和 result.NewMessages；err 非 nil 时，
 // 如果 NewMessages 非空，业务可按自身策略保留已经完成的部分结果。
 ```
@@ -67,7 +76,7 @@ result, err := sdk.Run(ctx, reagent.RunRequest{
 
 `RunResult.Invocations` 按真实模型调用顺序记录所有已完成的 Thinking 和 Action 调用。每条记录包含阶段、输入/输出 Token、平台、模型、配置单价、USD 成本和耗时。一次工具循环触发多次模型调用时会产生多条独立记录；隐藏 Thinking 文本不会进入 `NewMessages`，但其成本不会漏记。默认 SDK 会强制计量每次成功响应；上游缺少 Usage、Usage 非法或成本计算不一致都会让本次 Run 以 AI generation error 失败。
 
-根 `reagent` 包不开放 Store、Reporter、Provider、Tool、Registry 或 Fx 注入。需要底层协议和运行机制时可以直接使用公共 `ai`、`agent` 包，但完整默认 SDK 的组件组合保持私有。
+`pi` 不开放 Store，也不把业务配置、会话和数据库职责带进 SDK。Agent Core 直接位于根 `pi` 包，模型协议位于 `pi/ai`；完整默认 Agent 由 `pi.Register` 组合 `pi/harness` 中的 Workspace、Skills、工具和观测实现。
 
 ## Agent Workspace 契约
 
@@ -102,20 +111,29 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 
 ```text
 go-reagent/
-├── ai/                        # 消息协议、模型 Client 与官方 SDK 适配器
-│   └── providers/             # OpenAI、Anthropic 和协议工厂
-├── agent/                     # Run、Loop、Registry、Tool、Scheduler、Event
-├── reagent.go                # 公共 Agent、New、Run、Close
-├── config.go                 # 公共 Configor 配置入口
-├── types.go                  # 根包常用消息与运行类型
-├── error_code.go             # 稳定错误码枚举
-├── bootstrap.go              # 根 SDK 的私有 Fx 启动
-├── internal/
-│   ├── bootstrap/            # SDK 与 CLI 共用的私有 Fx 图
-│   ├── observability/        # 严格模型 Usage、USD 成本与耗时跟踪
-│   ├── workspace/            # AGENTS、Skills、Context 和 Workspace 策略
-│   ├── tools/                # 六个默认工具和进程监督器
-│   └── cli/                  # CLI 生命周期、会话、MySQL、Terminal、WeCom
+├── pi/                        # 唯一 Agent Core 与默认 Fx 注册
+│   ├── agent.go               # Agent 与 Runner
+│   ├── contract.go            # Run 请求、结果与模型调用记录
+│   ├── context.go             # Agent 与 Loop 共享的运行上下文
+│   ├── loop.go                # 模型/工具循环
+│   ├── scheduler.go           # 工具调度
+│   ├── register.go            # 默认 Harness 装配
+│   ├── ai/                    # 消息协议、Tool 契约与 Provider
+│   │   └── providers/         # OpenAI、Anthropic 和协议工厂
+│   ├── harness/               # 默认 Workspace Harness
+│   │   ├── context.go         # AGENTS/Skills 运行上下文
+│   │   ├── prompt.go          # System Prompt 组合
+│   │   ├── errors/            # Pi 稳定错误分类
+│   │   ├── observability/     # Usage、USD 成本与耗时跟踪
+│   │   ├── skills/            # Skill 发现与加载
+│   │   └── tools/             # 六个默认工具和进程监督器
+│   └── test/                  # 根 pi 公共 API 与包边界测试
+├── config/                    # 业务配置、平台列表与 Configor 加载
+├── domain/                    # 业务实体与 Repository 接口
+├── infrastructure/           # MySQL 驱动和持久化实现
+├── application/              # CLI 应用生命周期与用例组合
+├── conversation/             # 会话业务编排
+├── transport/                # Terminal 与 WeCom
 ├── cmd/
 │   ├── reagent/              # 自带 CLI 入口
 │   └── ping/                 # 独立 HTTP ping 示例
@@ -129,16 +147,14 @@ go-reagent/
 公共依赖方向固定为：
 
 ```text
-ai <- agent <- reagent
-              |-- internal/bootstrap
-              |-- internal/workspace
-              `-- internal/tools
-
-internal/cli -> reagent/agent + internal/bootstrap
-cmd/reagent  -> internal/cli + internal/bootstrap
+pi/ai <- pi/harness <- pi
+pi/ai <-------------- pi
+config -> pi/ai/providers
+application -> config + conversation + infrastructure + transport + pi
+cmd/reagent -> application
 ```
 
-`ai` 只定义模型协议和适配；`agent` 只定义可复用运行机制；根 `reagent` 组合完整默认 Agent。Workspace、默认工具和 CLI 产品策略保持私有，CLI 的会话存储与消息渠道不会进入 SDK `Run` 路径。详见 [SDK 架构](docs/sdk-architecture.md)。
+`pi/ai` 定义模型与 Tool 的底层协议；根 `pi` 是唯一 Agent Core；`pi/harness` 提供默认 Workspace 能力，并由 `pi/register.go` 组装。业务配置、会话存储和消息渠道不会进入 SDK `Run` 路径。详见 [SDK 架构](docs/sdk-architecture.md)。
 
 ## 环境要求
 
@@ -258,15 +274,15 @@ Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地�
 
 ### Fx 启动与退出
 
-SDK 与 CLI 复用 `internal/bootstrap.Module` 提供的私有 Fx 图：
+SDK 与 CLI 复用 `pi.Register` 提供的 Fx 图：
 
 ```text
-PlatformConfig -> provider ai.Client -> CostTracker -> agent.Loop / Registry / Runner
+Options -> ai.Provider -> CostTracker -> pi.Loop / Registry / Runner
 WorkDir        -> Workspace / AGENTS / Skills / 默认工具
 ```
 
-根 SDK 通过 `New` 创建这一图，并由 `Close` 等待已接纳的 Run 后停止资源。自带 CLI 在同一个 Fx App
-中组合 `internal/bootstrap.Module` 与 `internal/cli.Module`，不会嵌套创建 SDK App。CLI 的 AgentRunner
+调用方在自己的 Fx App 中组合 `pi.Register`，并由 Fx 生命周期统一启动和停止资源。自带 CLI 在同一个 Fx App
+中组合 `pi.Register` 与业务模块，不会嵌套创建第二个 App。CLI 的 AgentRunner
 在 `OnStart` 中异步执行一次任务；收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待运行，再按 Fx
 逆序生命周期关闭后台进程管理器。
 
@@ -354,10 +370,10 @@ go test ./...
 ## 当前能力
 
 - 统一的 `system`、`user`、`assistant` 和 `tool` 消息角色；最终工具观察通过原生 `tool` 消息和 `tool_call_id` 关联。
-- 公共 `ai`、`agent` 和根 `reagent` 三层 API，以及同步、无状态、并发安全的默认 SDK。
+- 公共 `pi/ai`、根 `pi` Agent Core 和 `pi/harness` 默认能力，以及同步、无状态、并发安全的默认 SDK。
 - 模型无关的消息、Tool Call、Tool Update、Tool Result、Agent Event 和带调度元数据的 Tool Definition 数据结构。
 - 使用 `json.RawMessage` 保留工具调用参数，并由具体工具延迟解析。
-- `ai.Client` 每轮接收上下文和可用工具定义；根 SDK 固定使用配置选择的官方 SDK 适配器。
+- `ai.Provider` 每轮接收上下文和可用工具定义；`pi.Register` 使用业务选择后的单个 `providers.Options` 创建官方 SDK 适配器。
 - Configor 驱动的 JSON/YAML/TOML 平台配置加载，以及项目级规范化与启动前校验。
 - 配置驱动的 OpenAI Chat Completions 兼容 Provider。
 - 配置驱动的 Anthropic Messages 兼容 Provider。
@@ -368,7 +384,7 @@ go test ./...
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。
 - 支持超时、后台化、有界输出和进程组终止的 `exec` 与 `process` 工具。
-- 由 `ContextFactory`、`Loop`、`Scheduler` 和 `agent.Agent` 分层驱动的运行时。
+- 由 `ContextBuilder`、`Loop`、`Scheduler` 和 `pi.Agent` 分层驱动的运行时。
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。

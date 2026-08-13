@@ -27,8 +27,8 @@
 - Test: `internal/config/config_test.go`
 
 **Interfaces:**
-- Consumes: `Config`, `BotConfig`, `PlatformConfig`, `ProtocolOpenAI`, `ProtocolAnthropic`, and `Config.Current` from `config.go`.
-- Produces: unchanged private methods `(*Config).normalizeAndValidate() error`, `(*BotConfig).normalizeAndValidate() error`, `(*PlatformConfig).normalize()`, `(*PlatformConfig).validate(int) error`, and `(*PlatformConfig).normalizeBaseURL() error` in `validate.go`.
+- Consumes: `Config`, `BotConfig`, `Options`, `ProtocolOpenAI`, `ProtocolAnthropic`, and `Config.Current` from `config.go`.
+- Produces: unchanged private methods `(*Config).normalizeAndValidate() error`, `(*BotConfig).normalizeAndValidate() error`, `(*Options).normalize()`, `(*Options).validate(int) error`, and `(*Options).normalizeBaseURL() error` in `validate.go`.
 
 - [ ] **Step 1: Verify the existing behavior contract**
 

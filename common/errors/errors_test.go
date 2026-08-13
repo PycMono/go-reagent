@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestConversationErrorsHaveStableIdentityAndClassification(t *testing.T) {
+func TestCommonErrorsHaveStableIdentityAndClassification(t *testing.T) {
 	tests := []struct {
 		name    string
 		err     CodeError
@@ -14,9 +14,9 @@ func TestConversationErrorsHaveStableIdentityAndClassification(t *testing.T) {
 		message string
 		biz     bool
 	}{
-		{name: "not found", err: ErrConversationNotFound, code: 10101, message: "conversation not found", biz: true},
-		{name: "conflict", err: ErrConversationConflict, code: 10102, message: "conversation version conflict", biz: true},
-		{name: "corrupt message", err: ErrConversationCorruptMessage, code: 10103, message: "conversation message is corrupt"},
+		{name: "not found", err: ErrNotFound, code: 10006, message: "resource not found", biz: true},
+		{name: "conflict", err: ErrConflict, code: 10007, message: "resource conflict", biz: true},
+		{name: "internal", err: ErrInternal, code: 10009, message: "internal server error"},
 	}
 
 	for _, test := range tests {
@@ -33,19 +33,19 @@ func TestConversationErrorsHaveStableIdentityAndClassification(t *testing.T) {
 		})
 	}
 
-	if stderrors.Is(ErrConversationNotFound, ErrConversationConflict) ||
-		stderrors.Is(ErrConversationNotFound, ErrConversationCorruptMessage) ||
-		stderrors.Is(ErrConversationConflict, ErrConversationCorruptMessage) {
-		t.Fatal("conversation errors must have distinct identities")
+	if stderrors.Is(ErrNotFound, ErrConflict) ||
+		stderrors.Is(ErrNotFound, ErrInternal) ||
+		stderrors.Is(ErrConflict, ErrInternal) {
+		t.Fatal("common errors must have distinct identities")
 	}
 }
 
-func TestConversationErrorWrapPreservesIdentityAndCause(t *testing.T) {
+func TestCommonErrorWrapPreservesIdentityAndCause(t *testing.T) {
 	cause := fmt.Errorf("invalid JSON payload")
-	wrapper := ErrConversationCorruptMessage.Wrap(cause)
+	wrapper := ErrInternal.Wrap(cause)
 
-	if !stderrors.Is(wrapper, ErrConversationCorruptMessage) {
-		t.Fatal("wrapped error lost conversation error identity")
+	if !stderrors.Is(wrapper, ErrInternal) {
+		t.Fatal("wrapped error lost common error identity")
 	}
 	if !stderrors.Is(wrapper, cause) {
 		t.Fatal("wrapped error lost its cause")

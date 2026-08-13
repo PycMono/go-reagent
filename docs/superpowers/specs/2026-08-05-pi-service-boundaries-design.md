@@ -45,11 +45,7 @@ go-reagent/
 │   │   └── process_group_windows.go
 │   ├── observability/
 │   │   └── tracker.go
-│   ├── agent.go
-│   ├── bootstrap.go
-│   ├── config.go
-│   ├── config_validate.go
-│   ├── resource_loader.go
+│   ├── register.go
 │   ├── run_context.go
 │   ├── system_prompt.go
 │   ├── skills.go
@@ -57,9 +53,7 @@ go-reagent/
 │   ├── skill_snapshot.go
 │   ├── skill_prompt.go
 │   ├── xml_text.go
-│   ├── types.go
-│   ├── error.go
-│   └── error_code.go
+│   └── errors/
 ├── config/
 │   ├── config.go
 │   ├── load.go
@@ -169,31 +163,22 @@ There is no `sdk.go`. The facade remains in focused files such as `agent.go`,
 
 ## Configuration Boundary
 
-Pi configuration contains only the model platform selection required to build
-the reusable Agent:
+Service configuration owns model-platform selection together with its business
+adapter settings:
 
 ```go
 type Config struct {
 	CurrentPlatform string
-	Platforms       []ai.PlatformConfig
+	Platforms       []providers.Options
+	Bot             BotConfig
+	Conversation    ConversationConfig
+	MySQL           MySQLConfig
 }
 ```
 
-Service configuration owns Pi plus business adapters conceptually:
-
-```go
-type Config struct {
-	Pi           pi.Config
-	Bot          BotConfig
-	Conversation ConversationConfig
-	MySQL        MySQLConfig
-}
-```
-
-The first migration preserves the existing `config.example.json` field layout
-and Configor environment behavior. Loading compatibility may use an
-intermediate decoding structure; callers are not forced to add a `pi` nesting
-level as part of this directory refactor.
+Pi does not define a second configuration object. `pi.Register` consumes the single
+`providers.Options` selected by the business layer. Configor keeps the existing
+flattened `config.example.json` layout and environment behavior.
 
 ## Dependency Rules
 
@@ -219,33 +204,32 @@ Required invariants:
 3. `pi/agent` does not import concrete tools, resource loading, persistence,
    transport, or application lifecycle.
 4. `pi/utils` does not import `pi/tools`.
-5. Conversation and MySQL concerns never enter `pi.Agent.Run`.
+5. Conversation and MySQL concerns never enter `pi/agent.Agent`.
 6. No Go source file exists under a directory named `internal` after the
    migration.
 
 ## Runtime Flow
 
 The service loads its configuration and constructs the application graph.
-That graph supplies the selected `pi.Config` and working root to Pi's default
-bootstrap. Pi creates the provider client, cost tracker, resource loader,
+That graph supplies the selected `providers.Options` and working root to Pi's
+default registration. Pi creates the provider client, cost tracker, resource loader,
 default tools, registry, scheduler, loop, and runtime.
 
 For a service request:
 
 1. `application` obtains the prompt and business conversation identifiers.
 2. `conversation` optionally loads prior messages from its `Store`.
-3. `pi.Agent` builds the current AGENTS/Skills context and runs the Agent loop.
+3. `pi/agent.Agent` builds the current AGENTS/Skills context and runs the Agent loop.
 4. Agent events flow to a `transport` reporter supplied by the service path.
 5. `conversation` persists the new messages and invocation metrics.
 
-Direct Pi callers use `pi.New`, `Run`, and `Close` without importing any
-service package. Pi itself remains stateless across Runs other than owned
-runtime resources and process supervision.
+Direct Pi callers compose `pi.Register` in their Fx App and consume the same
+`pi/agent.Runner` as the service. Pi itself remains stateless across Runs other
+than resources owned by the caller's Fx lifecycle.
 
-The service does not route Terminal or WeCom through the public
-`pi.Agent.Run` method. `pi/bootstrap.go` also provides the lower-level
-`pi/agent.Runner` inside the service Fx graph, allowing `application` and
-`conversation` to pass a Reporter without expanding the public facade.
+`pi/register.go` provides `pi/agent.Runner` inside the service Fx graph,
+allowing `application` and `conversation` to pass a Reporter without a second
+top-level Agent facade.
 
 ## Error and Lifecycle Behavior
 
@@ -267,22 +251,22 @@ The service does not route Terminal or WeCom through the public
 | --- | --- |
 | `ai/**` | `pi/ai/**` |
 | `agent/**` | `pi/agent/**` |
-| root `reagent.go`, `types.go`, `error*.go` | `pi/**` |
-| Pi portions of root `config*.go` | `pi/config*.go` |
+| reusable Agent runtime | `pi/agent/**` |
+| stable Pi errors | `pi/errors/**` |
 | business portions of root `config*.go` | `config/**` |
 | `internal/tools/**` | `pi/tools/**` and `pi/utils/**` |
 | `internal/workspace/**` | focused files in package `pi` |
 | `internal/observability/**` | `pi/observability/**` |
-| `internal/bootstrap/module.go` | `pi/bootstrap.go` |
+| `internal/bootstrap/module.go` | `pi/register.go` |
 | `internal/cli/app/**` | `application/**` |
 | `internal/cli/conversation/**` | `conversation/**` |
 | both MySQL subtrees | `persistence/mysql/**` |
 | `internal/cli/dispatch/**` | `transport/**` |
-| `internal/cli/module.go` | `application/bootstrap.go` |
+| `internal/cli/module.go` | `application/register.go` |
 | `internal/cli/config.go` | `config/**` and `application/prompt.go` |
 
-Module files that only aggregate Fx providers are folded into the appropriate
-`bootstrap.go`; forwarding packages are not retained.
+Files that only aggregate Fx providers use `register.go`; runtime startup and
+lifecycle use `runtime.go`. Forwarding packages are not retained.
 
 ## Verification
 

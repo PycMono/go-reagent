@@ -7,6 +7,12 @@ import (
 )
 
 func (config *Config) normalizeAndValidate() error {
+	if err := config.normalizeAndValidatePlatforms(); err != nil {
+		return err
+	}
+	if config.SnowflakeNodeID < 0 || config.SnowflakeNodeID > 1023 {
+		return errors.New("snowflake_node_id 必须在 0 到 1023 之间")
+	}
 	if err := config.Bot.normalizeAndValidate(); err != nil {
 		return err
 	}

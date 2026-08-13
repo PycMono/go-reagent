@@ -11,7 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/transport"
 )
@@ -52,12 +52,12 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 	}
 	ctx := context.Background()
 	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"a.txt"}`)}
-	reporter.Report(ctx, agent.NewThinkingEvent())
-	reporter.Report(ctx, agent.NewToolUpdateEvent(call, agent.ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}}))
-	reporter.Report(ctx, agent.NewToolEndEvent(call, agent.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
-	reporter.Report(ctx, agent.NewToolStartEvent(call))
-	reporter.Report(ctx, agent.NewToolEndEvent(call, agent.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []ai.ContentBlock{ai.TextBlock("permission denied")}, IsError: true}))
-	reporter.Report(ctx, agent.NewMessageEvent(ai.Message{
+	reporter.Report(ctx, pi.NewThinkingEvent())
+	reporter.Report(ctx, pi.NewToolUpdateEvent(call, ai.ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}}))
+	reporter.Report(ctx, pi.NewToolEndEvent(call, pi.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
+	reporter.Report(ctx, pi.NewToolStartEvent(call))
+	reporter.Report(ctx, pi.NewToolEndEvent(call, pi.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []ai.ContentBlock{ai.TextBlock("permission denied")}, IsError: true}))
+	reporter.Report(ctx, pi.NewMessageEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("done")},
 	}))
@@ -101,7 +101,7 @@ func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
 		{name: "tool", role: ai.RoleTool},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reporter.Report(context.Background(), agent.NewMessageEvent(ai.Message{
+			reporter.Report(context.Background(), pi.NewMessageEvent(ai.Message{
 				Role:    test.role,
 				Content: []ai.ContentBlock{ai.TextBlock("must not send")},
 			}))
@@ -129,13 +129,13 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
 	call := ai.ToolCall{ID: "call-1", Name: "read"}
-	reporter.Report(context.Background(), agent.NewToolEndEvent(call, agent.ToolResult{
+	reporter.Report(context.Background(), pi.NewToolEndEvent(call, pi.ToolResult{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		IsError:    true,
 	}))
-	reporter.Report(context.Background(), agent.NewMessageEvent(ai.Message{
+	reporter.Report(context.Background(), pi.NewMessageEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock(strings.Repeat("企", 2000))},
 	}))

@@ -82,10 +82,10 @@ API 地址始终属于同一平台配置。
 ```go
 type Config struct {
     CurrentPlatform string           `json:"currentPlatform"`
-    Platforms       []PlatformConfig `json:"platforms"`
+    Platforms       []Options `json:"platforms"`
 }
 
-type PlatformConfig struct {
+type Options struct {
     ID       string `json:"id"`
     Protocol string `json:"protocol"`
     BaseURL  string `json:"baseURL"`
@@ -98,7 +98,7 @@ type PlatformConfig struct {
 
 ```go
 func Load(path string) (*Config, error)
-func (c *Config) Current() (PlatformConfig, error)
+func (c *Config) Current() (Options, error)
 ```
 
 ### `internal/provider`

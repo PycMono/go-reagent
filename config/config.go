@@ -1,15 +1,17 @@
 package config
 
-import "github.com/PycMono/go-reagent/pi"
+import "github.com/PycMono/go-reagent/pi/ai/providers"
 
 const DefaultHistoryMessageLimit = 100
 
 // Config is the go-reagent business-service configuration.
 type Config struct {
-	Pi           pi.Config
-	Bot          BotConfig
-	Conversation ConversationConfig
-	MySQL        MySQLConfig
+	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
+	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
+	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
+	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
+	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
+	SnowflakeNodeID int                 `json:"snowflake_node_id" yaml:"snowflake_node_id" toml:"snowflake_node_id"`
 }
 
 type ConversationConfig struct {

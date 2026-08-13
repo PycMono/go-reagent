@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
-	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
@@ -43,19 +43,19 @@ func NewWeComReporter(webhookURL string, client *http.Client) (*WeComReporter, e
 	return &WeComReporter{webhookURL: webhookURL, client: client}, nil
 }
 
-func (r *WeComReporter) Report(ctx context.Context, event agent.AgentEvent) {
+func (r *WeComReporter) Report(ctx context.Context, event pi.AgentEvent) {
 	switch event.Type {
-	case agent.AgentEventToolStart:
+	case pi.AgentEventToolStart:
 		if event.Tool == nil {
 			return
 		}
 		r.send(ctx, fmt.Sprintf("🛠️ **正在执行工具**：`%s`\n参数：`%s`", event.Tool.Call.Name, event.Tool.Call.Arguments))
-	case agent.AgentEventToolEnd:
+	case pi.AgentEventToolEnd:
 		if event.Tool == nil || event.Tool.Result == nil || !event.Tool.Result.IsError {
 			return
 		}
 		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", event.Tool.Call.Name, eventText(event.Tool.Result.Content)))
-	case agent.AgentEventMessage:
+	case pi.AgentEventMessage:
 		if event.Message == nil || event.Message.Role != ai.RoleAssistant {
 			return
 		}
@@ -136,5 +136,3 @@ func eventText(content []ai.ContentBlock) string {
 	}
 	return text
 }
-
-var _ agent.Reporter = (*WeComReporter)(nil)

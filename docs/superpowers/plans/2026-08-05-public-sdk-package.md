@@ -1,5 +1,10 @@
 # Public SDK Package Implementation Plan
 
+> Historical implementation plan, superseded by
+> `2026-08-05-pi-service-migration.md`. References below to a module-root
+> `reagent.Agent`, `reagent.New`, private `buildAgent`, and `Agent.Close` record
+> an abandoned design and are not current APIs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reorganize go-reagent into the public `ai -> agent -> reagent` package stack, while keeping workspace policy, default tools, persistence, MySQL, dispatch, and CLI lifecycle private.
@@ -30,7 +35,7 @@ The implementation locks in these ownership boundaries before task work begins:
 | Path | Responsibility |
 | --- | --- |
 | `ai/content.go`, `ai/message.go` | Public message, content, tool-call, and tool-definition wire types |
-| `ai/model.go` | `Protocol` string enum and `PlatformConfig` |
+| `ai/model.go` | `Protocol` string enum and `Options` |
 | `ai/client.go`, `ai/errors.go` | Unified model client and generation-error sentinel/wrapper |
 | `ai/providers/factory.go` | Protocol selection without creating a Go parent/subpackage import cycle |
 | `ai/providers/openai/*`, `ai/providers/anthropic/*` | Official SDK adapters and conversions |
@@ -163,7 +168,7 @@ git commit -m "refactor: separate command entry points"
 
 **Interfaces:**
 - Consumes: current JSON field names and the current `TextBlock`/`TextContent` behavior.
-- Produces: `ai.Role`, `ai.ContentType`, `ai.ContentBlock`, `ai.Message`, `ai.ToolCall`, `ai.ToolDefinition`, `ai.Protocol`, `ai.PlatformConfig`, `ai.Client`, `ai.ErrGeneration`, and `ai.WrapGeneration`.
+- Produces: `ai.Role`, `ai.ContentType`, `ai.ContentBlock`, `ai.Message`, `ai.ToolCall`, `ai.ToolDefinition`, `providers.Protocol`, `providers.Options`, `ai.Provider`, `pierrors.ErrGeneration`, and `pierrors.WrapGeneration`.
 
 - [ ] **Step 1: Add a failing public AI contract test**
 
@@ -194,8 +199,8 @@ func TestMessageRoundTripPreservesToolArguments(t *testing.T) {
 }
 
 func TestProtocolValuesAreStable(t *testing.T) {
-	if ai.ProtocolOpenAI != "openai" || ai.ProtocolAnthropic != "anthropic" {
-		t.Fatalf("protocols = %q, %q", ai.ProtocolOpenAI, ai.ProtocolAnthropic)
+	if providers.ProtocolOpenAI != "openai" || providers.ProtocolAnthropic != "anthropic" {
+		t.Fatalf("protocols = %q, %q", providers.ProtocolOpenAI, providers.ProtocolAnthropic)
 	}
 }
 ```
@@ -218,7 +223,7 @@ const (
 	ProtocolAnthropic Protocol = "anthropic"
 )
 
-type PlatformConfig struct {
+type Options struct {
 	ID       string   `json:"id" yaml:"id" toml:"id"`
 	Protocol Protocol `json:"protocol" yaml:"protocol" toml:"protocol"`
 	BaseURL  string   `json:"baseURL" yaml:"baseURL" toml:"baseURL"`
@@ -284,7 +289,7 @@ schema.ToolDefinition -> ai.ToolDefinition
 
 Update `internal/schema/run.go` and `internal/schema/event.go` to import `ai`, so no duplicate message type remains. Move and rewrite the existing message/content tests into `ai/message_test.go`.
 
-Also remove `PlatformConfig` and protocol constants from `internal/config`: `Config.Platforms` becomes `[]ai.PlatformConfig`, `Current` returns `ai.PlatformConfig`, and validation compares `platform.Protocol` with `ai.ProtocolOpenAI`/`ai.ProtocolAnthropic`. Do not create aliases in the old config package.
+Also remove `Options` and protocol constants from `internal/config`: `Config.Platforms` becomes `[]providers.Options`, `Current` returns `providers.Options`, and validation compares `platform.Protocol` with `providers.ProtocolOpenAI`/`providers.ProtocolAnthropic`. Do not create aliases in the old config package.
 
 - [ ] **Step 7: Remove old message files and verify**
 
@@ -322,8 +327,8 @@ git commit -m "refactor: publish ai message contracts"
 - Modify: `internal/register.go`
 
 **Interfaces:**
-- Consumes: `ai.Client`, `ai.PlatformConfig`, `ai.ProtocolOpenAI`, `ai.ProtocolAnthropic`, and both current official SDKs.
-- Produces: `providers.New(ai.PlatformConfig) (ai.Client, error)`, `openai.New(ai.PlatformConfig) ai.Client`, and `anthropic.New(ai.PlatformConfig) ai.Client`.
+- Consumes: `ai.Provider`, `providers.Options`, `providers.ProtocolOpenAI`, `providers.ProtocolAnthropic`, and both current official SDKs.
+- Produces: `providers.New(providers.Options) (ai.Provider, error)`, `providers.NewOpenAi(providers.Options) ai.Provider`, and `providers.NewAnthropic(providers.Options) ai.Provider`.
 
 - [ ] **Step 1: Write the failing protocol-selection test**
 
@@ -338,8 +343,8 @@ import (
 )
 
 func TestNewSelectsSupportedProtocol(t *testing.T) {
-	base := ai.PlatformConfig{ID: "test", BaseURL: "https://example.com/", APIKey: "key", Model: "model"}
-	for _, protocol := range []ai.Protocol{ai.ProtocolOpenAI, ai.ProtocolAnthropic} {
+	base := providers.Options{ID: "test", BaseURL: "https://example.com/", APIKey: "key", Model: "model"}
+	for _, protocol := range []providers.Protocol{providers.ProtocolOpenAI, providers.ProtocolAnthropic} {
 		config := base
 		config.Protocol = protocol
 		client, err := providers.New(config)
@@ -359,7 +364,7 @@ Expected: FAIL because `ai/providers` does not exist.
 Use `package openai`, import the official SDK as `openaisdk`, replace schema types with `ai` types, rename `OpenAIProvider` to `Client`, and expose:
 
 ```go
-func New(config ai.PlatformConfig) ai.Client {
+func NewOpenAi(config providers.Options) ai.Provider {
 	return &Client{
 		client: openaisdk.NewClient(
 			option.WithAPIKey(config.APIKey),
@@ -371,14 +376,14 @@ func New(config ai.PlatformConfig) ai.Client {
 }
 ```
 
-Wrap message conversion, tool conversion, empty choices, and official request failures with `ai.WrapGeneration("openai generate", err)`. Preserve the official SDK error as the innermost cause.
+Wrap message conversion, tool conversion, empty choices, and official request failures with `pierrors.WrapGeneration("openai generate", err)`. Preserve the official SDK error as the innermost cause.
 
 - [ ] **Step 4: Move the Anthropic adapter and split conversion helpers**
 
 Use `package anthropic`, import the official SDK as `anthropicsdk`, replace schema types with `ai` types, rename `ClaudeProvider` to `Client`, and expose:
 
 ```go
-func New(config ai.PlatformConfig) ai.Client {
+func NewAnthropic(config providers.Options) ai.Provider {
 	return &Client{
 		client: anthropicsdk.NewClient(
 			option.WithAPIKey(config.APIKey),
@@ -390,20 +395,20 @@ func New(config ai.PlatformConfig) ai.Client {
 }
 ```
 
-Keep `MaxTokens: 4096`, tool-result conversion, and raw tool arguments unchanged; wrap failures with `ai.WrapGeneration("anthropic generate", err)`.
+Keep `MaxTokens: 4096`, tool-result conversion, and raw tool arguments unchanged; wrap failures with `pierrors.WrapGeneration("anthropic generate", err)`.
 
 - [ ] **Step 5: Implement validation and protocol selection**
 
 ```go
-func New(config ai.PlatformConfig) (ai.Client, error) {
+func New(config providers.Options) (ai.Provider, error) {
 	if strings.TrimSpace(config.APIKey) == "" { return nil, errors.New("apiKey 不能为空") }
 	if strings.TrimSpace(config.Model) == "" { return nil, errors.New("model 不能为空") }
 	if strings.TrimSpace(config.BaseURL) == "" { return nil, errors.New("baseURL 不能为空") }
 	switch config.Protocol {
-	case ai.ProtocolOpenAI:
-		return openai.New(config), nil
-	case ai.ProtocolAnthropic:
-		return anthropic.New(config), nil
+	case providers.ProtocolOpenAI:
+		return NewOpenAi(config), nil
+	case providers.ProtocolAnthropic:
+		return NewAnthropic(config), nil
 	default:
 		return nil, fmt.Errorf("不支持的 Provider protocol %q，可选值: openai, anthropic", config.Protocol)
 	}
@@ -412,17 +417,17 @@ func New(config ai.PlatformConfig) (ai.Client, error) {
 
 - [ ] **Step 6: Verify adapters without network access**
 
-Before running tests, change the transitional engine constructor from `provider.LLMProvider` to `ai.Client`, and replace `provider.Register` in `internal.Register` with this private constructor:
+Before running tests, change the transitional engine constructor from `provider.LLMProvider` to `ai.Provider`, and replace `provider.Register` in `internal.Register` with this private constructor:
 
 ```go
-func newAIClient(config *config.Config) (ai.Client, error) {
+func newAIProvider(config *config.Config) (ai.Provider, error) {
 	platform, err := config.Current()
 	if err != nil { return nil, err }
 	return providers.New(platform)
 }
 ```
 
-Register it with `fx.Provide(newAIClient)`. This constructor disappears when `internal/bootstrap.Module` takes ownership in Task 8; it is not a public compatibility layer.
+Register it with `fx.Provide(newAIProvider)`. This constructor disappears when `internal/bootstrap.Module` takes ownership in Task 8; it is not a public compatibility layer.
 
 Run: `go test ./ai/...`
 
@@ -633,7 +638,7 @@ git commit -m "refactor: publish agent tool and run contracts"
 - Move later in Task 9: `internal/engine/terminal_reporter.go` and its test
 
 **Interfaces:**
-- Consumes: `ai.Client`, `agent.ContextFactory`, `agent.Registry`, `agent.Reporter`.
+- Consumes: `ai.Provider`, `agent.ContextFactory`, `agent.Registry`, `agent.Reporter`.
 - Produces: `agent.Scheduler`, `NewScheduler`, `agent.Loop`, `NewLoop`, `agent.Agent`, `agent.Runner`, and `New`.
 
 - [ ] **Step 1: Add failing concurrent isolation and partial-result tests**
@@ -678,13 +683,13 @@ Keep consecutive parallel-safe waves, exclusive barriers, result ordering, and t
 - [ ] **Step 4: Move and rename the loop**
 
 ```text
-provider.LLMProvider -> ai.Client
+provider.LLMProvider -> ai.Provider
 engine.AgentLoop     -> agent.Loop
 engine.NewAgentLoop  -> agent.NewLoop
 context.RunContext   -> agent.RunContext
 ```
 
-Keep the thinking request tool-free; wrap every client failure with `ai.WrapGeneration("thinking", err)` or `ai.WrapGeneration("action", err)`. Wrap only non-cancellation scheduler infrastructure failures with `ErrToolRuntime`; ordinary tool errors remain messages.
+Keep the thinking request tool-free; wrap every client failure with `pierrors.WrapGeneration("thinking", err)` or `pierrors.WrapGeneration("action", err)`. Wrap only non-cancellation scheduler infrastructure failures with `ErrToolRuntime`; ordinary tool errors remain messages.
 
 - [ ] **Step 5: Implement the reusable Agent facade**
 
@@ -830,7 +835,7 @@ git commit -m "refactor: isolate workspace product policy"
 - Modify: `internal/register.go`
 
 **Interfaces:**
-- Consumes: Configor, all existing config field tags/defaults/validation, and `ai.PlatformConfig`/`ai.Protocol`.
+- Consumes: Configor, all existing config field tags/defaults/validation, and `providers.Options`/`providers.Protocol`.
 - Produces: `reagent.Config`, nested CLI configuration types, `LoadConfig`, `Current`, root aliases/helpers, `ErrorCode`, `Error`, `ErrClosed`, and `ErrorCodeOf`.
 
 - [ ] **Step 1: Add failing external config and error tests**
@@ -841,8 +846,8 @@ package reagent_test
 func TestLoadConfigUsesConfigorAndStableErrors(t *testing.T) {
 	path := writeConfig(t, `{"currentPlatform":"missing","platforms":[]}`)
 	_, err := reagent.LoadConfig(path)
-	if reagent.ErrorCodeOf(err) != reagent.ErrorCodeConfigInvalid {
-		t.Fatalf("code = %q, error = %v", reagent.ErrorCodeOf(err), err)
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeConfigInvalid {
+		t.Fatalf("code = %q, error = %v", pierrors.ErrorCodeOf(err), err)
 	}
 	var sdkErr *reagent.Error
 	if !errors.As(err, &sdkErr) { t.Fatalf("error type = %T", err) }
@@ -864,18 +869,16 @@ Expected: FAIL with undefined `LoadConfig`, `ErrorCodeOf`, or `UserMessage`.
 
 - [ ] **Step 3: Move Config and use the AI protocol enum**
 
-Define:
+Use the provider configuration types directly:
 
 ```go
-type PlatformConfig = ai.PlatformConfig
-type Protocol = ai.Protocol
-const (
-	ProtocolOpenAI = ai.ProtocolOpenAI
-	ProtocolAnthropic = ai.ProtocolAnthropic
-)
+type Config struct {
+	CurrentPlatform string
+	Platforms       []providers.Options
+}
 ```
 
-`Config.Platforms` remains `[]PlatformConfig`, and `Current() (PlatformConfig, error)` remains source-compatible for normal callers. Replace string comparisons with the enum constants; retain all Configor tags and normalization.
+`Current()` returns `providers.Options`. Do not add root aliases for provider configuration. Replace string comparisons with the enum constants; retain all Configor tags and normalization.
 
 Keep `DefaultHistoryMessageLimit = 100` and every existing nested `BotConfig`, `WeComConfig`, `ConversationConfig`, and `MySQLConfig` field/tag unchanged.
 
@@ -950,10 +953,10 @@ func classify(op string, err error) error {
 	case errors.Is(err, context.Canceled): return wrap(ErrorCodeCanceled, op, err)
 	case errors.Is(err, context.DeadlineExceeded): return wrap(ErrorCodeDeadlineExceeded, op, err)
 	case errors.Is(err, ErrClosed): return wrap(ErrorCodeClosed, op, err)
-	case errors.Is(err, agent.ErrRequestInvalid): return wrap(ErrorCodeRequestInvalid, op, err)
+	case errors.Is(err, pierrors.ErrRequestInvalid): return wrap(ErrorCodeRequestInvalid, op, err)
 	case errors.Is(err, workspace.ErrInvalid): return wrap(ErrorCodeWorkspaceInvalid, op, err)
-	case errors.Is(err, ai.ErrGeneration): return wrap(ErrorCodeAIGeneration, op, err)
-	case errors.Is(err, agent.ErrToolRuntime): return wrap(ErrorCodeToolRuntime, op, err)
+	case errors.Is(err, pierrors.ErrGeneration): return wrap(ErrorCodeAIGeneration, op, err)
+	case errors.Is(err, pierrors.ErrToolRuntime): return wrap(ErrorCodeToolRuntime, op, err)
 	default: return wrap(ErrorCodeInternal, op, err)
 	}
 }
@@ -979,11 +982,11 @@ Alias role constants too; do not alias Client, Tool, Registry, Reporter, or Stor
 
 - [ ] **Step 8: Verify every existing configuration format**
 
-First rewrite the transitional `internal/config/register.go` to import the root package and provide `*reagent.Config`, `ai.PlatformConfig`, `workspace.WorkDir`, and its existing `Prompt`:
+First rewrite the transitional `internal/config/register.go` to import the root package and provide `*reagent.Config`, `providers.Options`, `workspace.WorkDir`, and its existing `Prompt`:
 
 ```go
 func NewConfig() (*reagent.Config, error) { return reagent.LoadConfig(configurationPath()) }
-func NewPlatform(config *reagent.Config) (ai.PlatformConfig, error) { return config.Current() }
+func NewPlatform(config *reagent.Config) (providers.Options, error) { return config.Current() }
 ```
 
 This file moves unchanged in responsibility to `internal/cli/config.go` in Task 9.
@@ -1013,7 +1016,7 @@ git commit -m "feat: expose public sdk configuration and errors"
 - Modify: `internal/register.go`
 
 **Interfaces:**
-- Consumes: one validated `ai.PlatformConfig`, `workspace.WorkDir`, `providers.New`, `workspace.Module`, concrete `tools.Module`, and public `agent` constructors.
+- Consumes: one validated `providers.Options`, `workspace.WorkDir`, `providers.New`, `workspace.Module`, concrete `tools.Module`, and public `agent` constructors.
 - Produces: private `bootstrap.Module`; public `New(*Config)`, concurrency-safe `Agent.Run`, and idempotent `Agent.Close`.
 
 - [ ] **Step 1: Add a failing external root lifecycle test**
@@ -1021,13 +1024,13 @@ git commit -m "feat: expose public sdk configuration and errors"
 ```go
 func TestNewRejectsNilConfigAndCloseIsIdempotent(t *testing.T) {
 	_, err := reagent.New(nil)
-	if reagent.ErrorCodeOf(err) != reagent.ErrorCodeConfigInvalid { t.Fatalf("error = %v", err) }
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeConfigInvalid { t.Fatalf("error = %v", err) }
 
 	agent := newHTTPBackedAgent(t)
 	if err := agent.Close(context.Background()); err != nil { t.Fatal(err) }
 	if err := agent.Close(context.Background()); err != nil { t.Fatal(err) }
 	_, err = agent.Run(context.Background(), reagent.RunRequest{Input: reagent.UserMessage("after close")})
-	if !errors.Is(err, reagent.ErrClosed) || reagent.ErrorCodeOf(err) != reagent.ErrorCodeClosed {
+	if !errors.Is(err, pierrors.ErrClosed) || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeClosed {
 		t.Fatalf("Run after Close error = %v", err)
 	}
 }
@@ -1053,7 +1056,7 @@ type registryParams struct {
 	Tools []agent.Tool `group:"agent_tools"`
 }
 
-func newClient(config ai.PlatformConfig) (ai.Client, error) { return providers.New(config) }
+func newProvider(config providers.Options) (ai.Provider, error) { return providers.New(config) }
 func newRegistry(params registryParams) (agent.Registry, error) {
 	return agent.NewRegistry(agent.RegistryOptions{
 		Tools: params.Tools,
@@ -1061,8 +1064,8 @@ func newRegistry(params registryParams) (agent.Registry, error) {
 	})
 }
 func newScheduler(registry agent.Registry) *agent.Scheduler { return agent.NewScheduler(registry, 4) }
-func newLoop(client ai.Client, scheduler *agent.Scheduler) *agent.Loop {
-	return agent.NewLoop(client, scheduler, true)
+func newLoop(provider ai.Provider, scheduler *agent.Scheduler) *agent.Loop {
+	return agent.NewLoop(provider, scheduler, true)
 }
 
 var Module = fx.Options(
@@ -1080,7 +1083,7 @@ var Module = fx.Options(
 
 - [ ] **Step 5: Defensively clone configuration before bootstrap**
 
-Implement `cloneConfig` by value-copying Config, cloning `Platforms`, then calling `normalizeAndValidate` on the clone. Supply only its selected `ai.PlatformConfig` to Fx. Caller mutation after `New` must not alter the selected client.
+Implement `cloneConfig` by value-copying Config, cloning `Platforms`, then calling `normalizeAndValidate` on the clone. Supply only its selected `providers.Options` to Fx. Caller mutation after `New` must not alter the selected client.
 
 ```go
 func New(input *Config) (*Agent, error) {
@@ -1154,7 +1157,7 @@ func (a *Agent) beginRun() bool {
 }
 ```
 
-`Run` rejects nil contexts as `request_invalid`, calls `beginRun`, defers `active.Done`, invokes `a.runtime.Run(ctx, request, nil)`, and classifies errors in this order: canceled, deadline, closed, `agent.ErrRequestInvalid`, `workspace.ErrInvalid`, `ai.ErrGeneration`, `agent.ErrToolRuntime`, internal. Preserve returned partial messages.
+`Run` rejects nil contexts as `request_invalid`, calls `beginRun`, defers `active.Done`, invokes `a.runtime.Run(ctx, request, nil)`, and classifies errors in this order: canceled, deadline, closed, `pierrors.ErrRequestInvalid`, `workspace.ErrInvalid`, `pierrors.ErrGeneration`, `pierrors.ErrToolRuntime`, internal. Preserve returned partial messages.
 
 ```go
 func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) {
@@ -1234,7 +1237,7 @@ git commit -m "feat: add default reagent sdk facade"
 - Delete: `internal/register.go`
 
 **Interfaces:**
-- Consumes: root `reagent.Config`/`LoadConfig`, `ai.PlatformConfig`, `agent.Runner`/Reporter/events, `workspace.WorkDir`, `bootstrap.Module`, and the unchanged persistence dependencies.
+- Consumes: root `reagent.Config`/`LoadConfig`, `providers.Options`, `agent.Runner`/Reporter/events, `workspace.WorkDir`, `bootstrap.Module`, and the unchanged persistence dependencies.
 - Produces: `cli.Module` plus private `app.Module`, `conversation.Module`, `driver/mysql.Module`, and `dispatch.Module` for the bundled command.
 
 - [ ] **Step 1: Move CLI tests to their final paths before implementations**
@@ -1264,7 +1267,7 @@ Expected: FAIL because `internal/cli` does not exist.
 type Prompt string
 
 func NewConfig() (*reagent.Config, error) { return reagent.LoadConfig(configurationPath()) }
-func NewPlatform(config *reagent.Config) (ai.PlatformConfig, error) { return config.Current() }
+func NewPlatform(config *reagent.Config) (providers.Options, error) { return config.Current() }
 func NewWorkDir() (workspace.WorkDir, error) {
 	path, err := os.Getwd()
 	if err != nil { return "", fmt.Errorf("获取工作区失败: %w", err) }
@@ -1390,7 +1393,7 @@ Ensure `agent.Run` clones before validation/context creation; workspace clones C
 Block the action response server until the request context is canceled. Assert:
 
 ```go
-if !errors.Is(err, context.Canceled) || reagent.ErrorCodeOf(err) != reagent.ErrorCodeCanceled {
+if !errors.Is(err, context.Canceled) || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeCanceled {
 	t.Fatalf("canceled error = %v", err)
 }
 ```
@@ -1399,7 +1402,7 @@ Repeat with `context.WithTimeout` and assert `deadline_exceeded`. Start another 
 
 - [ ] **Step 5: Add official-SDK unwrap and partial-result tests**
 
-Make the server first return an assistant `read` tool call for `AGENTS.md`, allow that tool result to complete, then return an HTTP 500 OpenAI error JSON response on the next action request. Assert `ErrorCodeAIGeneration`, a non-empty ordered partial result, `errors.Is(err, ai.ErrGeneration)`, and `errors.As(err, new(*openai.Error))`. The root error must not map provider-specific status/error codes.
+Make the server first return an assistant `read` tool call for `AGENTS.md`, allow that tool result to complete, then return an HTTP 500 OpenAI error JSON response on the next action request. Assert `ErrorCodeAIGeneration`, a non-empty ordered partial result, `errors.Is(err, pierrors.ErrGeneration)`, and `errors.As(err, new(*openai.Error))`. The root error must not map provider-specific status/error codes.
 
 - [ ] **Step 6: Add Close admission and deadline tests**
 
@@ -1546,7 +1549,7 @@ Document synchronous Run, per-run workspace rediscovery, concurrent Agent use, p
 
 - [ ] **Step 3: Update persistence documentation without changing behavior**
 
-Show the CLI-only flow `LoadOrCreate -> agent.Run -> AppendTurn`, retain migration names and environment variables, and state that business SDK callers can implement the same transaction policy outside the SDK.
+Show the CLI-only flow `Find Conversation -> List Messages -> agent.Run -> AppendTurn`, retain migration names and environment variables, and state that business SDK callers can implement the same transaction policy outside the SDK.
 
 - [ ] **Step 4: Run formatting and focused API checks**
 
