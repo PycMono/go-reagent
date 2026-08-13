@@ -1,4 +1,4 @@
-package mysql
+package conversation
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestConversationMigrationDefinesRequiredSchema(t *testing.T) {
-	content, err := os.ReadFile("../../migrations/0001_conversation_persistence.up.sql")
+	content, err := os.ReadFile("../../../migrations/0001_conversation_persistence.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestConversationMigrationDefinesRequiredSchema(t *testing.T) {
 }
 
 func TestModelInvocationMigrationDefinesRequiredSchema(t *testing.T) {
-	content, err := os.ReadFile("../../migrations/0002_model_invocation_observability.up.sql")
+	content, err := os.ReadFile("../../../migrations/0002_model_invocation_observability.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestModelInvocationMigrationDefinesRequiredSchema(t *testing.T) {
 		}
 	}
 
-	down, err := os.ReadFile("../../migrations/0002_model_invocation_observability.down.sql")
+	down, err := os.ReadFile("../../../migrations/0002_model_invocation_observability.down.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

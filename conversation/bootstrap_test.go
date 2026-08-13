@@ -9,6 +9,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/infrastructure/driver/mysql"
+	conversationpersistence "github.com/PycMono/go-reagent/infrastructure/persistence/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
@@ -24,11 +25,9 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	)
 	app := fxtest.New(t,
 		fx.Supply(cfg),
-		fx.Provide(
-			func() agent.Runner { return &registeredRuntimeFake{} },
-			func() conversationrepo.Store { return &registeredStoreFake{} },
-		),
+		fx.Provide(func() agent.Runner { return &registeredRuntimeFake{} }),
 		mysql.Module,
+		conversationpersistence.Module,
 		conversation.Module,
 		fx.Populate(&connection, &store, &runner),
 	)

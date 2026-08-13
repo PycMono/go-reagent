@@ -3,7 +3,8 @@ package application
 import (
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
-	persistencemysql "github.com/PycMono/go-reagent/persistence/mysql"
+	"github.com/PycMono/go-reagent/infrastructure/driver/mysql"
+	conversationpersistence "github.com/PycMono/go-reagent/infrastructure/persistence/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/transport"
 	"go.uber.org/fx"
@@ -12,7 +13,8 @@ import (
 // Module is the complete go-reagent business-service graph.
 var Module = fx.Options(
 	pi.Module,
-	persistencemysql.Module,
+	mysql.Module,
+	conversationpersistence.Module,
 	conversation.Module,
 	transport.Module,
 	fx.Provide(

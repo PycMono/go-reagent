@@ -1,4 +1,4 @@
-package mysql
+package conversation
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/PycMono/go-reagent/conversation"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
@@ -66,7 +66,7 @@ func TestMessageCodecRejectsCorruptRows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := decodeMessage(tt.row)
-			if !errors.Is(err, conversation.ErrCorruptMessage) {
+			if !errors.Is(err, commonerrors.ErrConversationCorruptMessage) {
 				t.Fatalf("decodeMessage() error = %v, want ErrCorruptMessage", err)
 			}
 		})

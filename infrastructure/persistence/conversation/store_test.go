@@ -1,4 +1,4 @@
-package mysql
+package conversation
 
 import (
 	"context"
@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/PycMono/go-reagent/conversation"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	gormmysql "gorm.io/driver/mysql"
@@ -32,7 +33,7 @@ func TestStoreLoadOrCreateLoadsOwnedHistory(t *testing.T) {
 			AddRow(1, 7, 1, 0, "run-1", "user", `{"role":"user","content":[{"type":"text","text":"question"}]}`, now))
 
 	store := NewStore(provider, provider)
-	snapshot, err := store.LoadOrCreate(context.Background(), conversation.Key{
+	snapshot, err := store.LoadOrCreate(context.Background(), conversationentity.Key{
 		UserID: "user-1", ConversationID: "conversation-1",
 	}, 100)
 	if err != nil {
@@ -65,7 +66,7 @@ func TestStoreAppendTurnCommitsMessagesAndVersion(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 2))
 	mock.ExpectCommit()
 
-	err := NewStore(provider, provider).AppendTurn(context.Background(), conversation.AppendRequest{
+	err := NewStore(provider, provider).AppendTurn(context.Background(), conversationentity.AppendRequest{
 		ConversationPK:  11,
 		ExpectedVersion: 7,
 		RunID:           "run-8",
@@ -137,16 +138,16 @@ func TestStoreAppendTurnRejectsInvalidInvocationsBeforeTransaction(t *testing.T)
 	tests := []struct {
 		name   string
 		want   string
-		mutate func(*conversation.AppendRequest)
+		mutate func(*conversationentity.AppendRequest)
 	}{
-		{name: "descending sequence", want: "sequence", mutate: func(r *conversation.AppendRequest) {
+		{name: "descending sequence", want: "sequence", mutate: func(r *conversationentity.AppendRequest) {
 			r.Invocations[0].Sequence = 2
 			r.Invocations[1].Sequence = 1
 		}},
-		{name: "duplicate sequence", want: "sequence", mutate: func(r *conversation.AppendRequest) {
+		{name: "duplicate sequence", want: "sequence", mutate: func(r *conversationentity.AppendRequest) {
 			r.Invocations[1].Sequence = r.Invocations[0].Sequence
 		}},
-		{name: "malformed usage", want: "input tokens", mutate: func(r *conversation.AppendRequest) {
+		{name: "malformed usage", want: "input tokens", mutate: func(r *conversationentity.AppendRequest) {
 			r.Invocations[1].Usage.InputTokens = -1
 		}},
 	}
@@ -174,7 +175,7 @@ func TestStoreAppendTurnReturnsConflictAndRollsBack(t *testing.T) {
 	mock.ExpectRollback()
 
 	err := NewStore(provider, provider).AppendTurn(context.Background(), validAppendRequest())
-	if !errors.Is(err, conversation.ErrConflict) {
+	if !errors.Is(err, commonerrors.ErrConversationConflict) {
 		t.Fatalf("AppendTurn() error = %v, want ErrConflict", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -227,12 +228,12 @@ func TestStoreAppendTurnRejectsInvalidRequestBeforeTransaction(t *testing.T) {
 	defer cleanup()
 	tests := []struct {
 		name   string
-		mutate func(*conversation.AppendRequest)
+		mutate func(*conversationentity.AppendRequest)
 	}{
-		{name: "zero conversation primary key", mutate: func(r *conversation.AppendRequest) { r.ConversationPK = 0 }},
-		{name: "empty messages", mutate: func(r *conversation.AppendRequest) { r.Messages = nil }},
-		{name: "unknown role", mutate: func(r *conversation.AppendRequest) { r.Messages[1].Role = ai.RoleSystem }},
-		{name: "invalid JSON", mutate: func(r *conversation.AppendRequest) {
+		{name: "zero conversation primary key", mutate: func(r *conversationentity.AppendRequest) { r.ConversationPK = 0 }},
+		{name: "empty messages", mutate: func(r *conversationentity.AppendRequest) { r.Messages = nil }},
+		{name: "unknown role", mutate: func(r *conversationentity.AppendRequest) { r.Messages[1].Role = ai.RoleSystem }},
+		{name: "invalid JSON", mutate: func(r *conversationentity.AppendRequest) {
 			r.Messages[1].ToolCalls = []ai.ToolCall{{ID: "call", Name: "read", Arguments: []byte(`{"path":`)}}
 		}},
 	}
@@ -274,7 +275,7 @@ func TestStoreLoadOrCreateCreatesMissingConversation(t *testing.T) {
 		WithArgs("user", "conversation", 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(9, 1))
 
-	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversation.Key{
+	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversationentity.Key{
 		UserID: "user", ConversationID: "conversation",
 	}, 100)
 	if err != nil {
@@ -301,7 +302,7 @@ func TestStoreLoadOrCreateAcceptsConcurrentCreateWinner(t *testing.T) {
 	)
 	expectMessages(mock, 12).WillReturnRows(sqlmock.NewRows(messageColumns))
 
-	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversation.Key{
+	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversationentity.Key{
 		UserID: "user", ConversationID: "conversation",
 	}, 100)
 	if err != nil {
@@ -326,7 +327,7 @@ func TestStoreLoadOrCreateJoinsCreateAndReloadErrors(t *testing.T) {
 		WillReturnError(createErr)
 	expectOwnedConversation(mock, "user", "conversation").WillReturnError(reloadErr)
 
-	_, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversation.Key{
+	_, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversationentity.Key{
 		UserID: "user", ConversationID: "conversation",
 	}, 100)
 	if !errors.Is(err, createErr) || !errors.Is(err, reloadErr) {
@@ -350,7 +351,7 @@ func TestStoreLoadOrCreateScopesSameConversationIDByUser(t *testing.T) {
 	}
 	store := NewStore(provider, provider)
 	for _, userID := range []string{"user-1", "user-2"} {
-		if _, err := store.LoadOrCreate(context.Background(), conversation.Key{UserID: userID, ConversationID: "shared"}, 100); err != nil {
+		if _, err := store.LoadOrCreate(context.Background(), conversationentity.Key{UserID: userID, ConversationID: "shared"}, 100); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -372,7 +373,7 @@ func TestStoreLoadWindowDropsIncompleteOldestTurn(t *testing.T) {
 		AddRow(2, 7, 1, 1, "run-1", "assistant", messageJSON("assistant", "old answer"), now).
 		AddRow(1, 7, 1, 0, "run-1", "user", messageJSON("user", "old question"), now))
 
-	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversation.Key{
+	snapshot, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversationentity.Key{
 		UserID: "user", ConversationID: "conversation",
 	}, 3)
 	if err != nil {
@@ -409,10 +410,10 @@ func TestStoreLoadWindowRejectsCorruptMessage(t *testing.T) {
 			expectMessages(mock, 7).WillReturnRows(sqlmock.NewRows(messageColumns).
 				AddRow(1, 7, 1, 0, "run", tt.role, tt.payload, now))
 
-			_, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversation.Key{
+			_, err := NewStore(provider, provider).LoadOrCreate(context.Background(), conversationentity.Key{
 				UserID: "user", ConversationID: "conversation",
 			}, 100)
-			if !errors.Is(err, conversation.ErrCorruptMessage) {
+			if !errors.Is(err, commonerrors.ErrConversationCorruptMessage) {
 				t.Fatalf("LoadOrCreate() error = %v", err)
 			}
 			if strings.Contains(err.Error(), "secret input") {
@@ -431,13 +432,13 @@ func TestStoreLoadOrCreateValidatesBeforeSQL(t *testing.T) {
 	tests := []struct {
 		name  string
 		ctx   context.Context
-		key   conversation.Key
+		key   conversationentity.Key
 		limit int
 	}{
-		{name: "nil context", key: conversation.Key{UserID: "user", ConversationID: "conversation"}, limit: 1},
-		{name: "empty user", ctx: context.Background(), key: conversation.Key{ConversationID: "conversation"}, limit: 1},
-		{name: "empty conversation", ctx: context.Background(), key: conversation.Key{UserID: "user"}, limit: 1},
-		{name: "invalid limit", ctx: context.Background(), key: conversation.Key{UserID: "user", ConversationID: "conversation"}},
+		{name: "nil context", key: conversationentity.Key{UserID: "user", ConversationID: "conversation"}, limit: 1},
+		{name: "empty user", ctx: context.Background(), key: conversationentity.Key{ConversationID: "conversation"}, limit: 1},
+		{name: "empty conversation", ctx: context.Background(), key: conversationentity.Key{UserID: "user"}, limit: 1},
+		{name: "invalid limit", ctx: context.Background(), key: conversationentity.Key{UserID: "user", ConversationID: "conversation"}},
 	}
 	store := NewStore(provider, provider)
 	for _, tt := range tests {
@@ -510,8 +511,8 @@ func expectVersionUpdate(mock sqlmock.Sqlmock, conversationPK, version any) *sql
 		WithArgs(sqlmock.AnyArg(), conversationPK, version)
 }
 
-func validAppendRequest() conversation.AppendRequest {
-	return conversation.AppendRequest{
+func validAppendRequest() conversationentity.AppendRequest {
+	return conversationentity.AppendRequest{
 		ConversationPK:  11,
 		ExpectedVersion: 7,
 		RunID:           "run-8",
@@ -522,7 +523,7 @@ func validAppendRequest() conversation.AppendRequest {
 	}
 }
 
-func requestWithInvocations() conversation.AppendRequest {
+func requestWithInvocations() conversationentity.AppendRequest {
 	request := validAppendRequest()
 	thinking := validInvocation()
 	thinking.Sequence = 1
