@@ -28,8 +28,8 @@
 
 **Interfaces:**
 - Produces: `func Load(path string) (*Config, error)`
-- Produces: `func (c *Config) Current() (PlatformConfig, error)`
-- Produces: `type PlatformConfig struct { ID, Protocol, BaseURL, APIKey, Model string }`
+- Produces: `func (c *Config) Current() (Options, error)`
+- Produces: `type Options struct { ID, Protocol, BaseURL, APIKey, Model string }`
 
 - [ ] **Step 1: Write failing happy-path tests**
 
@@ -105,10 +105,10 @@ Implement:
 ```go
 type Config struct {
     CurrentPlatform string           `json:"currentPlatform"`
-    Platforms       []PlatformConfig `json:"platforms"`
+    Platforms       []Options `json:"platforms"`
 }
 
-type PlatformConfig struct {
+type Options struct {
     ID       string `json:"id"`
     Protocol string `json:"protocol"`
     BaseURL  string `json:"baseURL"`
@@ -117,7 +117,7 @@ type PlatformConfig struct {
 }
 
 func Load(path string) (*Config, error)
-func (c *Config) Current() (PlatformConfig, error)
+func (c *Config) Current() (Options, error)
 ```
 
 `Load` must open the exact path, call `json.Decoder.DisallowUnknownFields`, require the second decode to return `io.EOF`, trim all fields, lowercase protocols, validate unique IDs and required non-secret fields, normalize URLs to one trailing slash, verify `currentPlatform` exists, and require only the selected profile's API key. Errors must wrap the config path and never include key values.
@@ -143,7 +143,7 @@ Expected: PASS with package `github.com/PycMono/go-reagent/internal/config`.
 - Delete: `internal/provider/environment.go`
 
 **Interfaces:**
-- Consumes: normalized `config.PlatformConfig` fields through scalar options.
+- Consumes: normalized `config.Options` fields through scalar options.
 - Produces: `func New(options Options) (LLMProvider, error)`.
 - Preserves: `func (p *OpenAIProvider) Generate(...)` and `func (p *ClaudeProvider) Generate(...)`.
 
@@ -236,7 +236,7 @@ Expected: PASS. The `httptest` command may require loopback-port approval in the
 
 **Interfaces:**
 - Consumes: `config.Load`, `Config.Current`, and `provider.New(Options)`.
-- Produces: `func providerFromConfig(path string) (provider.LLMProvider, config.PlatformConfig, error)`.
+- Produces: `func providerFromConfig(path string) (provider.LLMProvider, config.Options, error)`.
 
 - [ ] **Step 1: Replace environment-constructor tests with failing config-bootstrap tests**
 
@@ -278,17 +278,17 @@ Expected: FAIL because `providerFromConfig` does not exist.
 Replace `providerFromEnvironment` with:
 
 ```go
-func providerFromConfig(path string) (provider.LLMProvider, config.PlatformConfig, error) {
+func providerFromConfig(path string) (provider.LLMProvider, config.Options, error) {
     cfg, err := config.Load(path)
-    if err != nil { return nil, config.PlatformConfig{}, err }
+    if err != nil { return nil, config.Options{}, err }
     platform, err := cfg.Current()
-    if err != nil { return nil, config.PlatformConfig{}, err }
+    if err != nil { return nil, config.Options{}, err }
     llmProvider, err := provider.New(provider.Options{
         Name: platform.ID, Protocol: platform.Protocol, BaseURL: platform.BaseURL,
         APIKey: platform.APIKey, Model: platform.Model,
     })
     if err != nil {
-        return nil, config.PlatformConfig{}, fmt.Errorf("初始化平台 %q: %w", platform.ID, err)
+        return nil, config.Options{}, fmt.Errorf("初始化平台 %q: %w", platform.ID, err)
     }
     return llmProvider, platform, nil
 }

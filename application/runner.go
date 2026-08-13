@@ -11,7 +11,7 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
-	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
 )
@@ -20,13 +20,13 @@ import (
 type Prompt string
 
 type AgentRunner struct {
-	runtime            agent.Runner
+	runtime            pi.Runner
 	conversationRunner conversation.Runner
 	persistenceEnabled bool
 	userID             string
 	conversationID     string
 	prompt             Prompt
-	reporter           agent.Reporter
+	reporter           pi.Reporter
 
 	mu       sync.Mutex
 	started  bool
@@ -37,11 +37,11 @@ type AgentRunner struct {
 
 // NewAgentRunner creates the one-shot application runner.
 func NewAgentRunner(
-	runtime agent.Runner,
+	runtime pi.Runner,
 	conversationRunner conversation.Runner,
 	cfg *config.Config,
 	prompt Prompt,
-	reporter agent.Reporter,
+	reporter pi.Reporter,
 ) (*AgentRunner, error) {
 	if runtime == nil {
 		return nil, errors.New("agent runner: runtime is required")
@@ -96,7 +96,7 @@ func (r *AgentRunner) Start(onComplete func(error)) error {
 				Input:          input,
 			}, r.reporter)
 		} else {
-			_, err = r.runtime.Run(ctx, agent.RunRequest{Input: input}, r.reporter)
+			_, err = r.runtime.Run(ctx, pi.RunRequest{Input: string(r.prompt)}, r.reporter)
 		}
 
 		r.mu.Lock()

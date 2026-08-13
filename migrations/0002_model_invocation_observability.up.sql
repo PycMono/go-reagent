@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS agent_model_invocations (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    conversation_pk BIGINT UNSIGNED NOT NULL,
+    id VARCHAR(32) NOT NULL,
+    conversation_id VARCHAR(32) NOT NULL,
     turn_version BIGINT UNSIGNED NOT NULL,
-    run_id VARCHAR(128) NULL,
+    run_id VARCHAR(128) NOT NULL DEFAULT '',
     sequence INT UNSIGNED NOT NULL,
     phase VARCHAR(16) NOT NULL,
     platform_id VARCHAR(128) NOT NULL,
@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS agent_model_invocations (
     latency_ms BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
-    UNIQUE KEY uq_agent_model_invocations_turn_sequence (conversation_pk, turn_version, sequence),
-    KEY idx_agent_model_invocations_conversation_time (conversation_pk, created_at),
-    CONSTRAINT fk_agent_model_invocations_conversation FOREIGN KEY (conversation_pk)
+    UNIQUE KEY uq_agent_model_invocations_turn_sequence (conversation_id, turn_version, sequence),
+    KEY idx_agent_model_invocations_conversation_time (conversation_id, created_at),
+    CONSTRAINT fk_agent_model_invocations_conversation FOREIGN KEY (conversation_id)
         REFERENCES agent_conversations (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

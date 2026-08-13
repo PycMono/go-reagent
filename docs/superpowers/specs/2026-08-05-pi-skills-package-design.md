@@ -45,10 +45,9 @@ pi/
 │   ├── xml_text.go
 │   ├── errors.go
 │   └── *_test.go
-├── resource_loader.go
 ├── run_context.go
 ├── system_prompt.go
-├── bootstrap.go
+├── register.go
 └── ...
 
 skills/
@@ -90,12 +89,12 @@ The package does not own:
 
 Package `pi` continues to own Workspace-level orchestration:
 
-- `resource_loader.go` binds the selected working root to the Pi Fx graph;
+- `register.go` binds `WorkDir` and `skills.Loader` into the Pi Fx graph;
 - `system_prompt.go` combines core instructions, `AGENTS.md`, and the rendered
   Skill catalog;
 - `run_context.go` discovers Skills for each Run, logs diagnostics, validates
   required Tools, and constructs `agent.RunContext`;
-- `bootstrap.go` wires `skills.Loader` into the default runtime;
+- `register.go` wires `skills.Loader` into the default runtime;
 - the public error layer converts Skill package errors into stable Pi error
   codes.
 
@@ -137,8 +136,8 @@ checks, merge helpers, and XML helpers remain package-private.
 
 The Pi root package does not retain aliases such as `pi.SkillLoader` or
 `pi.SkillSnapshot`. These are subsystem APIs and are exposed at the explicit
-`pi/skills` import path. The ready-to-use `pi.New`/`Run`/`Close` facade remains
-unchanged.
+`pi/skills` import path. Runtime construction remains in `pi.Register`, which
+provides the single `pi/agent.Runner` contract.
 
 ## Dependency Rules
 
@@ -160,15 +159,15 @@ Required invariants:
 
 ## Error Behavior
 
-`skills.ErrInvalid` classifies failures that prevent discovery from operating
+`pi/errors.ErrSkillInvalid` classifies failures that prevent discovery from operating
 on the selected root, such as resolving or opening the workspace. Invalid
 individual `SKILL.md` files continue to produce `Diagnostic` values so one bad
 Skill does not stop discovery of the others.
 
 When discovery fails during a Pi Run, `run_context.go` wraps both
-`pi.ErrInvalid` and the original `skills.ErrInvalid` cause. The facade
+`pi/errors.ErrWorkspaceInvalid` and the original `pi/errors.ErrSkillInvalid` cause. The facade
 therefore preserves the existing public Pi invalid-workspace error code while
-direct `pi/skills` callers can still use `errors.Is(err, skills.ErrInvalid)`.
+direct `pi/skills` callers can use `errors.Is(err, pierrors.ErrSkillInvalid)`.
 
 Prompt truncation remains a successful result described by `PromptReport`,
 not an error.
@@ -198,11 +197,11 @@ effect on the next Run.
 | `pi/skill_snapshot.go` | `pi/skills/snapshot.go` |
 | `pi/skill_prompt.go` | `pi/skills/prompt.go` |
 | `pi/xml_text.go` | `pi/skills/xml_text.go` |
-| Skill-specific part of `pi/resource_errors.go` | `pi/skills/errors.go` |
+| Pi error definitions | `pi/errors/errors.go` |
 | corresponding `pi/*_test.go` files | corresponding `pi/skills/*_test.go` files |
 
-Tests for Workspace orchestration remain in package `pi` next to
-`resource_loader.go`, `run_context.go`, and `system_prompt.go`.
+Tests for Workspace orchestration exercise `register.go`, `run_context.go`, and
+`system_prompt.go` through the Pi and integration suites.
 
 ## Testing
 

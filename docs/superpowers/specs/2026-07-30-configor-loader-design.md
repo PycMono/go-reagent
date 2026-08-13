@@ -32,7 +32,7 @@ Configor v1.2.2 的原生行为：
 
 ## 数据结构
 
-`Config` 和 `PlatformConfig` 增加等价的 `yaml`、`toml` tag，同时保留现有 `json` tag：
+`Config` 和 `Options` 增加等价的 `yaml`、`toml` tag，同时保留现有 `json` tag：
 
 ```go
 CurrentPlatform string `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`

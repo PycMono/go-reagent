@@ -11,7 +11,7 @@ func main() {
 	logsdk.SetLogger(newApplicationLogger())
 
 	fx.New(
-		application.Module,
+		application.Register,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
 	).Run()
 }

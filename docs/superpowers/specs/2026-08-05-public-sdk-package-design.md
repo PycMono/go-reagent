@@ -1,5 +1,10 @@
 # Public SDK Package Design
 
+> Historical design, superseded by
+> `2026-08-05-pi-service-boundaries-design.md`. The module-root `reagent`
+> facade described below was removed. The current runtime has one Agent type at
+> `pi/agent.Agent`; callers compose `pi.Register` in their Fx lifecycle.
+
 ## Goal
 
 Reorganize go-reagent around Pi's layered package model and expose a stable Go SDK for upper-layer business systems:
@@ -206,7 +211,7 @@ Rules:
 
 - `Role`, `ContentBlock`, `Message`, `ToolCall`, and `ToolDefinition`;
 - model identity and capability data;
-- `PlatformConfig` and the supported protocol constants;
+- `Options` and the supported protocol constants;
 - the unified model-generation client contract;
 - OpenAI and Anthropic request/response conversion;
 - provider selection from the selected platform configuration;
@@ -315,7 +320,7 @@ configor.Load
     -> return Config
 ```
 
-The existing `Config`, `PlatformConfig`, `BotConfig`, `ConversationConfig`, `MySQLConfig`, and associated field tags remain the migration source of truth. `PlatformConfig` and the supported protocol constants move to `ai`; the root package aliases `PlatformConfig`, and root `Config.Platforms` uses that alias. `Config.Current` therefore returns the same root alias without making `ai` depend on root configuration. The existing JSON, YAML, TOML, example fallback, environment overlay, and shell environment override behavior must not change.
+The existing `Config`, `Options`, `BotConfig`, `ConversationConfig`, `MySQLConfig`, and associated field tags remain the migration source of truth. `Options` and the supported protocol constants move to `ai`; the root package aliases `Options`, and root `Config.Platforms` uses that alias. `Config.Current` therefore returns the same root alias without making `ai` depend on root configuration. The existing JSON, YAML, TOML, example fallback, environment overlay, and shell environment override behavior must not change.
 
 The bundled CLI continues to resolve `CONFIG_PATH`, defaulting to `config.json`, before calling `LoadConfig`. The SDK does not guess a path or read `CONFIG_PATH` inside `New`.
 
@@ -350,12 +355,13 @@ type Role = ai.Role
 type Message = ai.Message
 type ContentBlock = ai.ContentBlock
 type ToolCall = ai.ToolCall
-type PlatformConfig = ai.PlatformConfig
-
 type RunRequest = agent.RunRequest
 type RunResult = agent.RunResult
 type ContextBlock = agent.ContextBlock
 ```
+
+Provider configuration is not re-exported by the root package. `Config.Platforms`
+uses `[]providers.Options` directly.
 
 It provides small message-construction helpers:
 
@@ -367,7 +373,7 @@ func SystemMessage(text string) Message
 
 The root API does not re-export or accept:
 
-- `ai.Client` or Provider implementations;
+- `ai.Provider` implementations;
 - Tool, Registry, or Middleware implementations;
 - Agent Loop or Scheduler implementations;
 - Reporter or lifecycle events;

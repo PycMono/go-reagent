@@ -2,72 +2,77 @@
 
 ## 包边界
 
-go-reagent 采用 Pi 风格的分层思想：模型协议、Agent 运行机制和完整默认产品逐层组合，但不照搬 TypeScript 目录名称。
+go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Core，`pi/harness` 提供默认工作区能力，`pi/register.go` 负责最终装配。
 
 ```text
-ai <- agent <- reagent
-              |-- internal/bootstrap
-              |-- internal/workspace
-              `-- internal/tools
-
-internal/cli -> reagent/agent + internal/bootstrap
-cmd/reagent  -> internal/cli + internal/bootstrap
+pi/ai <- pi/harness <- pi
+pi/ai <-------------- pi
+config -> pi/ai/providers
+application -> config + conversation + infrastructure + transport + pi
+cmd/reagent -> application
 ```
 
-- `ai`：公共消息、Usage、平台定价、内容块、工具定义、协议枚举、统一 `Client`，以及 OpenAI/Anthropic 官方 SDK 适配器。
-- `agent`：公共 Run 契约、Loop、Scheduler、Registry、Middleware、Tool、Reporter 和底层事件。
-- 根 `reagent`：面向上层业务的完整默认 SDK，负责配置、构造、同步 Run、错误分类和 Close。
-- `internal/workspace`：当前工作目录、AGENTS.md、Skills、Context 组装等产品策略。
-- `internal/tools`：`apply_patch`、`edit`、`exec`、`process`、`read`、`write` 六个默认工具。
-- `internal/observability`：强制校验 Usage，并按平台价格计算每次模型调用的 USD 成本与耗时。
-- `internal/cli`：一次性 CLI 生命周期、会话持久化、MySQL、Terminal 和 WeCom。
+- `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
+- `pi/ai/providers`：Provider 配置，以及 OpenAI/Anthropic 官方 SDK 适配器。
+- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、Middleware、Reporter 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
+- `pi/test`：根 `pi` 的集中式公开 API、运行循环和包边界测试；各 Harness 子包的白盒测试仍与实现放在同一包。
+- `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载。
+- `application`：CLI 生命周期与业务组件组合。
 
-`ai` 不依赖 `agent` 或产品包；`agent` 只依赖 `ai`，不依赖根包和 `internal`。集成测试会检查这一依赖方向，并拒绝旧 internal 包重新出现。
+`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
-## 根 SDK 契约
+## Pi SDK 契约
 
-上层业务通常只需要导入根包：
+上层业务先从业务配置中选择当前平台，再把 `pi.Register` 组合进自己的 Fx App：
 
 ```go
-config, err := reagent.LoadConfig("config.json")
+cfg, err := config.Load("config.json")
 if err != nil {
 	return err
 }
-sdk, err := reagent.New(config)
+platform, err := cfg.CurrentPlatformOptions()
 if err != nil {
 	return err
 }
-defer sdk.Close(context.Background())
+var runner pi.Runner
+app := fx.New(
+	fx.NopLogger,
+	fx.Supply(platform, pi.WorkDir(workDir)),
+	pi.Register,
+	fx.Populate(&runner),
+)
+if err := app.Start(ctx); err != nil {
+	return err
+}
+defer app.Stop(context.Background())
 
-result, err := sdk.Run(ctx, reagent.RunRequest{
-	RunID:   runID,
+result, err := runner.Run(ctx, pi.RunRequest{
 	History: history,
-	Input:   reagent.UserMessage(input),
+	Input:   inputText,
 	Context: contextBlocks,
-	Metadata: map[string]string{
-		"conversation_id": conversationID,
-	},
-})
+}, nil)
 ```
 
-根 API 只有以下生命周期入口：
+公共运行契约只有一套：
 
 ```go
-func LoadConfig(path string) (*Config, error)
-func New(config *Config) (*Agent, error)
-func (a *Agent) Run(context.Context, RunRequest) (RunResult, error)
-func (a *Agent) Close(context.Context) error
+type Runner interface {
+	Run(context.Context, RunRequest, Reporter) (RunResult, error)
+}
+
+func New(*harness.ContextBuilder, *Loop, Registry) *Agent
 ```
 
-`New` 不接收 Provider、Tool、Registry、Middleware、Reporter、Store 或 Fx Option。默认组件在私有 Fx 图中完成组装，避免上层业务依赖产品内部结构。
+`pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。使用默认 Provider、工具、Workspace 和 Loop 时，把 `pi.Register` 加入 Fx 图。不再存在 `pi/agent` 子包或第二套 SDK 门面。
 
-根 `RunResult` 是 `agent.RunResult` 的别名；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Action 模型调用及其 Usage、成本与耗时。
+`pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Action 模型调用及其 Usage、成本与耗时。
 
 ## 配置
 
-业务明确调用 `LoadConfig(path)`，SDK 不猜测配置路径，也不在 `New` 中读取 `CONFIG_PATH`。加载继续只使用 Configor，因此 JSON、YAML、TOML、example 回退、环境叠加和 `CONFIGOR_` 环境变量覆盖保持一致。
+业务通过 `config.Load(path)` 加载配置；Pi SDK 不猜测配置路径，也不读取 `CONFIG_PATH`。加载继续只使用 Configor，因此 JSON、YAML、TOML、example 回退、环境叠加和 `CONFIGOR_` 环境变量覆盖保持一致。
 
-`New` 会复制并校验 Config。调用方在构造完成后修改原 Config，不会改变已经运行的 Agent。
+多 Provider 列表和 `currentPlatform` 选择只属于 `config.Config`。`pi.Register` 消费选中的单个 `providers.Options`，Provider 工厂在构造前规范化和校验必需字段。
 
 每个平台都必须配置 `pricing.input_usd_per_million_tokens` 和 `pricing.output_usd_per_million_tokens`，单位为 USD/1M tokens。价格必须是小于 100,000,000 的有限非负数，允许 `0` 表示免费模型；计算后的单次成本采用相同上界，以匹配 `DECIMAL(20,12)` 总账。价格是构造 SDK 时的快照。
 
@@ -76,7 +81,7 @@ func (a *Agent) Close(context.Context) error
 ```text
 业务加载 History
     -> Agent.Run
-    -> 校验并复制调用方数据
+    -> 校验调用方数据
     -> 重新读取 AGENTS.md 和发现 Skills
     -> 组装 System + Context + History + Input
     -> AI / Tool Loop
@@ -84,13 +89,13 @@ func (a *Agent) Close(context.Context) error
     -> 业务按自己的事务策略持久化
 ```
 
-`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 UserID/ConversationID，也不做会话锁、重试、排队或摘要。业务可把标识放在 `Metadata` 中用于追踪，但 SDK 不解释其含义。
+`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 RunID、UserID 或 ConversationID，也不做会话锁、重试、排队或摘要。`Input` 只接收用户文本；完整的 `ai.Message` 仅用于需要表达 Assistant、Tool 和 Tool Call 的 `History` 与 `NewMessages`。
 
 `NewMessages` 只包含当前 Run 新增的 Assistant/Tool 消息，不包含 System、外部 Context、History、Input 或 Thinking 脚手架。运行中途失败时，已经完成的消息仍与错误一起返回；是否持久化部分结果由业务决定。
 
-默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ai.ErrGeneration`，不会把未计量响应作为成功结果。自行直接组合公共 `agent` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Client`；`agent.Loop` 会独立复核这些字段。
+默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `pi/harness/errors.ErrGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
 
-根 `Run` 不提供进度事件。底层 `agent.Reporter` 只供自行使用 `agent` 包的调用方和仓库自带 CLI 使用，Terminal/WeCom 事件不会进入根 SDK API。
+`pi.Runner.Run` 通过最后一个参数接收 Reporter；不需要进度事件时传 `nil`。仓库 CLI 注入 Terminal/WeCom Reporter。
 
 ## Workspace
 
@@ -100,16 +105,16 @@ func (a *Agent) Close(context.Context) error
 
 ## 并发与取消
 
-一个长生命周期 `*reagent.Agent` 可以并发执行多个 Run：
+一个长生命周期 `*pi.Agent` 可以并发执行多个 Run：
 
-- 每个 Run 拥有独立消息历史、调度结果和元数据副本；
-- SDK 不修改调用方传入的 Slice、Map 或工具 JSON 参数；
+- 每个 Run 在本地维护需要追加、排序的顶层消息和工具切片，不把运行状态保存在 `Agent` 上；
+- 与 Pi agent-core 一样，SDK 不递归复制 History 中的 Message 和工具 JSON 参数；调用方在 Run 结束前不得并发修改这些值；
 - 取消或超时一个 Run 不会影响其他 Run；
 - SDK 不按 ConversationID 串行化，并发控制仍由业务负责。
 
 ## 错误与部分结果
 
-`ErrorCodeOf(err)` 返回稳定字符串枚举：
+`pi/harness/errors.ErrorCodeOf(err)` 返回稳定字符串枚举：
 
 | ErrorCode | 值 |
 | --- | --- |
@@ -126,20 +131,18 @@ func (a *Agent) Close(context.Context) error
 | `ErrorCodeClosed` | `agent_closed` |
 | `ErrorCodeInternal` | `internal` |
 
-`reagent.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`reagent.ErrClosed` 和 `ai.ErrGeneration`；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。根 SDK 不把厂商状态码扩展成新的公共 ErrorCode。
+`pi/harness/errors.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`pi/harness/errors.ErrClosed` 和 `pi/harness/errors.ErrGeneration`；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。Pi SDK 不把厂商状态码扩展成新的公共 ErrorCode。
 
-## Close
+## 生命周期
 
-`Agent.Close(ctx)` 首先拒绝新 Run，然后等待已经接纳的 Run 完成，最后停止 Fx 资源和后台进程。Close 是幂等的，后续调用返回第一次 Close 的结果；如果第一次因 Context deadline 失败，Agent 仍保持关闭且不会重新接纳 Run。
-
-调用某个 Run 的 cancel 不会关闭 Agent。已经关闭的 Agent 不能重新启动。
+`pi.Agent` 不拥有 Fx App，也不定义第二套 Close 协议。Provider、Workspace 和后台进程等资源全部由调用方 Fx App 的 `Start`/`Stop` 生命周期管理；取消某个 Run 只影响该次调用。
 
 ## CLI 与会话存储
 
-自带 CLI 使用同一个 `internal/bootstrap.Module`，再组合 `internal/cli.Module`：
+自带 CLI 通过 `application.Register` 组合 `pi`、基础设施、Conversation 业务和 Transport：
 
 ```text
-LoadOrCreate -> agent.Run -> AppendTurn
+Find Conversation -> List Messages -> pi.Run -> AppendTurn
 ```
 
-CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`；Terminal 和 WeCom 通过底层 Reporter 接收事件。这些适配都位于 `internal/cli`，不属于根 SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。
+CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`；Terminal 和 WeCom 通过 Reporter 接收事件。这些业务适配不属于 `pi` SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。

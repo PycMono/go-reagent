@@ -1,59 +1,31 @@
 package ai
 
-import "encoding/json"
-
-// Role 定义消息的角色，这是与大模型沟通的基石
+// Role 表示消息在大模型对话中的角色。
 type Role string
 
 const (
-	RoleSystem    Role = "system"    // 系统提示词：确立 Agent 的性格与红线
-	RoleUser      Role = "user"      // 用户输入
-	RoleAssistant Role = "assistant" // 模型的输出：包含推理(Reasoning)或工具调用(ToolCall)
-	RoleTool      Role = "tool"
+	RoleSystem    Role = "system"    // RoleSystem 表示系统提示词。
+	RoleUser      Role = "user"      // RoleUser 表示用户输入。
+	RoleAssistant Role = "assistant" // RoleAssistant 表示模型输出。
+	RoleTool      Role = "tool"      // RoleTool 表示工具执行结果。
 )
 
-// Message 代表上下文中传递的单条消息
+// Message 表示对话上下文中传递的一条消息。
 type Message struct {
-	Role    Role           `json:"role"`
+	// Role 表示消息角色。
+	Role Role `json:"role"`
+	// Content 保存消息的内容块。
 	Content []ContentBlock `json:"content,omitempty"`
-	Usage   *Usage         `json:"usage,omitempty"`
+	// Usage 保存生成当前模型消息时产生的用量信息。
+	Usage *Usage `json:"usage,omitempty"`
 
-	// 如果模型决定调用工具，此字段将被填充 (支持并行调用多个工具)
+	// ToolCalls 保存模型请求执行的工具调用，允许同时包含多个调用。
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 
-	// 如果这是对某个工具调用的响应，此字段必须填写，以告知模型上下文的关联性
+	// ToolCallID 保存当前工具结果所对应的工具调用 ID。
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	ToolName   string `json:"tool_name,omitempty"`
-	IsError    bool   `json:"is_error,omitempty"`
-}
-
-// Usage contains normalized token, pricing, cost, and latency data for one model response.
-type Usage struct {
-	InputTokens                    int64   `json:"input_tokens"`
-	OutputTokens                   int64   `json:"output_tokens"`
-	InputPriceUSDPerMillionTokens  float64 `json:"input_price_usd_per_million_tokens"`
-	OutputPriceUSDPerMillionTokens float64 `json:"output_price_usd_per_million_tokens"`
-	CostUSD                        float64 `json:"cost_usd"`
-	LatencyMS                      int64   `json:"latency_ms"`
-	PlatformID                     string  `json:"platform_id"`
-	Model                          string  `json:"model"`
-}
-
-// ToolCall 代表模型请求调用某个具体的工具
-type ToolCall struct {
-	ID   string `json:"id"`   // 工具调用的唯一 ID
-	Name string `json:"name"` // 想要调用的工具名称 (例如 "bash")
-	// Arguments 存放 JSON 参数。使用 RawMessage 是为了延迟解析，将解析责任交给具体的工具
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-// ToolDefinition 描述了一个大模型可以调用的工具元信息 (供模型理解工具有什么用)
-type ToolDefinition struct {
-	Name        string `json:"name"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description"`
-	InputSchema any    `json:"input_schema"` // 对应 JSON Schema
-
-	// ParallelSafe 表示 Harness 可以在同一波次中并发执行该工具；默认 false。
-	ParallelSafe bool `json:"parallel_safe,omitempty"`
+	// ToolName 保存当前工具结果所对应的工具名称。
+	ToolName string `json:"tool_name,omitempty"`
+	// IsError 表示当前工具结果是否为错误结果。
+	IsError bool `json:"is_error,omitempty"`
 }

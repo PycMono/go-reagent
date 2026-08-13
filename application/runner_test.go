@@ -10,43 +10,43 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
-	"github.com/PycMono/go-reagent/pi/agent"
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
-type runtimeFunc func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error)
+type runtimeFunc func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error)
 
-type conversationFunc func(context.Context, conversation.RunRequest, agent.Reporter) (agent.RunResult, error)
+type conversationFunc func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error)
 
 func (f runtimeFunc) Run(
 	ctx context.Context,
-	request agent.RunRequest,
-	reporter agent.Reporter,
-) (agent.RunResult, error) {
+	request pi.RunRequest,
+	reporter pi.Reporter,
+) (pi.RunResult, error) {
 	return f(ctx, request, reporter)
 }
 
 func (f conversationFunc) Run(
 	ctx context.Context,
 	request conversation.RunRequest,
-	reporter agent.Reporter,
-) (agent.RunResult, error) {
+	reporter pi.Reporter,
+) (pi.RunResult, error) {
 	return f(ctx, request, reporter)
 }
 
 type runnerReporterFake struct{}
 
-func (*runnerReporterFake) Report(context.Context, agent.AgentEvent) {}
+func (*runnerReporterFake) Report(context.Context, pi.AgentEvent) {}
 
 func TestAgentRunnerUsesStatelessRuntimeWhenPersistenceDisabled(t *testing.T) {
 	runtimeCalled := make(chan struct{}, 1)
-	runtime := runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
+	runtime := runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
 		runtimeCalled <- struct{}{}
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	})
-	conversationRunner := conversationFunc(func(context.Context, conversation.RunRequest, agent.Reporter) (agent.RunResult, error) {
+	conversationRunner := conversationFunc(func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error) {
 		t.Error("ConversationRunner.Run should not be called")
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	})
 	runner, err := NewAgentRunner(runtime, conversationRunner, &config.Config{}, Prompt("test prompt"), nil)
 	if err != nil {
@@ -70,12 +70,12 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 	t.Setenv("AGENT_USER_ID", " user-1 ")
 	t.Setenv("AGENT_CONVERSATION_ID", " conversation-1 ")
 	reporter := &runnerReporterFake{}
-	runtime := runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
+	runtime := runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
 		t.Error("AgentRuntime.Run should not be called directly")
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	})
 	called := make(chan struct{}, 1)
-	conversationRunner := conversationFunc(func(_ context.Context, request conversation.RunRequest, gotReporter agent.Reporter) (agent.RunResult, error) {
+	conversationRunner := conversationFunc(func(_ context.Context, request conversation.RunRequest, gotReporter pi.Reporter) (pi.RunResult, error) {
 		if request.UserID != "user-1" || request.ConversationID != "conversation-1" {
 			t.Errorf("conversation identity = %q, %q", request.UserID, request.ConversationID)
 		}
@@ -87,7 +87,7 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 			t.Errorf("reporter = %T, want injected reporter", gotReporter)
 		}
 		called <- struct{}{}
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	})
 	runner, err := NewAgentRunner(runtime, conversationRunner, &config.Config{
 		Conversation: config.ConversationConfig{Enabled: true},
@@ -110,11 +110,11 @@ func TestAgentRunnerUsesConversationRunnerWhenPersistenceEnabled(t *testing.T) {
 }
 
 func TestNewAgentRunnerValidatesPersistenceIdentityOnlyWhenEnabled(t *testing.T) {
-	runtime := runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
-		return agent.RunResult{}, nil
+	runtime := runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
+		return pi.RunResult{}, nil
 	})
-	conversationRunner := conversationFunc(func(context.Context, conversation.RunRequest, agent.Reporter) (agent.RunResult, error) {
-		return agent.RunResult{}, nil
+	conversationRunner := conversationFunc(func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error) {
+		return pi.RunResult{}, nil
 	})
 	t.Setenv("AGENT_USER_ID", "")
 	t.Setenv("AGENT_CONVERSATION_ID", "")
@@ -141,11 +141,11 @@ func TestAgentRunnerReportsConversationError(t *testing.T) {
 	t.Setenv("AGENT_CONVERSATION_ID", "conversation")
 	want := errors.New("conversation failed")
 	runner, err := NewAgentRunner(
-		runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
-			return agent.RunResult{}, nil
+		runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
+			return pi.RunResult{}, nil
 		}),
-		conversationFunc(func(context.Context, conversation.RunRequest, agent.Reporter) (agent.RunResult, error) {
-			return agent.RunResult{}, want
+		conversationFunc(func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error) {
+			return pi.RunResult{}, want
 		}),
 		&config.Config{Conversation: config.ConversationConfig{Enabled: true}},
 		"test",
@@ -173,13 +173,13 @@ func TestAgentRunnerStopCancelsSelectedConversationRunner(t *testing.T) {
 	t.Setenv("AGENT_CONVERSATION_ID", "conversation")
 	canceled := make(chan struct{})
 	runner, err := NewAgentRunner(
-		runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
-			return agent.RunResult{}, nil
+		runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
+			return pi.RunResult{}, nil
 		}),
-		conversationFunc(func(ctx context.Context, _ conversation.RunRequest, _ agent.Reporter) (agent.RunResult, error) {
+		conversationFunc(func(ctx context.Context, _ conversation.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
 			<-ctx.Done()
 			close(canceled)
-			return agent.RunResult{}, ctx.Err()
+			return pi.RunResult{}, ctx.Err()
 		}),
 		&config.Config{Conversation: config.ConversationConfig{Enabled: true}},
 		"test",
@@ -204,13 +204,9 @@ func TestAgentRunnerStopCancelsSelectedConversationRunner(t *testing.T) {
 func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 	called := make(chan struct{}, 1)
 	reporter := &runnerReporterFake{}
-	runtime := runtimeFunc(func(_ context.Context, request agent.RunRequest, gotReporter agent.Reporter) (agent.RunResult, error) {
-		if request.Input.Role != ai.RoleUser {
-			t.Errorf("Run(Input.Role) = %q, want user", request.Input.Role)
-		}
-		text, err := ai.TextContent(request.Input.Content)
-		if err != nil || text != "test prompt" {
-			t.Errorf("Run(Input.Content) = %q, %v", text, err)
+	runtime := runtimeFunc(func(_ context.Context, request pi.RunRequest, gotReporter pi.Reporter) (pi.RunResult, error) {
+		if request.Input != "test prompt" {
+			t.Errorf("Run(Input) = %q, want test prompt", request.Input)
 		}
 		if len(request.History) != 0 || len(request.Context) != 0 {
 			t.Errorf("Run(request) = %#v, want empty history and context", request)
@@ -219,7 +215,7 @@ func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 			t.Errorf("Run(reporter) = %T, want injected reporter", gotReporter)
 		}
 		called <- struct{}{}
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	})
 	runner := newStatelessAgentRunner(t, runtime, Prompt("test prompt"), reporter)
 	completed := make(chan error, 1)
@@ -244,8 +240,8 @@ func TestAgentRunnerBuildsStructuredRequestAndForwardsReporter(t *testing.T) {
 
 func TestAgentRunnerReportsRuntimeError(t *testing.T) {
 	want := errors.New("runtime failed")
-	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
-		return agent.RunResult{}, want
+	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
+		return pi.RunResult{}, want
 	}), Prompt("test"), nil)
 	completed := make(chan error, 1)
 	if err := runner.Start(func(err error) { completed <- err }); err != nil {
@@ -264,10 +260,10 @@ func TestAgentRunnerReportsRuntimeError(t *testing.T) {
 func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int32
-	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
+	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
 		calls.Add(1)
 		<-release
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("first Start() error = %v", err)
@@ -286,10 +282,10 @@ func TestAgentRunnerRejectsSecondStart(t *testing.T) {
 
 func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 	canceled := make(chan struct{})
-	runner := newStatelessAgentRunner(t, runtimeFunc(func(ctx context.Context, _ agent.RunRequest, _ agent.Reporter) (agent.RunResult, error) {
+	runner := newStatelessAgentRunner(t, runtimeFunc(func(ctx context.Context, _ pi.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
 		<-ctx.Done()
 		close(canceled)
-		return agent.RunResult{}, ctx.Err()
+		return pi.RunResult{}, ctx.Err()
 	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -306,9 +302,9 @@ func TestAgentRunnerStopCancelsAndWaitsForRuntime(t *testing.T) {
 
 func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	release := make(chan struct{})
-	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, agent.RunRequest, agent.Reporter) (agent.RunResult, error) {
+	runner := newStatelessAgentRunner(t, runtimeFunc(func(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
 		<-release
-		return agent.RunResult{}, nil
+		return pi.RunResult{}, nil
 	}), Prompt("test"), nil)
 	if err := runner.Start(nil); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -324,7 +320,7 @@ func TestAgentRunnerStopHonorsDeadline(t *testing.T) {
 	}
 }
 
-func newStatelessAgentRunner(t *testing.T, runtime agent.Runner, prompt Prompt, reporter agent.Reporter) *AgentRunner {
+func newStatelessAgentRunner(t *testing.T, runtime pi.Runner, prompt Prompt, reporter pi.Reporter) *AgentRunner {
 	t.Helper()
 	runner, err := NewAgentRunner(runtime, nil, &config.Config{}, prompt, reporter)
 	if err != nil {

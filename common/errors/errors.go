@@ -90,7 +90,13 @@ func AsSysError(err error) (*SysError, bool) {
 }
 
 var (
-	ErrConversationNotFound       = NewBizError(10101, "conversation not found")
-	ErrConversationConflict       = NewBizError(10102, "conversation version conflict")
-	ErrConversationCorruptMessage = NewSysError(10103, "conversation message is corrupt")
+	ErrInvalidParam = NewBizError(10001, "invalid parameter")
+	ErrUnauthorized = NewBizError(10002, "unauthorized")
+	ErrForbidden    = NewBizError(10003, "forbidden")
+	ErrUserNotFound = NewBizError(10004, "user not found")
+	ErrUserExists   = NewBizError(10005, "user already exists")
+	ErrNotFound     = NewBizError(10006, "resource not found")
+	ErrConflict     = NewBizError(10007, "resource conflict")
+	ErrRateLimited  = NewBizError(10008, "rate limited")
+	ErrInternal     = NewSysError(10009, "internal server error")
 )

@@ -15,7 +15,7 @@
 - Do not create `internal`, `sdk`, `workspace`, or `pi/context` directories.
 - Do not add compaction behavior.
 - Preserve Skill sources, priority, validation, eligibility, diagnostics, prompt text, and prompt budgets.
-- Preserve `pi.New`/`Run`/`Close` and current Pi error codes.
+- Preserve `pi.Register`, `pi/agent.Runner`, and current Pi error codes.
 - `pi/skills` must not import package `pi`, another Pi subpackage, or a service package.
 - Stage and commit only paths belonging to this migration.
 
@@ -25,14 +25,14 @@
 
 | File | Responsibility |
 | --- | --- |
-| `pi/skills/errors.go` | Skill workspace error sentinel |
+| `pi/errors/errors.go` | Pi error codes and error sentinels, including Skill workspace errors |
 | `pi/skills/loader.go` | Loader state and constructor |
 | `pi/skills/parser.go` | strict `SKILL.md` parsing and validation |
 | `pi/skills/discovery.go` | safe scanning, eligibility, priority, diagnostics |
 | `pi/skills/snapshot.go` | immutable summaries and diagnostics |
 | `pi/skills/prompt.go` | bounded XML Skill catalog rendering |
 | `pi/skills/xml_text.go` | XML 1.0 helpers |
-| `pi/resource_loader.go` | Fx adapters for Workspace resources |
+| `pi/register.go` | Fx adapters for Workspace resources |
 | `pi/system_prompt.go` | AGENTS plus Skill prompt composition |
 | `pi/run_context.go` | per-Run discovery and context construction |
 | `tests/integration/package_boundaries_test.go` | standalone dependency enforcement |
@@ -40,7 +40,7 @@
 ### Task 1: Extract the Standalone Skills Package
 
 **Files:**
-- Create: `pi/skills/errors.go`
+- Update: `pi/errors/errors.go`
 - Create: `pi/skills/loader.go`
 - Move/rewrite: `pi/skills.go` -> `pi/skills/parser.go`
 - Move/rewrite: `pi/skill_discovery.go` -> `pi/skills/discovery.go`
@@ -57,7 +57,7 @@
 - Produces: `(*skills.Loader).Discover(skills.Environment) (*skills.Snapshot, error)`
 - Produces: `skills.DefaultEnvironment() skills.Environment`
 - Produces: `skills.RenderPrompt(*skills.Snapshot) (string, skills.PromptReport)`
-- Produces: `skills.ErrInvalid`, `skills.Source`, `skills.Severity`, `skills.Summary`, and `skills.Diagnostic`
+- Produces: `pi/errors.ErrSkillInvalid`, `skills.Source`, `skills.Severity`, `skills.Summary`, and `skills.Diagnostic`
 
 - [ ] **Step 1: Record the focused baseline**
 
@@ -138,7 +138,7 @@ func (s *Snapshot) Skills() []Summary
 func (s *Snapshot) Diagnostics() []Diagnostic
 ```
 
-Discovery wraps `skills.ErrInvalid`; invalid individual files remain diagnostics.
+Discovery wraps `pi/errors.ErrSkillInvalid`; invalid individual files remain diagnostics.
 
 - [ ] **Step 5: Verify the package**
 
@@ -149,10 +149,10 @@ Expected: PASS for parsing, discovery, eligibility, snapshots, and prompt render
 ### Task 2: Rewire Pi Workspace Orchestration
 
 **Files:**
-- Modify: `pi/resource_loader.go`
+- Modify: `pi/register.go`
 - Modify: `pi/system_prompt.go`
 - Modify: `pi/run_context.go`
-- Modify: `pi/bootstrap_resource_test.go`
+- Modify: `pi/register_resource_test.go`
 - Modify: `pi/resource_loader_test.go`
 - Modify: `pi/system_prompt_test.go`
 - Modify: `pi/run_context_test.go`
@@ -266,7 +266,7 @@ Expected: PASS.
 Run:
 
 ```bash
-gofmt -w pi/skills pi/resource_loader.go pi/system_prompt.go pi/run_context.go
+gofmt -w pi/skills pi/register.go pi/system_prompt.go pi/run_context.go
 go test ./pi/... ./tests/integration -count=1
 ```
 

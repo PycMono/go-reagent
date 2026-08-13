@@ -2,95 +2,89 @@ package pi
 
 import (
 	"context"
-	"errors"
-	"sync"
+	"fmt"
+	"strings"
 
-	agentcore "github.com/PycMono/go-reagent/pi/agent"
-	"go.uber.org/fx"
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/harness"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
-// Agent is the concurrency-safe synchronous SDK facade.
+// Runner 定义无状态 Agent 的单次运行行为。
+type Runner interface {
+	Run(context.Context, RunRequest, Reporter) (RunResult, error)
+}
+
+// Agent 是可复用的无状态运行入口。
 type Agent struct {
-	app     *fx.App
-	runtime agentcore.Runner
-
-	mu        sync.Mutex
-	closed    bool
-	active    sync.WaitGroup
-	closeOnce sync.Once
-	closeErr  error
+	builder     *harness.ContextBuilder
+	loop        *Loop
+	toolRuntime ToolRuntime
 }
 
-// New constructs and starts the default Agent graph from a defensive config copy.
-func New(input *Config) (*Agent, error) {
-	if input == nil {
-		return nil, wrap(ErrorCodeConfigInvalid, "New", errors.New("config is required"))
+// New 根据下层运行依赖创建 Agent。
+func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime) *Agent {
+	return &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime}
+}
+
+// Run 校验并执行一次相互隔离的请求。
+func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) (RunResult, error) {
+	result := RunResult{}
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
-	config := cloneConfig(input)
-	if err := config.normalizeAndValidate(); err != nil {
-		return nil, wrap(ErrorCodeConfigInvalid, "New", err)
+	if err := validateRunRequest(request); err != nil {
+		return result, err
 	}
-	app, runtime, err := buildAgent(config)
+
+	runContext, err := a.prepareRunContext(ctx, request)
 	if err != nil {
-		return nil, classifyInitialization("New", err)
+		return result, err
 	}
-	return &Agent{app: app, runtime: runtime}, nil
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	loopResult, err := a.loop.runDetailed(ctx, runContext, reporter)
+	result.NewMessages = loopResult.newMessages
+	result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
+	return result, err
 }
 
-// Run executes one stateless request and returns only newly generated messages.
-func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) {
-	result := RunResult{RunID: request.RunID}
-	if ctx == nil {
-		return result, wrap(ErrorCodeRequestInvalid, "Run", errors.New("context is required"))
+func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (RunContext, error) {
+	history, err := historyMessagesToAI(request.History)
+	if err != nil {
+		return RunContext{}, err
 	}
-	if a == nil || a.runtime == nil {
-		return result, wrap(ErrorCodeInternal, "Run", errors.New("agent is not initialized"))
+	blocks := make([]harness.ContextBlock, len(request.Context))
+	for index, block := range request.Context {
+		blocks[index] = harness.ContextBlock{Name: block.Name, Content: block.Content, Priority: block.Priority}
 	}
-	if !a.beginRun() {
-		return result, wrap(ErrorCodeClosed, "Run", ErrClosed)
+	prepared, err := a.builder.Build(ctx, harness.ContextRequest{
+		History: history,
+		Input: ai.Message{
+			Role:    ai.RoleUser,
+			Content: []ai.ContentBlock{ai.TextBlock(request.Input)},
+		},
+		Context: blocks,
+	}, a.toolRuntime.Definitions())
+	if err != nil {
+		return RunContext{}, err
 	}
-	defer a.active.Done()
-
-	result, err := a.runtime.Run(ctx, request, nil)
-	return result, classify("Run", err)
+	return RunContext{Messages: prepared.Messages, Tools: prepared.Tools}, nil
 }
 
-func (a *Agent) beginRun() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed {
-		return false
+func validateRunRequest(request RunRequest) error {
+	if strings.TrimSpace(request.Input) == "" {
+		return fmt.Errorf("%w: input content must not be empty", pierrors.ErrRequestInvalid)
 	}
-	a.active.Add(1)
-	return true
-}
-
-// Close rejects new Runs, waits for admitted Runs, and stops owned resources once.
-func (a *Agent) Close(ctx context.Context) error {
-	if ctx == nil {
-		return wrap(ErrorCodeRequestInvalid, "Close", errors.New("context is required"))
+	for index, block := range request.Context {
+		if strings.TrimSpace(block.Name) == "" {
+			return fmt.Errorf("%w: context block %d name must not be empty", pierrors.ErrRequestInvalid, index)
+		}
+		if strings.TrimSpace(block.Content) == "" {
+			return fmt.Errorf("%w: context block %d content must not be empty", pierrors.ErrRequestInvalid, index)
+		}
 	}
-	if a == nil || a.app == nil {
-		return wrap(ErrorCodeInternal, "Close", errors.New("agent is not initialized"))
-	}
-	a.closeOnce.Do(func() { a.closeErr = a.close(ctx) })
-	return a.closeErr
-}
-
-func (a *Agent) close(ctx context.Context) error {
-	a.mu.Lock()
-	a.closed = true
-	a.mu.Unlock()
-
-	done := make(chan struct{})
-	go func() {
-		a.active.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return classify("Close", ctx.Err())
-	}
-	return classify("Close", a.app.Stop(ctx))
+	return nil
 }

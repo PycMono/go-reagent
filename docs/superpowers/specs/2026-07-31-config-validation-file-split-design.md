@@ -17,9 +17,9 @@ Move the private configuration normalization and validation pipeline from `inter
 
 - `Config.normalizeAndValidate`;
 - `BotConfig.normalizeAndValidate`;
-- `PlatformConfig.normalize`;
-- `PlatformConfig.validate`;
-- `PlatformConfig.normalizeBaseURL`.
+- `Options.normalize`;
+- `Options.validate`;
+- `Options.normalizeBaseURL`.
 
 Keeping normalization beside validation preserves the existing execution order and avoids splitting one pipeline across multiple files.
 
