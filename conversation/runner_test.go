@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
@@ -16,7 +18,7 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 	history := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("previous")}}
 	input := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("next")}}
 	answer := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}
-	store := &runnerStoreFake{snapshot: Snapshot{
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{
 		ConversationPK: 42,
 		Version:        7,
 		Messages:       []ai.Message{history},
@@ -39,13 +41,13 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 	if !reflect.DeepEqual(result, runtime.result) {
 		t.Fatalf("Run() result = %#v, want %#v", result, runtime.result)
 	}
-	if store.loadCalls != 1 || store.loadedKey != (Key{UserID: "user-1", ConversationID: "conversation-1"}) || store.loadedLimit != 100 {
+	if store.loadCalls != 1 || store.loadedKey != (conversationentity.Key{UserID: "user-1", ConversationID: "conversation-1"}) || store.loadedLimit != 100 {
 		t.Fatalf("LoadOrCreate calls/key/limit = %d, %#v, %d", store.loadCalls, store.loadedKey, store.loadedLimit)
 	}
 	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, []ai.Message{history}) || !reflect.DeepEqual(runtime.request.Input, input) {
 		t.Fatalf("runtime call/request = %d, %#v", runtime.calls, runtime.request)
 	}
-	wantAppend := AppendRequest{
+	wantAppend := conversationentity.AppendRequest{
 		ConversationPK:  42,
 		ExpectedVersion: 7,
 		RunID:           "run-1",
@@ -64,7 +66,7 @@ func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 		Phase:    agent.ModelInvocationPhaseAction,
 		Usage:    ai.Usage{PlatformID: "test", Model: "model"},
 	}
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Version: 2}}
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 1, Version: 2}}
 	runtime := &runnerRuntimeFake{
 		result: agent.RunResult{
 			RunID:       "run",
@@ -103,7 +105,7 @@ func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
 		NewMessages: []ai.Message{answer},
 		Invocations: invocations,
 	}}
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 42, Version: 7}}
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 42, Version: 7}}
 
 	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
 	if err != nil {
@@ -123,7 +125,7 @@ func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
 
 func TestRunnerSkipsAppendWhenRuntimeFailsWithoutMessages(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1}}
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 1}}
 	runtime := &runnerRuntimeFake{err: runtimeErr}
 
 	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
@@ -147,7 +149,7 @@ func TestRunnerJoinsRuntimeAndAppendErrors(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
 	appendErr := errors.New("append failed")
 	partial := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")}}
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1}, appendErr: appendErr}
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 1}, appendErr: appendErr}
 	runtime := &runnerRuntimeFake{
 		result: agent.RunResult{NewMessages: []ai.Message{partial}},
 		err:    runtimeErr,
@@ -161,15 +163,15 @@ func TestRunnerJoinsRuntimeAndAppendErrors(t *testing.T) {
 
 func TestRunnerReturnsConflictWithoutRetry(t *testing.T) {
 	store := &runnerStoreFake{
-		snapshot:  Snapshot{ConversationPK: 1},
-		appendErr: ErrConflict,
+		snapshot:  conversationentity.Snapshot{ConversationPK: 1},
+		appendErr: commonerrors.ErrConversationConflict,
 	}
 	runtime := &runnerRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 
 	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
-	if !errors.Is(err, ErrConflict) || store.loadCalls != 1 || runtime.calls != 1 || store.appendCalls != 1 {
+	if !errors.Is(err, commonerrors.ErrConversationConflict) || store.loadCalls != 1 || runtime.calls != 1 || store.appendCalls != 1 {
 		t.Fatalf("Run() error/calls = %v, %d/%d/%d", err, store.loadCalls, runtime.calls, store.appendCalls)
 	}
 }
@@ -242,7 +244,7 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 	answer := ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}
 	contextBlocks := []agent.ContextBlock{{Name: "profile", Content: "gold"}}
 	metadata := map[string]string{"tenant": "one"}
-	store := &runnerStoreFake{snapshot: Snapshot{ConversationPK: 1, Messages: []ai.Message{history}}}
+	store := &runnerStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 1, Messages: []ai.Message{history}}}
 	runtime := &runnerRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{answer}}}
 	request := RunRequest{
 		UserID: " user ", ConversationID: " conversation ", RunID: "run",
@@ -268,7 +270,7 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 	if store.appended.Messages[0].Content[0].Text != "input" || store.appended.Messages[1].Content[0].Text != "answer" {
 		t.Fatalf("append request mutated: %#v", store.appended)
 	}
-	if store.loadedKey != (Key{UserID: "user", ConversationID: "conversation"}) {
+	if store.loadedKey != (conversationentity.Key{UserID: "user", ConversationID: "conversation"}) {
 		t.Fatalf("loaded key = %#v", store.loadedKey)
 	}
 }
@@ -298,24 +300,24 @@ func (f *runnerRuntimeFake) Run(_ context.Context, request agent.RunRequest, _ a
 }
 
 type runnerStoreFake struct {
-	snapshot    Snapshot
+	snapshot    conversationentity.Snapshot
 	loadErr     error
 	appendErr   error
 	loadCalls   int
 	appendCalls int
-	loadedKey   Key
+	loadedKey   conversationentity.Key
 	loadedLimit int
-	appended    AppendRequest
+	appended    conversationentity.AppendRequest
 }
 
-func (f *runnerStoreFake) LoadOrCreate(_ context.Context, key Key, limit int) (Snapshot, error) {
+func (f *runnerStoreFake) LoadOrCreate(_ context.Context, key conversationentity.Key, limit int) (conversationentity.Snapshot, error) {
 	f.loadCalls++
 	f.loadedKey = key
 	f.loadedLimit = limit
 	return f.snapshot, f.loadErr
 }
 
-func (f *runnerStoreFake) AppendTurn(_ context.Context, request AppendRequest) error {
+func (f *runnerStoreFake) AppendTurn(_ context.Context, request conversationentity.AppendRequest) error {
 	f.appendCalls++
 	f.appended = request
 	return f.appendErr

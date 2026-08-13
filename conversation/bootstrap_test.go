@@ -6,7 +6,9 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
-	persistencemysql "github.com/PycMono/go-reagent/persistence/mysql"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
+	"github.com/PycMono/go-reagent/infrastructure/driver/mysql"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"go.uber.org/fx"
@@ -16,14 +18,17 @@ import (
 func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
 	var (
-		connection *persistencemysql.Connection
-		store      conversation.Store
+		connection *mysql.Connection
+		store      conversationrepo.Store
 		runner     conversation.Runner
 	)
 	app := fxtest.New(t,
 		fx.Supply(cfg),
-		fx.Provide(func() agent.Runner { return &registeredRuntimeFake{} }),
-		persistencemysql.Module,
+		fx.Provide(
+			func() agent.Runner { return &registeredRuntimeFake{} },
+			func() conversationrepo.Store { return &registeredStoreFake{} },
+		),
+		mysql.Module,
 		conversation.Module,
 		fx.Populate(&connection, &store, &runner),
 	)
@@ -36,7 +41,7 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 
 func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
-	store := &registeredStoreFake{snapshot: conversation.Snapshot{ConversationPK: 1}}
+	store := &registeredStoreFake{snapshot: conversationentity.Snapshot{ConversationPK: 1}}
 	runtime := &registeredRuntimeFake{result: agent.RunResult{NewMessages: []ai.Message{{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
@@ -45,7 +50,7 @@ func TestRegisteredRunnerUsesConfiguredHistoryLimit(t *testing.T) {
 		fx.Supply(cfg),
 		fx.Provide(
 			func() agent.Runner { return runtime },
-			func() conversation.Store { return store },
+			func() conversationrepo.Store { return store },
 		),
 		conversation.Module,
 		fx.Populate(&runner),
@@ -74,15 +79,15 @@ func (f *registeredRuntimeFake) Run(context.Context, agent.RunRequest, agent.Rep
 }
 
 type registeredStoreFake struct {
-	snapshot conversation.Snapshot
+	snapshot conversationentity.Snapshot
 	limit    int
 }
 
-func (f *registeredStoreFake) LoadOrCreate(_ context.Context, _ conversation.Key, limit int) (conversation.Snapshot, error) {
+func (f *registeredStoreFake) LoadOrCreate(_ context.Context, _ conversationentity.Key, limit int) (conversationentity.Snapshot, error) {
 	f.limit = limit
 	return f.snapshot, nil
 }
 
-func (f *registeredStoreFake) AppendTurn(context.Context, conversation.AppendRequest) error {
+func (f *registeredStoreFake) AppendTurn(context.Context, conversationentity.AppendRequest) error {
 	return nil
 }

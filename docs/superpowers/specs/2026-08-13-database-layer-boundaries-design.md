@@ -69,14 +69,19 @@ representation, and timestamps are storage details.
 
 This package owns the persistence port:
 
-- `Store` with `LoadOrCreate` and `AppendTurn`;
-- `ErrNotFound`;
-- `ErrConflict`;
-- `ErrCorruptMessage`.
+- `Store` with `LoadOrCreate` and `AppendTurn`.
 
 Method parameters and results use `domain/entity/conversation` types. The
 package depends only on the standard library and inner/public domain value
 packages. It never imports GORM, configuration, or infrastructure.
+
+### `common/errors`
+
+This package follows the shared error design from `micro-framework`: stable
+integer error codes, `CodeError`, expected `BizError`, unexpected `SysError`,
+`Wrap`/`Params`, and code-based `errors.Is` matching. Conversation-not-found
+and optimistic-version-conflict errors are business errors; a corrupt stored
+message is a system error. Repository interfaces do not declare errors.
 
 ### `infrastructure/persistence/conversation`
 
@@ -89,10 +94,10 @@ This package owns the MySQL adapter for the conversation repository:
 - optimistic-version update and transactional append;
 - Fx registration that provides the domain repository interface.
 
-It depends on `domain/entity/conversation`,
+It depends on `common/errors`, `domain/entity/conversation`,
 `domain/repository/conversation`, and `infrastructure/driver/mysql`. Storage
-errors continue to wrap the domain repository sentinel errors so callers can
-use `errors.Is` without depending on infrastructure.
+errors wrap the centralized coded errors so callers retain both stable error
+identity and the concrete storage cause.
 
 ### `conversation`
 
@@ -102,8 +107,8 @@ registration. Its runner depends on `domain/repository/conversation.Store` and
 constructs `domain/entity/conversation` values when loading or appending.
 
 The existing `conversation.Store`, `conversation.Key`,
-`conversation.Snapshot`, `conversation.AppendRequest`, and repository error
-declarations are removed rather than aliased.
+`conversation.Snapshot`, `conversation.AppendRequest`, and error declarations
+are removed rather than aliased.
 
 ## Dependency Direction
 
@@ -158,8 +163,9 @@ No database schema or persistence semantics change:
 4. `Runner` constructs an append entity request.
 5. The MySQL adapter increments the expected version and inserts messages and
    invocations in one transaction.
-6. A version mismatch remains `ErrConflict`; malformed stored payloads remain
-   `ErrCorruptMessage`.
+6. A version mismatch remains the centralized conversation-conflict business
+   error; malformed stored payloads remain the centralized corrupt-message
+   system error.
 
 Table names, columns, migration files, validation rules, history ordering,
 optimistic concurrency, and transaction atomicity remain unchanged.

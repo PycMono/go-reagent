@@ -7,7 +7,10 @@ import (
 	"sync"
 	"testing"
 
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/conversation"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
@@ -73,14 +76,14 @@ type acceptanceConversation struct {
 type acceptanceConversationStore struct {
 	mu     sync.Mutex
 	nextPK uint64
-	items  map[conversation.Key]*acceptanceConversation
+	items  map[conversationentity.Key]*acceptanceConversation
 }
 
 func newAcceptanceConversationStore() *acceptanceConversationStore {
-	return &acceptanceConversationStore{items: make(map[conversation.Key]*acceptanceConversation)}
+	return &acceptanceConversationStore{items: make(map[conversationentity.Key]*acceptanceConversation)}
 }
 
-func (s *acceptanceConversationStore) LoadOrCreate(_ context.Context, key conversation.Key, limit int) (conversation.Snapshot, error) {
+func (s *acceptanceConversationStore) LoadOrCreate(_ context.Context, key conversationentity.Key, limit int) (conversationentity.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.items[key]
@@ -93,14 +96,14 @@ func (s *acceptanceConversationStore) LoadOrCreate(_ context.Context, key conver
 	if len(messages) > limit {
 		messages = messages[len(messages)-limit:]
 	}
-	return conversation.Snapshot{
+	return conversationentity.Snapshot{
 		ConversationPK: item.pk,
 		Version:        item.version,
 		Messages:       cloneAcceptanceMessages(messages),
 	}, nil
 }
 
-func (s *acceptanceConversationStore) AppendTurn(_ context.Context, request conversation.AppendRequest) error {
+func (s *acceptanceConversationStore) AppendTurn(_ context.Context, request conversationentity.AppendRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, item := range s.items {
@@ -108,14 +111,14 @@ func (s *acceptanceConversationStore) AppendTurn(_ context.Context, request conv
 			continue
 		}
 		if item.version != request.ExpectedVersion {
-			return conversation.ErrConflict
+			return commonerrors.ErrConversationConflict
 		}
 		item.messages = append(item.messages, cloneAcceptanceMessages(request.Messages)...)
 		item.invocations = append(item.invocations, cloneAcceptanceInvocations(request.Invocations)...)
 		item.version++
 		return nil
 	}
-	return conversation.ErrNotFound
+	return commonerrors.ErrConversationNotFound
 }
 
 func cloneAcceptanceInvocations(invocations []agent.ModelInvocation) []agent.ModelInvocation {
@@ -135,4 +138,4 @@ func cloneAcceptanceMessages(messages []ai.Message) []ai.Message {
 	return cloned
 }
 
-var _ conversation.Store = (*acceptanceConversationStore)(nil)
+var _ conversationrepo.Store = (*acceptanceConversationStore)(nil)

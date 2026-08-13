@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"strings"
 
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi/agent"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 type runner struct {
 	runtime      agent.Runner
-	store        Store
+	store        conversationrepo.Store
 	historyLimit int
 }
 
-func NewRunner(runtime agent.Runner, store Store, historyLimit int) Runner {
+func NewRunner(runtime agent.Runner, store conversationrepo.Store, historyLimit int) Runner {
 	return &runner{runtime: runtime, store: store, historyLimit: historyLimit}
 }
 
@@ -51,7 +53,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter agent.Rep
 	messages := make([]ai.Message, 0, 1+len(runtimeResult.NewMessages))
 	messages = append(messages, cloneMessage(request.Input))
 	messages = append(messages, cloneMessages(runtimeResult.NewMessages)...)
-	persistErr := r.store.AppendTurn(ctx, AppendRequest{
+	persistErr := r.store.AppendTurn(ctx, conversationentity.AppendRequest{
 		ConversationPK:  snapshot.ConversationPK,
 		ExpectedVersion: snapshot.Version,
 		RunID:           request.RunID,
@@ -61,29 +63,29 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter agent.Rep
 	return runtimeResult, errors.Join(runErr, persistErr)
 }
 
-func validateRunRequest(request RunRequest) (Key, error) {
-	key := Key{
+func validateRunRequest(request RunRequest) (conversationentity.Key, error) {
+	key := conversationentity.Key{
 		UserID:         strings.TrimSpace(request.UserID),
 		ConversationID: strings.TrimSpace(request.ConversationID),
 	}
 	switch {
 	case key.UserID == "":
-		return Key{}, errors.New("conversation runner: user ID is required")
+		return conversationentity.Key{}, errors.New("conversation runner: user ID is required")
 	case key.ConversationID == "":
-		return Key{}, errors.New("conversation runner: conversation ID is required")
+		return conversationentity.Key{}, errors.New("conversation runner: conversation ID is required")
 	case request.Input.Role != ai.RoleUser:
-		return Key{}, fmt.Errorf("conversation runner: input role must be user, got %q", request.Input.Role)
+		return conversationentity.Key{}, fmt.Errorf("conversation runner: input role must be user, got %q", request.Input.Role)
 	}
 	inputText, err := ai.TextContent(request.Input.Content)
 	if err != nil {
-		return Key{}, fmt.Errorf("conversation runner: input content: %w", err)
+		return conversationentity.Key{}, fmt.Errorf("conversation runner: input content: %w", err)
 	}
 	if strings.TrimSpace(inputText) == "" {
-		return Key{}, errors.New("conversation runner: input content must not be empty")
+		return conversationentity.Key{}, errors.New("conversation runner: input content must not be empty")
 	}
 	if len(request.Input.ToolCalls) != 0 || request.Input.ToolCallID != "" ||
 		request.Input.ToolName != "" || request.Input.IsError {
-		return Key{}, errors.New("conversation runner: input must not contain tool fields")
+		return conversationentity.Key{}, errors.New("conversation runner: input must not contain tool fields")
 	}
 	return key, nil
 }
