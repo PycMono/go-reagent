@@ -3,6 +3,7 @@ package errors
 import (
 	"context"
 	stderrors "errors"
+	"io/fs"
 	"testing"
 )
 
@@ -25,6 +26,24 @@ func TestErrorCodeValuesAreStable(t *testing.T) {
 	for code, value := range want {
 		if string(code) != value {
 			t.Fatalf("code %q = %q, want %q", code, code, value)
+		}
+	}
+}
+
+func TestClassifyToolUsesStableCodes(t *testing.T) {
+	tests := []struct {
+		err  error
+		want ErrorCode
+	}{
+		{err: fs.ErrNotExist, want: ErrorCodeToolResourceNotFound},
+		{err: fs.ErrPermission, want: ErrorCodeToolPermissionDenied},
+		{err: context.DeadlineExceeded, want: ErrorCodeToolTimeout},
+		{err: stderrors.New("failed"), want: ErrorCodeToolRuntime},
+	}
+	for _, tt := range tests {
+		got := ClassifyTool("execute", tt.err)
+		if ErrorCodeOf(got) != tt.want || !stderrors.Is(got, tt.err) {
+			t.Fatalf("ClassifyTool(%v) = %v", tt.err, got)
 		}
 	}
 }

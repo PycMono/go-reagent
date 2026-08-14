@@ -11,6 +11,7 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 type Execution struct {
@@ -38,7 +39,7 @@ const (
 // DefaultMiddlewareRegistrations returns a fresh ordered default middleware set.
 func DefaultMiddlewareRegistrations() []MiddlewareRegistration {
 	return []MiddlewareRegistration{
-		{Name: "recovery", Order: 10, Middleware: recoveryMiddleware()},
+		{Name: "panic_recovery", Order: 10, Middleware: panicRecoveryMiddleware()},
 		{Name: "schema_validation", Order: 20, Middleware: schemaValidationMiddleware()},
 		{Name: "logging", Order: 30, Middleware: loggingMiddleware()},
 		{Name: "event_forwarding", Order: 40, Middleware: eventForwardingMiddleware()},
@@ -62,7 +63,7 @@ func composeHandler(registrations []MiddlewareRegistration) Handler {
 	return handler
 }
 
-func recoveryMiddleware() Middleware {
+func panicRecoveryMiddleware() Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, execution Execution, emit ai.UpdateEmitter) (output ai.ToolOutput, err error) {
 			defer func() {
@@ -77,7 +78,11 @@ func recoveryMiddleware() Middleware {
 					logsdk.Any("stack", debug.Stack()),
 				)
 				output = ai.ToolOutput{}
-				err = errors.New("tool execution failed")
+				err = pierrors.Wrap(
+					pierrors.ErrorCodeToolPanic,
+					"tool panic",
+					errors.New("tool execution failed"),
+				)
 			}()
 			return next(ctx, execution, emit)
 		}
@@ -89,7 +94,11 @@ func schemaValidationMiddleware() Middleware {
 		return func(ctx context.Context, execution Execution, emit ai.UpdateEmitter) (ai.ToolOutput, error) {
 			if execution.ValidateArgs != nil {
 				if err := execution.ValidateArgs(execution.Call.Arguments); err != nil {
-					return ai.ToolOutput{}, err
+					return ai.ToolOutput{}, pierrors.Wrap(
+						pierrors.ErrorCodeToolInvalidArguments,
+						"tool arguments",
+						err,
+					)
 				}
 			}
 			return next(ctx, execution, emit)
