@@ -1,0 +1,225 @@
+package chat
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/PycMono/go-context-sdk/bizctx"
+	chatservice "github.com/PycMono/go-reagent/application/service/chat"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
+	"github.com/PycMono/go-reagent/conversation"
+	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
+	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
+	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/gin-gonic/gin"
+)
+
+type controllerIDs struct {
+	mu     sync.Mutex
+	values []string
+}
+
+func (f *controllerIDs) NextID() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	value := f.values[0]
+	f.values = f.values[1:]
+	return value
+}
+
+type controllerRepo struct {
+	created      *conversationentity.Conversation
+	found        bool
+	listQuery    conversationrepo.ListQuery
+	listPage     conversationrepo.ListPage
+	messageQuery conversationrepo.MessageQuery
+	messagePage  conversationrepo.MessagePage
+	rename       []string
+	deleted      []string
+	deleteErr    error
+}
+
+func (f *controllerRepo) Create(_ context.Context, value *conversationentity.Conversation) error {
+	f.created = value
+	return nil
+}
+func (f *controllerRepo) FindByUserIDAndConversationID(_ context.Context, _, _ string) (*conversationentity.Conversation, bool, error) {
+	return &conversationentity.Conversation{ConversationID: "chat-1"}, f.found, nil
+}
+func (f *controllerRepo) ListByUserID(_ context.Context, query conversationrepo.ListQuery) (conversationrepo.ListPage, error) {
+	f.listQuery = query
+	return f.listPage, nil
+}
+func (f *controllerRepo) ListMessages(_ context.Context, query conversationrepo.MessageQuery) (conversationrepo.MessagePage, error) {
+	f.messageQuery = query
+	return f.messagePage, nil
+}
+func (f *controllerRepo) Rename(_ context.Context, userID, conversationID, name string) error {
+	f.rename = []string{userID, conversationID, name}
+	return nil
+}
+func (f *controllerRepo) RenameIfUntitled(context.Context, string, string, string) error { return nil }
+func (f *controllerRepo) Delete(_ context.Context, userID, conversationID string) error {
+	f.deleted = []string{userID, conversationID}
+	return f.deleteErr
+}
+
+type controllerRunner func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error)
+
+func (f controllerRunner) Run(ctx context.Context, request conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+	return f(ctx, request, reporter)
+}
+
+func testRouter(service *chatservice.Service) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(bizctx.WithKV(c.Request.Context(), bizctx.UserID("visitor-1")))
+		c.Next()
+	})
+	ctl := NewController(service)
+	routes := router.Group("/api/v1/conversations")
+	routes.POST("", ctl.CreateConversation)
+	routes.GET("", ctl.ListConversations)
+	routes.PATCH("/:id", ctl.RenameConversation)
+	routes.DELETE("/:id", ctl.DeleteConversation)
+	routes.GET("/:id/messages", ctl.ListMessages)
+	routes.POST("/:id/runs", ctl.StartRun)
+	routes.POST("/:id/runs/:run_id/cancel", ctl.CancelRun)
+	return router
+}
+
+func TestControllerCRUDUsesBusinessContextIdentity(t *testing.T) {
+	repo := &controllerRepo{deleteErr: commonerrors.ErrNotFound}
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"internal-1", "chat-1"}}, nil)
+	router := testRouter(service)
+
+	create := httptest.NewRecorder()
+	router.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil))
+	if create.Code != http.StatusOK || repo.created == nil || repo.created.UserID != "visitor-1" {
+		t.Fatalf("create status/repo = %d / %#v", create.Code, repo.created)
+	}
+
+	list := httptest.NewRecorder()
+	router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=5&keyword=docs", nil))
+	if list.Code != http.StatusOK || repo.listQuery.UserID != "visitor-1" || repo.listQuery.Limit != 5 || repo.listQuery.Keyword != "docs" {
+		t.Fatalf("list status/query = %d / %#v", list.Code, repo.listQuery)
+	}
+
+	messages := httptest.NewRecorder()
+	router.ServeHTTP(messages, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/chat-1/messages?limit=8", nil))
+	if messages.Code != http.StatusOK || repo.messageQuery.UserID != "visitor-1" || repo.messageQuery.ConversationID != "chat-1" || repo.messageQuery.Limit != 8 {
+		t.Fatalf("messages status/query = %d / %#v", messages.Code, repo.messageQuery)
+	}
+
+	rename := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/chat-1", strings.NewReader(`{"name":"New"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rename, request)
+	if rename.Code != http.StatusOK || strings.Join(repo.rename, ",") != "visitor-1,chat-1,New" {
+		t.Fatalf("rename status/args = %d / %#v", rename.Code, repo.rename)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/api/v1/conversations/chat-1", nil))
+	if deleteResponse.Code != http.StatusNotFound || strings.Join(repo.deleted, ",") != "visitor-1,chat-1" {
+		t.Fatalf("delete status/args = %d / %#v", deleteResponse.Code, repo.deleted)
+	}
+}
+
+func TestControllerRejectsMalformedInput(t *testing.T) {
+	repo := &controllerRepo{}
+	router := testRouter(chatservice.NewService(repo, &controllerIDs{}, nil))
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/chat-1", strings.NewReader(`{"name":`)),
+		httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/chat-1", strings.NewReader(`{"name":""}`)),
+		httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=101", nil),
+	} {
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%s status = %d, body=%s", request.URL, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
+	repo := &controllerRepo{found: true}
+	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+		reporter.Report(ctx, pi.NewThinkingEvent())
+		reporter.Report(ctx, pi.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
+		return pi.RunResult{}, nil
+	})
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner)
+	router := testRouter(service)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/chat-1/runs", bytes.NewBufferString(`{"content":"hello"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream" ||
+		response.Header().Get("Cache-Control") != "no-cache" || response.Header().Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("status/headers = %d / %#v", response.Code, response.Header())
+	}
+	body := response.Body.String()
+	for _, event := range []string{"run.started", "agent.thinking", "message.completed", "run.completed"} {
+		if !strings.Contains(body, "event: "+event+"\n") || !strings.Contains(body, "data: {") {
+			t.Fatalf("missing %q in SSE body:\n%s", event, body)
+		}
+	}
+	if !strings.Contains(body, `"run_id":"run-1"`) || !strings.Contains(body, `"text":"done"`) {
+		t.Fatalf("SSE data = %s", body)
+	}
+}
+
+func TestCancelRunForwardsPathAndBusinessIdentity(t *testing.T) {
+	repo := &controllerRepo{found: true}
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	runner := controllerRunner(func(ctx context.Context, request conversation.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
+		if request.UserID != "visitor-1" || request.ConversationID != "chat-1" || request.RunID != "run-1" {
+			t.Errorf("request = %#v", request)
+		}
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		return pi.RunResult{}, ctx.Err()
+	})
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner)
+	router := testRouter(service)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/chat-1/runs", bytes.NewBufferString(`{"content":"hello"}`))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(response, request)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("run did not start")
+	}
+	cancelResponse := httptest.NewRecorder()
+	router.ServeHTTP(cancelResponse, httptest.NewRequest(http.MethodPost, "/api/v1/conversations/chat-1/runs/run-1/cancel", nil))
+	if cancelResponse.Code != http.StatusOK {
+		t.Fatalf("cancel status/body = %d / %s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("runner was not canceled")
+	}
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not finish")
+	}
+}
