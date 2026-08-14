@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	chatctl "github.com/PycMono/go-reagent/infrastructure/controller/http/chat"
+	pagectl "github.com/PycMono/go-reagent/infrastructure/controller/http/page"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 )
@@ -12,7 +13,10 @@ const v1Prefix = "/api/v1"
 
 var Register = fx.Options(
 	fx.Provide(chatctl.NewController),
+	fx.Provide(pagectl.NewProductionRenderer),
+	fx.Provide(pagectl.NewController),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterPageRoutes),
 )
 
 func RegisterRoutes(router *gin.Engine, chatCtl *chatctl.Controller) {
@@ -27,4 +31,9 @@ func RegisterRoutes(router *gin.Engine, chatCtl *chatctl.Controller) {
 	conversations.GET("/:id/messages", chatCtl.ListMessages)
 	conversations.POST("/:id/runs", chatCtl.StartRun)
 	conversations.POST("/:id/runs/:run_id/cancel", chatCtl.CancelRun)
+}
+
+func RegisterPageRoutes(router *gin.Engine, pageCtl *pagectl.Controller) {
+	router.GET("/", pageCtl.Chat)
+	router.Static("/static", "frontend/static")
 }
