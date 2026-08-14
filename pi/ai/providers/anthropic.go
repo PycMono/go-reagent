@@ -38,11 +38,11 @@ func (p *AnthropicImpl) Generate(
 ) (*ai.Message, error) {
 	messages, system, err := toAnthropicMessages(msgs)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("anthropic generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
 	}
 	tools, err := toAnthropicTools(availableTools)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("anthropic generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
 	}
 
 	params := anthropicsdk.MessageNewParams{
@@ -57,7 +57,7 @@ func (p *AnthropicImpl) Generate(
 
 	response, err := p.client.Messages.New(ctx, params)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("anthropic generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
 	}
 
 	result := &ai.Message{Role: ai.RoleAssistant}

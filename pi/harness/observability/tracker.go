@@ -81,7 +81,7 @@ func (t *CostTracker) Generate(
 			logsdk.Any("model", t.model),
 			logsdk.Any("latency_ms", latencyMS),
 		)
-		return nil, pierrors.WrapGeneration("model cost tracking", errors.New("provider response usage is required"))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model cost tracking", errors.New("provider response usage is required"))
 	}
 	if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 || latencyMS < 0 {
 		logsdk.Warn(ctx, "model invocation usage invalid",
@@ -91,7 +91,7 @@ func (t *CostTracker) Generate(
 			logsdk.Any("model", t.model),
 			logsdk.Any("latency_ms", latencyMS),
 		)
-		return nil, pierrors.WrapGeneration("model cost tracking", errors.New("provider response usage must be non-negative"))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model cost tracking", errors.New("provider response usage must be non-negative"))
 	}
 
 	result := *response
@@ -108,7 +108,7 @@ func (t *CostTracker) Generate(
 			logsdk.Any("model", t.model),
 			logsdk.Any("latency_ms", latencyMS),
 		)
-		return nil, pierrors.WrapGeneration("model cost tracking", errors.New("calculated model cost is outside the supported range"))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model cost tracking", errors.New("calculated model cost is outside the supported range"))
 	}
 	usage.CostUSD = cost
 	usage.LatencyMS = latencyMS

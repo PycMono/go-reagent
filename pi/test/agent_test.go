@@ -192,8 +192,8 @@ func TestAgentRunPreservesPartialMessagesOnClientFailure(t *testing.T) {
 	})
 
 	result, err := runtime.Run(context.Background(), validAgentRequest("hello"), nil)
-	if err == nil || !errors.Is(err, pierrors.ErrGeneration) {
-		t.Fatalf("Run() error = %v, want pierrors.ErrGeneration", err)
+	if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
+		t.Fatalf("Run() error = %v, want %q", err, pierrors.ErrorCodeAIGeneration)
 	}
 	if len(result.NewMessages) != 2 {
 		t.Fatalf("RunResult = %#v, want tool call and completed tool result", result)

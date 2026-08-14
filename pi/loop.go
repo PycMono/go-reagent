@@ -73,7 +73,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			callSequence++
 			thinkResp, err := l.provider.Generate(ctx, contextHistory, nil)
 			if err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.WrapGeneration("thinking", err)))
+				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
 			if thinkResp == nil {
 				return finish(errors.New("Thinking 阶段生成失败: provider returned an empty response"))
@@ -82,7 +82,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", err))
 			}
 			if err := validateMeteredUsage(thinkResp.Usage); err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.WrapGeneration("model usage", err)))
+				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
 			}
 			invocations = append(invocations, ModelInvocation{
 				Sequence: callSequence,
@@ -106,7 +106,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		callSequence++
 		actionResp, err := l.provider.Generate(ctx, contextHistory, availableTools)
 		if err != nil {
-			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.WrapGeneration("action", err)))
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
 		if actionResp == nil {
 			return finish(errors.New("Action 阶段生成失败: provider returned an empty response"))
@@ -115,7 +115,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", err))
 		}
 		if err := validateMeteredUsage(actionResp.Usage); err != nil {
-			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.WrapGeneration("model usage", err)))
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
 		}
 		invocations = append(invocations, ModelInvocation{
 			Sequence: callSequence,
