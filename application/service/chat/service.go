@@ -3,11 +3,13 @@ package chat
 import (
 	"context"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/common/dto"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/common/vo"
+	"github.com/PycMono/go-reagent/conversation"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/domain/repository"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
@@ -22,10 +24,14 @@ const (
 type Service struct {
 	repository conversationrepo.IConversationManagementRepository
 	ids        repository.IIDService
+	runner     conversation.Runner
+
+	activeMu sync.Mutex
+	active   map[string]*activeRunEntry
 }
 
-func NewService(repository conversationrepo.IConversationManagementRepository, ids repository.IIDService) *Service {
-	return &Service{repository: repository, ids: ids}
+func NewService(repository conversationrepo.IConversationManagementRepository, ids repository.IIDService, runner conversation.Runner) *Service {
+	return &Service{repository: repository, ids: ids, runner: runner, active: make(map[string]*activeRunEntry)}
 }
 
 func (s *Service) CreateConversation(ctx context.Context, userID string) (*vo.ConversationVO, error) {
