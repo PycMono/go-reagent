@@ -30,6 +30,8 @@ const (
 	ModelInvocationPhaseThinking ModelInvocationPhase = "thinking"
 	// ModelInvocationPhaseAction 表示生成回复或工具调用的模型调用。
 	ModelInvocationPhaseAction ModelInvocationPhase = "action"
+	// ModelInvocationPhaseCompaction 表示上下文摘要阶段的模型调用。
+	ModelInvocationPhaseCompaction ModelInvocationPhase = "compaction"
 )
 
 // ModelInvocation 记录一次已完成且已计量的模型调用。
