@@ -58,6 +58,14 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 	})
 	turnCount := 0
 	var callSequence uint32
+	recordInvocation := func(phase ModelInvocationPhase, usage ai.Usage) {
+		callSequence++
+		invocations = append(invocations, ModelInvocation{
+			Sequence: callSequence,
+			Phase:    phase,
+			Usage:    usage,
+		})
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
@@ -70,11 +78,15 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			if reporter != nil {
 				reporter.Report(ctx, NewThinkingEvent())
 			}
-			callSequence++
-			thinkResp, err := l.generateWithRetry(ctx, contextHistory, nil)
+			generated, err := l.generate(ctx, contextHistory, nil)
+			contextHistory = generated.context
+			if generated.compactionUsage != nil {
+				recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
+			}
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
+			thinkResp := generated.message
 			if thinkResp == nil {
 				return finish(errors.New("Thinking 阶段生成失败: provider returned an empty response"))
 			}
@@ -84,11 +96,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			if err := validateMeteredUsage(thinkResp.Usage); err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
 			}
-			invocations = append(invocations, ModelInvocation{
-				Sequence: callSequence,
-				Phase:    ModelInvocationPhaseThinking,
-				Usage:    *thinkResp.Usage,
-			})
+			recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)
 			thinkingText, err := ai.TextContent(thinkResp.Content)
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: response content: %w", err))
@@ -103,11 +111,15 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
-		callSequence++
-		actionResp, err := l.generateWithRetry(ctx, contextHistory, availableTools)
+		generated, err := l.generate(ctx, contextHistory, availableTools)
+		contextHistory = generated.context
+		if generated.compactionUsage != nil {
+			recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
+		}
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
+		actionResp := generated.message
 		if actionResp == nil {
 			return finish(errors.New("Action 阶段生成失败: provider returned an empty response"))
 		}
@@ -117,11 +129,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		if err := validateMeteredUsage(actionResp.Usage); err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
 		}
-		invocations = append(invocations, ModelInvocation{
-			Sequence: callSequence,
-			Phase:    ModelInvocationPhaseAction,
-			Usage:    *actionResp.Usage,
-		})
+		recordInvocation(ModelInvocationPhaseAction, *actionResp.Usage)
 		contextHistory = append(contextHistory, *actionResp)
 		newMessages = append(newMessages, *actionResp)
 		if len(actionResp.ToolCalls) == 0 {
