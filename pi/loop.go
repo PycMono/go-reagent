@@ -162,15 +162,16 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			return finish(fmt.Errorf("%w: schedule tools: %w", pierrors.ErrToolRuntime, err))
 		}
 		for _, result := range results {
-			message := ai.Message{
+			rawMessage := ai.Message{
 				Role:       ai.RoleTool,
-				Content:    result.Content,
+				Content:    append([]ai.ContentBlock(nil), result.Content...),
 				ToolCallID: result.ToolCallID,
 				ToolName:   result.ToolName,
 				IsError:    result.IsError,
 			}
-			contextHistory = append(contextHistory, message)
-			newMessages = append(newMessages, message)
+			modelMessage := toolRecoveryMessage(rawMessage, result.ErrorCode)
+			contextHistory = append(contextHistory, modelMessage)
+			newMessages = append(newMessages, rawMessage)
 		}
 	}
 }

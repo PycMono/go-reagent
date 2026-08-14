@@ -123,3 +123,27 @@ func (l *Loop) compact(ctx context.Context, plan harness.CompactionPlan) ([]ai.M
 	usage := *response.Usage
 	return harness.ApplySummary(plan, strings.TrimSpace(text)), &usage, nil
 }
+
+func recoveryHint(code pierrors.ErrorCode) string {
+	switch code {
+	case pierrors.ErrorCodeToolEditNoMatch:
+		return "先使用 read 获取文件最新内容，再使用精确的 oldText 重新编辑。"
+	case pierrors.ErrorCodeToolEditNotUnique:
+		return "增加 oldText 的相邻代码，确保只匹配一处后再编辑。"
+	case pierrors.ErrorCodeToolResourceNotFound:
+		return "不要继续猜测路径；先检查真实目录结构和文件名。"
+	default:
+		return ""
+	}
+}
+
+func toolRecoveryMessage(message ai.Message, code pierrors.ErrorCode) ai.Message {
+	hint := recoveryHint(code)
+	if hint == "" {
+		return message
+	}
+	enhanced := message
+	enhanced.Content = append([]ai.ContentBlock(nil), message.Content...)
+	enhanced.Content = append(enhanced.Content, ai.TextBlock("\n\n[Recovery Hint]\n"+hint))
+	return enhanced
+}
