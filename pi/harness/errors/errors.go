@@ -11,24 +11,36 @@ import (
 type ErrorCode string
 
 const (
-	ErrorCodeUnknown          ErrorCode = "unknown"
-	ErrorCodeConfigLoad       ErrorCode = "config_load_failed"
-	ErrorCodeConfigInvalid    ErrorCode = "config_invalid"
-	ErrorCodeInitialization   ErrorCode = "initialization_failed"
-	ErrorCodeRequestInvalid   ErrorCode = "request_invalid"
-	ErrorCodeWorkspaceInvalid ErrorCode = "workspace_invalid"
-	ErrorCodeAIGeneration     ErrorCode = "ai_generation_failed"
-	ErrorCodeToolRuntime      ErrorCode = "tool_runtime_failed"
-	ErrorCodeCanceled         ErrorCode = "canceled"
-	ErrorCodeDeadlineExceeded ErrorCode = "deadline_exceeded"
-	ErrorCodeClosed           ErrorCode = "agent_closed"
-	ErrorCodeInternal         ErrorCode = "internal"
+	ErrorCodeUnknown              ErrorCode = "unknown"
+	ErrorCodeConfigLoad           ErrorCode = "config_load_failed"
+	ErrorCodeConfigInvalid        ErrorCode = "config_invalid"
+	ErrorCodeInitialization       ErrorCode = "initialization_failed"
+	ErrorCodeRequestInvalid       ErrorCode = "request_invalid"
+	ErrorCodeWorkspaceInvalid     ErrorCode = "workspace_invalid"
+	ErrorCodeAIGeneration         ErrorCode = "ai_generation_failed"
+	ErrorCodeAITransient          ErrorCode = "ai_transient"
+	ErrorCodeAIRateLimited        ErrorCode = "ai_rate_limited"
+	ErrorCodeAIContextOverflow    ErrorCode = "ai_context_overflow"
+	ErrorCodeAIUnauthorized       ErrorCode = "ai_unauthorized"
+	ErrorCodeAIQuotaExceeded      ErrorCode = "ai_quota_exceeded"
+	ErrorCodeAIInvalidRequest     ErrorCode = "ai_invalid_request"
+	ErrorCodeToolRuntime          ErrorCode = "tool_runtime_failed"
+	ErrorCodeToolInvalidArguments ErrorCode = "tool_invalid_arguments"
+	ErrorCodeToolResourceNotFound ErrorCode = "tool_resource_not_found"
+	ErrorCodeToolPermissionDenied ErrorCode = "tool_permission_denied"
+	ErrorCodeToolEditNoMatch      ErrorCode = "tool_edit_no_match"
+	ErrorCodeToolEditNotUnique    ErrorCode = "tool_edit_not_unique"
+	ErrorCodeToolTimeout          ErrorCode = "tool_timeout"
+	ErrorCodeToolPanic            ErrorCode = "tool_panic"
+	ErrorCodeCanceled             ErrorCode = "canceled"
+	ErrorCodeDeadlineExceeded     ErrorCode = "deadline_exceeded"
+	ErrorCodeClosed               ErrorCode = "agent_closed"
+	ErrorCodeInternal             ErrorCode = "internal"
 )
 
 var (
 	ErrClosed           = stderrors.New("reagent: agent closed")
 	ErrWorkspaceInvalid = stderrors.New("agent workspace invalid")
-	ErrGeneration       = stderrors.New("ai generation failed")
 	ErrRequestInvalid   = stderrors.New("agent request invalid")
 	ErrToolRuntime      = stderrors.New("agent tool runtime failed")
 )
@@ -92,8 +104,6 @@ func Classify(op string, err error) error {
 		return Wrap(ErrorCodeRequestInvalid, op, err)
 	case stderrors.Is(err, ErrWorkspaceInvalid):
 		return Wrap(ErrorCodeWorkspaceInvalid, op, err)
-	case stderrors.Is(err, ErrGeneration):
-		return Wrap(ErrorCodeAIGeneration, op, err)
 	case stderrors.Is(err, ErrToolRuntime):
 		return Wrap(ErrorCodeToolRuntime, op, err)
 	default:
@@ -109,23 +119,4 @@ func ClassifyInitialization(op string, err error) error {
 		return Wrap(ErrorCodeWorkspaceInvalid, op, err)
 	}
 	return Wrap(ErrorCodeInitialization, op, err)
-}
-
-// GenerationError preserves the provider error while classifying model generation.
-type GenerationError struct {
-	Op  string
-	Err error
-}
-
-func (err *GenerationError) Error() string { return fmt.Sprintf("%s: %v", err.Op, err.Err) }
-func (err *GenerationError) Unwrap() error { return err.Err }
-func (err *GenerationError) Is(target error) bool {
-	return target == ErrGeneration
-}
-
-func WrapGeneration(op string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return &GenerationError{Op: op, Err: err}
 }

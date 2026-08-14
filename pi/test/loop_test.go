@@ -56,7 +56,7 @@ func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
 			messages, err := loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
 				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")},
 			}}}, nil)
-			if err == nil || !errors.Is(err, pierrors.ErrGeneration) {
+			if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
 				t.Fatalf("Run() error = %v, want generation error", err)
 			}
 			if len(messages) != 0 {

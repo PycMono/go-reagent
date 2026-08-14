@@ -63,7 +63,7 @@ func TestCostTrackerRejectsMissingUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := tracker.Generate(context.Background(), nil, nil)
-	if err == nil || !errors.Is(err, pierrors.ErrGeneration) {
+	if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
 		t.Fatalf("Generate() error = %v, want generation error", err)
 	}
 	if result != nil {
@@ -82,7 +82,7 @@ func TestCostTrackerRejectsInvalidTokenUsage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result, err := tracker.Generate(context.Background(), nil, nil); result != nil || !errors.Is(err, pierrors.ErrGeneration) {
+		if result, err := tracker.Generate(context.Background(), nil, nil); result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
 			t.Fatalf("Generate() = %#v, %v, want nil generation error", result, err)
 		}
 	}
@@ -115,7 +115,7 @@ func TestCostTrackerRejectsCostOutsideLedgerRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := tracker.Generate(context.Background(), nil, nil)
-	if result != nil || !errors.Is(err, pierrors.ErrGeneration) {
+	if result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
 		t.Fatalf("Generate() = %#v, %v, want nil generation error", result, err)
 	}
 }

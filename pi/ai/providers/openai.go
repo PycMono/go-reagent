@@ -39,11 +39,11 @@ func (p *OpenAIImpl) Generate(
 ) (*ai.Message, error) {
 	openAIMessages, err := toOpenAIMessages(msgs)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("openai generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
 	}
 	openAITools, err := toOpenAITools(availableTools)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("openai generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
 	}
 
 	params := openaisdk.ChatCompletionNewParams{
@@ -56,10 +56,10 @@ func (p *OpenAIImpl) Generate(
 
 	response, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return nil, pierrors.WrapGeneration("openai generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
 	}
 	if len(response.Choices) == 0 {
-		return nil, pierrors.WrapGeneration("openai generate", fmt.Errorf("%s API 返回空 choices", p.name))
+		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s API 返回空 choices", p.name))
 	}
 
 	message := response.Choices[0].Message
