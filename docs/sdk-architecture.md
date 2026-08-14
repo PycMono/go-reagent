@@ -73,7 +73,7 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 
 `pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。使用默认 Provider、工具、Workspace 和 Loop 时，把 `pi.Register` 加入 Fx 图。不再存在 `pi/agent` 子包或第二套 SDK 门面。
 
-`pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Action 模型调用及其 Usage、成本与耗时。
+`pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Compaction/Action 模型调用及其 Usage、成本与耗时。
 
 ## 配置
 
@@ -96,11 +96,20 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
     -> 业务按自己的事务策略持久化
 ```
 
-`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 RunID、UserID 或 ConversationID，也不做会话锁、重试、排队或摘要。`History` 和当前 `Input` 统一使用业务 `Message`，目前只接受文本；History 允许 `sender_type=customer/ai`，Input 只允许 `customer`。`Message2AI` 负责转换成模型的 User/Assistant；ID、时间、昵称和文件地址只供业务识别，不进入模型上下文。完整的 `ai.Message` 只用于 `NewMessages`，以表达 Assistant、ToolCall 和 ToolResult。
+`Run` 是同步且无状态的。SDK 不查询会话、不保存消息、不管理 RunID、UserID 或 ConversationID，也不做会话锁或排队。`History` 和当前 `Input` 统一使用业务 `Message`，目前只接受文本；History 允许 `sender_type=customer/ai`，Input 只允许 `customer`。`Message2AI` 负责转换成模型的 User/Assistant；ID、时间、昵称和文件地址只供业务识别，不进入模型上下文。完整的 `ai.Message` 只用于 `NewMessages`，以表达 Assistant、ToolCall 和 ToolResult。
+
+单次 Run 内的错误恢复规则固定如下：
+
+- 只重试已分类的 Provider 瞬态错误和限流错误，等待 500 ms、1 s 后各重试一次；
+- 结构化 Context Overflow 触发一次 32 KiB 有界旧历史摘要，并只重试一次原请求；
+- Compaction 摘要的 Usage 以 `compaction` ModelInvocation 返回；
+- Tool Recovery Hint 由 ErrorCode 生成，只存在于下一次 Provider Context；
+- Reporter、`NewMessages` 和 Conversation 持久化继续保留原始 Tool Result；
+- 取消、超时、鉴权、配额、非法请求和未知 Provider 错误立即终止。
 
 `NewMessages` 只包含当前 Run 新增的 Assistant/Tool 消息，不包含 System、外部 Context、History、Input 或 Thinking 脚手架。运行中途失败时，已经完成的消息仍与错误一起返回；是否持久化部分结果由业务决定。
 
-默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `pi/harness/errors.ErrGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
+默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking、Compaction 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ErrorCodeAIGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
 
 `pi.Runner.Run` 通过最后一个参数接收 Reporter；不需要进度事件时传 `nil`。仓库 CLI 注入 Terminal/WeCom Reporter。
 
@@ -132,13 +141,26 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 | `ErrorCodeRequestInvalid` | `request_invalid` |
 | `ErrorCodeWorkspaceInvalid` | `workspace_invalid` |
 | `ErrorCodeAIGeneration` | `ai_generation_failed` |
+| `ErrorCodeAITransient` | `ai_transient` |
+| `ErrorCodeAIRateLimited` | `ai_rate_limited` |
+| `ErrorCodeAIContextOverflow` | `ai_context_overflow` |
+| `ErrorCodeAIUnauthorized` | `ai_unauthorized` |
+| `ErrorCodeAIQuotaExceeded` | `ai_quota_exceeded` |
+| `ErrorCodeAIInvalidRequest` | `ai_invalid_request` |
 | `ErrorCodeToolRuntime` | `tool_runtime_failed` |
+| `ErrorCodeToolInvalidArguments` | `tool_invalid_arguments` |
+| `ErrorCodeToolResourceNotFound` | `tool_resource_not_found` |
+| `ErrorCodeToolPermissionDenied` | `tool_permission_denied` |
+| `ErrorCodeToolEditNoMatch` | `tool_edit_no_match` |
+| `ErrorCodeToolEditNotUnique` | `tool_edit_not_unique` |
+| `ErrorCodeToolTimeout` | `tool_timeout` |
+| `ErrorCodeToolPanic` | `tool_panic` |
 | `ErrorCodeCanceled` | `canceled` |
 | `ErrorCodeDeadlineExceeded` | `deadline_exceeded` |
 | `ErrorCodeClosed` | `agent_closed` |
 | `ErrorCodeInternal` | `internal` |
 
-`pi/harness/errors.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`pi/harness/errors.ErrClosed` 和 `pi/harness/errors.ErrGeneration`；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。Pi SDK 不把厂商状态码扩展成新的公共 ErrorCode。
+`pi/harness/errors.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`pi/harness/errors.ErrClosed` 和具体 cause；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。Provider 适配器只读取官方结构化错误类型和 HTTP 状态，再统一映射为上述公共 ErrorCode，不通过错误文本猜测恢复动作。
 
 ## 生命周期
 
