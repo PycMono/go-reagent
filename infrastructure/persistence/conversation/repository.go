@@ -14,7 +14,6 @@ import (
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/domain/repository"
-	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"gorm.io/gorm"
 )
 
@@ -29,7 +28,7 @@ func NewConversationRepo(
 	provider sqlsdk.Provider,
 	transactions transaction.Manager,
 	idService repository.IIDService,
-) conversationrepo.IConversationRepository {
+) *Repo {
 	return &Repo{provider: provider, transactions: transactions, idService: idService}
 }
 

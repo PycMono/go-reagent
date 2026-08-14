@@ -190,7 +190,7 @@ func (service *sequenceIDService) NextID() string {
 }
 
 func newTestRepository(provider *contextDBProvider) *Repo {
-	return NewConversationRepo(provider, provider, &sequenceIDService{}).(*Repo)
+	return NewConversationRepo(provider, provider, &sequenceIDService{})
 }
 
 func newRepositoryTestProvider(t *testing.T) (*contextDBProvider, sqlmock.Sqlmock, func()) {
