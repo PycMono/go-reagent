@@ -145,6 +145,7 @@ go-reagent/
 ├── transport/                # Terminal 与 WeCom
 ├── cmd/
 │   ├── reagent/              # 自带 CLI 入口
+│   ├── server/               # 本地 Go Template Web Chat
 │   └── ping/                 # 独立 HTTP ping 示例
 ├── AGENTS.md                 # 自带 CLI 的默认 Agent 定义
 ├── skills/                   # 自带 CLI 的默认 Skills
@@ -172,6 +173,8 @@ cmd/reagent -> application
 项目使用 OpenAI Go v3、Anthropic Go SDK、`go-logger-sdk` v1.0.5 和 Uber Fx v1.23.0。
 
 ## 快速开始
+
+需要使用浏览器聊天、会话列表、详细消息和本地工具状态时，参见 [本地 Web Chat 启动指南](docs/web-chat.md)。Web 页面由 Go 服务直接提供，不需要单独部署 Node 服务。
 
 复制本地配置模板并限制文件权限。默认示例使用 JSON，也可以通过 `CONFIG_PATH` 指定 YAML 或 TOML：
 
