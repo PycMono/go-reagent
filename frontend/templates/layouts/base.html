@@ -1,0 +1,13 @@
+{{ define "base" }}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{ template "head" . }}
+  <title>{{ .Title }}</title>
+</head>
+<body>
+  {{ template "content" . }}
+  {{ template "scripts" . }}
+</body>
+</html>
+{{ end }}

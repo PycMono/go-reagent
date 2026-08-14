@@ -1,0 +1,27 @@
+{{ define "conversation-sidebar" }}
+<aside class="qb-chat__history" id="conversationSidebar" aria-label="会话列表">
+  <div class="qb-chat__brand-row">
+    <a class="qb-chat__brand" href="/" aria-label="Reagent Chat 首页">
+      <span class="qb-chat__brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>Reagent</span>
+    </a>
+    <button class="icon-button sidebar-close" id="sidebarClose" type="button" aria-label="关闭会话列表">×</button>
+  </div>
+  <button class="qb-chat__new-btn" id="newChatBtn" type="button">
+    <span aria-hidden="true">＋</span><span>新对话</span>
+  </button>
+  <label class="qb-chat__search">
+    <span class="sr-only">搜索会话</span>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+    <input id="conversationSearch" type="search" placeholder="搜索对话" autocomplete="off">
+  </label>
+  <div class="qb-chat__history-label"><span>最近对话</span><span id="conversationCount"></span></div>
+  <nav class="qb-chat__history-list" id="conversationList" aria-live="polite"></nav>
+  <button class="qb-chat__load-more" id="loadMoreConversations" type="button" hidden>加载更多</button>
+  <div class="qb-chat__sidebar-foot">
+    <span class="status-beacon" aria-hidden="true"></span>
+    <span>本地工作区</span>
+    <small>Cookie 隔离</small>
+  </div>
+</aside>
+{{ end }}
