@@ -47,6 +47,44 @@ func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultsHTTPServer(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTP.Host != "127.0.0.1" || cfg.HTTP.Port != "8080" ||
+		cfg.HTTP.ReadTimeout != 30 || cfg.HTTP.WriteTimeout != 0 || cfg.HTTP.SecureCookies {
+		t.Fatalf("HTTP = %#v", cfg.HTTP)
+	}
+}
+
+func TestLoadConfigRejectsInvalidHTTPServer(t *testing.T) {
+	tests := []struct {
+		name string
+		http string
+		want string
+	}{
+		{name: "invalid port", http: `{"port":"invalid"}`, want: "http.port"},
+		{name: "negative read timeout", http: `{"read_timeout":-1}`, want: "http.read_timeout"},
+		{name: "negative write timeout", http: `{"write_timeout":-1}`, want: "http.write_timeout"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, `{
+				"currentPlatform":"x",
+				"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+				"http":`+tt.http+`
+			}`))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsInvalidConversationAndMySQLConfiguration(t *testing.T) {
 	const (
 		credential = "never-print-mysql-password"

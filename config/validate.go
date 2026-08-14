@@ -2,12 +2,16 @@ package config
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 )
 
 func (config *Config) normalizeAndValidate() error {
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
+		return err
+	}
+	if err := config.HTTP.normalizeAndValidate(); err != nil {
 		return err
 	}
 	if config.SnowflakeNodeID < 0 || config.SnowflakeNodeID > 1023 {
@@ -17,6 +21,30 @@ func (config *Config) normalizeAndValidate() error {
 		return err
 	}
 	return config.Conversation.normalizeAndValidate(&config.MySQL)
+}
+
+func (config *HTTPConfig) normalizeAndValidate() error {
+	config.Host = strings.TrimSpace(config.Host)
+	if config.Host == "" {
+		config.Host = "127.0.0.1"
+	}
+	config.Port = strings.TrimSpace(config.Port)
+	if config.Port == "" {
+		config.Port = "8080"
+	}
+	if _, err := net.LookupPort("tcp", config.Port); err != nil {
+		return errors.New("http.port 必须是有效端口")
+	}
+	if config.ReadTimeout < 0 {
+		return errors.New("http.read_timeout 不能小于 0")
+	}
+	if config.ReadTimeout == 0 {
+		config.ReadTimeout = 30
+	}
+	if config.WriteTimeout < 0 {
+		return errors.New("http.write_timeout 不能小于 0")
+	}
+	return nil
 }
 
 func (config *ConversationConfig) normalizeAndValidate(mysql *MySQLConfig) error {
