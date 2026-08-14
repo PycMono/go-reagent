@@ -1,34 +1,35 @@
-package application
+// Package web assembles the long-running browser chat application separately
+// from the one-shot CLI application package.
+package web
 
 import (
 	"errors"
 	"net"
 	"strings"
 
+	"github.com/PycMono/go-reagent/application"
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
-	"github.com/PycMono/go-reagent/infrastructure"
+	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
 )
 
-// WebRegister assembles the long-running local chat server without the
-// one-shot CLI prompt or Agent lifecycle.
-var WebRegister = fx.Options(
+var Register = fx.Options(
 	pi.Register,
-	infrastructure.WebRegister,
+	infrastructureweb.Register,
 	conversation.Register,
 	chatservice.Register,
 	fx.Provide(
 		config.NewFromEnvironment,
 		config.NewPlatform,
-		NewWorkDir,
+		application.NewWorkDir,
 	),
-	fx.Invoke(validateWebConfig),
+	fx.Invoke(validateConfig),
 )
 
-func validateWebConfig(cfg *config.Config) error {
+func validateConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return errors.New("web config is required")
 	}

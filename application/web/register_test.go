@@ -1,4 +1,4 @@
-package application
+package web
 
 import (
 	"strings"
@@ -13,7 +13,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func TestWebRegisterResolvesWebGraphWithoutCLIInputs(t *testing.T) {
+func TestRegisterResolvesWebGraphWithoutCLIInputs(t *testing.T) {
 	var (
 		engine     *gin.Engine
 		server     *ginsdk.HTTPServer
@@ -23,15 +23,15 @@ func TestWebRegisterResolvesWebGraphWithoutCLIInputs(t *testing.T) {
 		page       *pagectl.Controller
 	)
 	err := fx.ValidateApp(
-		WebRegister,
+		Register,
 		fx.Populate(&engine, &server, &service, &store, &management, &page),
 	)
 	if err != nil {
-		t.Fatalf("WebRegister graph is invalid: %v", err)
+		t.Fatalf("Web Register graph is invalid: %v", err)
 	}
 }
 
-func TestValidateWebConfigRequiresPersistenceAndLoopback(t *testing.T) {
+func TestValidateConfigRequiresPersistenceAndLoopback(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  *config.Config
@@ -43,12 +43,12 @@ func TestValidateWebConfigRequiresPersistenceAndLoopback(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := validateWebConfig(test.cfg); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validateWebConfig() error = %v, want %q", err, test.want)
+			if err := validateConfig(test.cfg); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateConfig() error = %v, want %q", err, test.want)
 			}
 		})
 	}
-	if err := validateWebConfig(&config.Config{
+	if err := validateConfig(&config.Config{
 		Conversation: config.ConversationConfig{Enabled: true}, HTTP: config.HTTPConfig{Host: "::1"},
 	}); err != nil {
 		t.Fatalf("loopback config rejected: %v", err)

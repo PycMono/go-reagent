@@ -2,7 +2,7 @@ package main
 
 import (
 	logsdk "github.com/PycMono/go-logger-sdk"
-	"github.com/PycMono/go-reagent/application"
+	webapplication "github.com/PycMono/go-reagent/application/web"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -14,7 +14,7 @@ func main() {
 
 func newAppOptions() []fx.Option {
 	return []fx.Option{
-		application.WebRegister,
+		webapplication.Register,
 		fx.WithLogger(func() fxevent.Logger { return fxevent.NopLogger }),
 	}
 }
