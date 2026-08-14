@@ -24,6 +24,9 @@ func (f *idFake) NextID() string {
 
 type managementRepoFake struct {
 	created      *conversationentity.Conversation
+	foundValue   *conversationentity.Conversation
+	found        bool
+	findCalls    int
 	listQuery    conversationrepo.ListQuery
 	listPage     conversationrepo.ListPage
 	messageQuery conversationrepo.MessageQuery
@@ -38,7 +41,8 @@ func (f *managementRepoFake) Create(_ context.Context, value *conversationentity
 	return f.operationErr
 }
 func (f *managementRepoFake) FindByUserIDAndConversationID(context.Context, string, string) (*conversationentity.Conversation, bool, error) {
-	return nil, false, f.operationErr
+	f.findCalls++
+	return f.foundValue, f.found, f.operationErr
 }
 func (f *managementRepoFake) ListByUserID(_ context.Context, query conversationrepo.ListQuery) (conversationrepo.ListPage, error) {
 	f.listQuery = query
@@ -99,7 +103,7 @@ func TestServiceListsConversationsAndBuildsNextCursor(t *testing.T) {
 
 func TestServiceMapsDetailedMessages(t *testing.T) {
 	now := time.Date(2026, 8, 14, 10, 5, 20, 0, time.UTC)
-	repo := &managementRepoFake{messagePage: conversationrepo.MessagePage{
+	repo := &managementRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1"}, messagePage: conversationrepo.MessagePage{
 		Items: []*conversationentity.Message{{
 			ID: "message-1", TurnVersion: 3, Ordinal: 2, RunID: "run-1", Role: conversationentity.RoleAssistant,
 			Payload: conversationentity.MessagePayload{
@@ -122,6 +126,18 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 		message.ToolCalls[0].ID != "call-1" || string(message.ToolCalls[0].Arguments) != `{"path":"README.md"}` ||
 		message.ToolCallID != "call-0" || message.ToolName != "read" || !message.IsError || message.Ordinal != 2 {
 		t.Fatalf("message = %#v", message)
+	}
+}
+
+func TestServiceReturnsNotFoundForUnownedMessageHistory(t *testing.T) {
+	repo := &managementRepoFake{}
+	service := NewService(repo, &idFake{}, nil)
+	_, err := service.ListMessages(context.Background(), "visitor-1", "chat-1", dto.ListMessagesQuery{})
+	if !errors.Is(err, commonerrors.ErrNotFound) {
+		t.Fatalf("ListMessages() error = %v, want ErrNotFound", err)
+	}
+	if repo.findCalls != 1 || repo.messageQuery.ConversationID != "" {
+		t.Fatalf("find calls/query = %d / %#v", repo.findCalls, repo.messageQuery)
 	}
 }
 
