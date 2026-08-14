@@ -57,6 +57,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 	for _, migrationPath := range []string{
 		"../../../migrations/0001_conversation_persistence.up.sql",
 		"../../../migrations/0002_model_invocation_observability.up.sql",
+		"../../../migrations/0003_web_chat.up.sql",
 	} {
 		migration, err := os.ReadFile(migrationPath)
 		if err != nil {
@@ -93,7 +94,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := conversationpersistence.NewConversationRepo(provider, transactions, idService)
-	created := &conversationentity.Conversation{UserID: userID, ConversationID: conversationID}
+	created := &conversationentity.Conversation{UserID: userID, ConversationID: conversationID, Name: "Integration Chat"}
 	if err := repository.Create(ctx, created); err != nil {
 		t.Fatal(err)
 	}

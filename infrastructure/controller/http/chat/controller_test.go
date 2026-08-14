@@ -97,7 +97,7 @@ func testRouter(service *chatservice.Service) *gin.Engine {
 }
 
 func TestControllerCRUDUsesBusinessContextIdentity(t *testing.T) {
-	repo := &controllerRepo{deleteErr: commonerrors.ErrNotFound}
+	repo := &controllerRepo{found: true, deleteErr: commonerrors.ErrNotFound}
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"internal-1", "chat-1"}}, nil)
 	router := testRouter(service)
 

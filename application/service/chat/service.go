@@ -93,6 +93,15 @@ func (s *Service) ListMessages(ctx context.Context, userID, conversationID strin
 	if !validIdentity(userID) || !validIdentity(conversationID) {
 		return nil, commonerrors.ErrInvalidParam
 	}
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	_, found, err := s.repository.FindByUserIDAndConversationID(ctx, userID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, commonerrors.ErrNotFound
+	}
 	limit, err := normalizeLimit(query.Limit)
 	if err != nil {
 		return nil, err
@@ -105,7 +114,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, conversationID strin
 		}
 	}
 	page, err := s.repository.ListMessages(ctx, conversationrepo.MessageQuery{
-		UserID: strings.TrimSpace(userID), ConversationID: strings.TrimSpace(conversationID), Cursor: cursor, Limit: limit,
+		UserID: userID, ConversationID: conversationID, Cursor: cursor, Limit: limit,
 	})
 	if err != nil {
 		return nil, err
