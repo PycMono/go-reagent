@@ -62,7 +62,7 @@ func (f *managementRepoFake) Delete(_ context.Context, userID, conversationID st
 
 func TestServiceCreatesConversationWithDistinctIDs(t *testing.T) {
 	repo := &managementRepoFake{}
-	service := NewService(repo, &idFake{values: []string{"internal-1", "public-1"}})
+	service := NewService(repo, &idFake{values: []string{"internal-1", "public-1"}}, nil)
 	got, err := service.CreateConversation(context.Background(), "visitor-1")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestServiceListsConversationsAndBuildsNextCursor(t *testing.T) {
 		}, MessageTotal: 4}},
 		HasMore: true,
 	}}
-	service := NewService(repo, &idFake{})
+	service := NewService(repo, &idFake{}, nil)
 	got, err := service.ListConversations(context.Background(), "visitor-1", dto.ListConversationsQuery{Keyword: " chat "})
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 			}, CreatedAt: now,
 		}}, HasMore: true,
 	}}
-	service := NewService(repo, &idFake{})
+	service := NewService(repo, &idFake{}, nil)
 	got, err := service.ListMessages(context.Background(), "visitor-1", "chat-1", dto.ListMessagesQuery{})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 
 func TestServiceValidatesAndForwardsRenameDelete(t *testing.T) {
 	repo := &managementRepoFake{}
-	service := NewService(repo, &idFake{})
+	service := NewService(repo, &idFake{}, nil)
 	if err := service.RenameConversation(context.Background(), "visitor-1", "chat-1", dto.RenameConversationDTO{Name: "  New name  "}); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestServiceValidatesAndForwardsRenameDelete(t *testing.T) {
 }
 
 func TestServiceRejectsInvalidIdentityAndCursor(t *testing.T) {
-	service := NewService(&managementRepoFake{}, &idFake{})
+	service := NewService(&managementRepoFake{}, &idFake{}, nil)
 	if _, err := service.CreateConversation(context.Background(), " "); !errors.Is(err, commonerrors.ErrInvalidParam) {
 		t.Fatalf("CreateConversation() error = %v", err)
 	}
