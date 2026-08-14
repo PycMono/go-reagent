@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -220,4 +221,83 @@ func messagesContain(messages []ai.Message, fragment string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoopInjectsToolRecoveryHintOnlyIntoProviderContext(t *testing.T) {
+	call := ai.ToolCall{ID: "call-1", Name: "edit", Arguments: json.RawMessage(`{"path":"a"}`)}
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{call}},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
+	}}
+	toolRuntime := &fakeToolRuntime{
+		definitions: []ai.ToolDefinition{{Name: "edit"}},
+		results: map[string]pi.ToolResult{"edit": {
+			ToolCallID: "call-1",
+			ToolName:   "edit",
+			Content:    blocks("在文件中未找到 oldText"),
+			IsError:    true,
+			ErrorCode:  pierrors.ErrorCodeToolEditNoMatch,
+		}},
+	}
+	reporter := &recordingReporter{}
+	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
+	newMessages, err := loop.Run(context.Background(), harness.Context{
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("edit file")}},
+		Tools:    toolRuntime.Definitions(),
+	}, reporter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newMessages) != 3 || messageText(t, newMessages[1]) != "在文件中未找到 oldText" ||
+		strings.Contains(messageText(t, newMessages[1]), "Recovery Hint") {
+		t.Fatalf("NewMessages = %#v", newMessages)
+	}
+	observation := provider.requests[1][len(provider.requests[1])-1]
+	if !strings.Contains(messageText(t, observation), "在文件中未找到 oldText") ||
+		!strings.Contains(messageText(t, observation), "先使用 read") {
+		t.Fatalf("provider observation = %#v", observation)
+	}
+	var toolEnd *pi.ToolResult
+	for _, event := range reporter.Events() {
+		if event.Type == pi.AgentEventToolEnd {
+			toolEnd = event.Tool.Result
+		}
+	}
+	if toolEnd == nil || toolResultText(t, *toolEnd) != "在文件中未找到 oldText" ||
+		strings.Contains(toolResultText(t, *toolEnd), "Recovery Hint") {
+		t.Fatalf("ToolEnd result = %#v", toolEnd)
+	}
+	if len(toolRuntime.Calls()) != 1 {
+		t.Fatalf("tool calls = %d", len(toolRuntime.Calls()))
+	}
+}
+
+func TestLoopInjectsToolRecoveryHintSkipsUnknownCode(t *testing.T) {
+	call := ai.ToolCall{ID: "call-1", Name: "custom", Arguments: json.RawMessage(`{}`)}
+	provider := &fakeProvider{responses: []*ai.Message{
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{call}},
+		{Role: ai.RoleAssistant, Content: blocks("done")},
+	}}
+	toolRuntime := &fakeToolRuntime{
+		definitions: []ai.ToolDefinition{{Name: "custom"}},
+		results: map[string]pi.ToolResult{"custom": {
+			ToolCallID: "call-1",
+			ToolName:   "custom",
+			Content:    blocks("custom failed"),
+			IsError:    true,
+			ErrorCode:  pierrors.ErrorCodeToolRuntime,
+		}},
+	}
+	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
+	_, err := loop.Run(context.Background(), harness.Context{
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run")}},
+		Tools:    toolRuntime.Definitions(),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := provider.requests[1][len(provider.requests[1])-1]
+	if messageText(t, observation) != "custom failed" {
+		t.Fatalf("provider observation = %#v", observation)
+	}
 }
