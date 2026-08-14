@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
@@ -25,6 +26,7 @@ func NewAnthropic(config Options) ai.Provider {
 		client: anthropicsdk.NewClient(
 			option.WithAPIKey(config.APIKey),
 			option.WithBaseURL(config.BaseURL),
+			option.WithMaxRetries(0),
 		),
 		model: config.Model,
 		name:  config.ID,
@@ -57,7 +59,14 @@ func (p *AnthropicImpl) Generate(
 
 	response, err := p.client.Messages.New(ctx, params)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
+		return nil, p.classifyError(err)
+	}
+	if response.StopReason == anthropicsdk.StopReasonModelContextWindowExceeded {
+		return nil, pierrors.Wrap(
+			pierrors.ErrorCodeAIContextOverflow,
+			"anthropic generate",
+			errors.New("model context window exceeded"),
+		)
 	}
 
 	result := &ai.Message{Role: ai.RoleAssistant}
@@ -82,6 +91,31 @@ func (p *AnthropicImpl) Generate(
 	}
 
 	return result, nil
+}
+
+func (p *AnthropicImpl) classifyError(err error) error {
+	info := providerErrorInfo{err: err}
+	var apiErr *anthropicsdk.Error
+	if errors.As(err, &apiErr) {
+		info.statusCode = apiErr.StatusCode
+		info.providerCode = string(apiErr.Type())
+		switch apiErr.Type() {
+		case anthropicsdk.ErrorTypeBillingError:
+			info.quotaExceeded = true
+		case anthropicsdk.ErrorTypeRateLimitError:
+			info.statusCode = http.StatusTooManyRequests
+		case anthropicsdk.ErrorTypeTimeoutError:
+			info.statusCode = http.StatusRequestTimeout
+		case anthropicsdk.ErrorTypeOverloadedError,
+			anthropicsdk.ErrorTypeAPIError:
+			info.statusCode = http.StatusInternalServerError
+		case anthropicsdk.ErrorTypeAuthenticationError:
+			info.statusCode = http.StatusUnauthorized
+		case anthropicsdk.ErrorTypePermissionError:
+			info.statusCode = http.StatusForbidden
+		}
+	}
+	return classifyError(info)
 }
 
 func toAnthropicMessages(messages []ai.Message) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {

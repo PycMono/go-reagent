@@ -26,6 +26,7 @@ func NewOpenAi(config Options) ai.Provider {
 		client: openaisdk.NewClient(
 			option.WithAPIKey(config.APIKey),
 			option.WithBaseURL(config.BaseURL),
+			option.WithMaxRetries(0),
 		),
 		model: config.Model,
 		name:  config.ID,
@@ -56,7 +57,7 @@ func (p *OpenAIImpl) Generate(
 
 	response, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s API 请求失败: %w", p.name, err))
+		return nil, p.classifyError(err)
 	}
 	if len(response.Choices) == 0 {
 		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s API 返回空 choices", p.name))
@@ -88,6 +89,18 @@ func (p *OpenAIImpl) Generate(
 	}
 
 	return result, nil
+}
+
+func (p *OpenAIImpl) classifyError(err error) error {
+	info := providerErrorInfo{err: err}
+	var apiErr *openaisdk.Error
+	if errors.As(err, &apiErr) {
+		info.statusCode = apiErr.StatusCode
+		info.providerCode = apiErr.Code
+		info.contextOverflow = apiErr.Code == "context_length_exceeded"
+		info.quotaExceeded = apiErr.Code == "insufficient_quota"
+	}
+	return classifyError(info)
 }
 
 func toOpenAIMessages(messages []ai.Message) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
