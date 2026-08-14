@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 type EditOperation struct {
@@ -322,7 +323,11 @@ func findUniqueTextMatch(content, oldText string) (textMatch, error) {
 		return match, err
 	}
 
-	return textMatch{}, fmt.Errorf("在文件中未找到 oldText，请先调用 read 确认文件内容和缩进")
+	return textMatch{}, pierrors.Wrap(
+		pierrors.ErrorCodeToolEditNoMatch,
+		"edit match",
+		errors.New("在文件中未找到 oldText，请先调用 read 确认文件内容和缩进"),
+	)
 }
 
 func occurrenceIndexes(content, needle string) []int {
@@ -362,7 +367,11 @@ func requireUniqueMatch(matches []textMatch) (textMatch, bool, error) {
 	case 1:
 		return matches[0], true, nil
 	default:
-		return textMatch{}, false, fmt.Errorf("模糊匹配到了 %d 处相似代码，请提供更多上下文以确保唯一性", len(matches))
+		return textMatch{}, false, pierrors.Wrap(
+			pierrors.ErrorCodeToolEditNotUnique,
+			"edit match",
+			fmt.Errorf("模糊匹配到了 %d 处相似代码，请提供更多上下文以确保唯一性", len(matches)),
+		)
 	}
 }
 

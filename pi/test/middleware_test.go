@@ -9,6 +9,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 const (
@@ -49,7 +50,7 @@ func TestMiddlewareRunsByOrderThenName(t *testing.T) {
 	}
 }
 
-func TestRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
+func TestPanicRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
 	tool := testTool("panic", func(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
 		panic("sensitive panic value")
 	})
@@ -57,8 +58,13 @@ func TestRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) {
 
 	result, err := toolRuntime.Execute(context.Background(), ai.ToolCall{ID: "call", Name: "panic", Arguments: json.RawMessage(`{"text":"x"}`)}, nil)
 	text := toolResultText(t, result)
-	if err != nil || !result.IsError || strings.Contains(text, "sensitive panic value") || !strings.Contains(text, "failed") {
+	if err != nil || !result.IsError || result.ErrorCode != pierrors.ErrorCodeToolPanic ||
+		strings.Contains(text, "sensitive panic value") || !strings.Contains(text, "failed") {
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	registrations := pi.DefaultMiddlewareRegistrations()
+	if registrations[0].Name != "panic_recovery" {
+		t.Fatalf("default recovery middleware = %q", registrations[0].Name)
 	}
 }
 

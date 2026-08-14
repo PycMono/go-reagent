@@ -7,6 +7,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 type echoTool struct{}
@@ -40,7 +41,18 @@ func TestToolRuntimeValidatesArgumentsWithJSONSchema(t *testing.T) {
 	result, err := toolRuntime.Execute(context.Background(), ai.ToolCall{
 		ID: "1", Name: "echo", Arguments: []byte(`{}`),
 	}, nil)
-	if err != nil || !result.IsError {
+	if err != nil || !result.IsError || result.ErrorCode != pierrors.ErrorCodeToolInvalidArguments {
 		t.Fatalf("result/error = %#v, %v", result, err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["error_code"] != string(pierrors.ErrorCodeToolInvalidArguments) {
+		t.Fatalf("ToolResult JSON = %s", encoded)
 	}
 }

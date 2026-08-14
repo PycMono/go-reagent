@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -117,8 +118,12 @@ func observe(ctx context.Context, observer ToolEventObserver, event ToolEvent) {
 }
 
 func normalizeToolResult(call ai.ToolCall, output ai.ToolOutput, err error) ToolResult {
+	var errorCode pierrors.ErrorCode
+	if err != nil {
+		errorCode = pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", err))
+	}
 	if err != nil && len(output.Content) == 0 {
-		output.Content = []ai.ContentBlock{ai.TextBlock(err.Error())}
+		output.Content = []ai.ContentBlock{ai.TextBlock(toolErrorText(err))}
 	}
 	if err == nil && len(output.Content) == 0 {
 		output.Content = []ai.ContentBlock{ai.TextBlock("(no output)")}
@@ -130,7 +135,16 @@ func normalizeToolResult(call ai.ToolCall, output ai.ToolOutput, err error) Tool
 		Content:    output.Content,
 		Details:    output.Details,
 		IsError:    err != nil,
+		ErrorCode:  errorCode,
 	}
+}
+
+func toolErrorText(err error) string {
+	var classified *pierrors.Error
+	if errors.As(err, &classified) {
+		return classified.Err.Error()
+	}
+	return err.Error()
 }
 
 func errorResult(call ai.ToolCall, err error) ToolResult {

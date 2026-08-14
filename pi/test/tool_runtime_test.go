@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 type stubTool struct {
@@ -91,7 +94,7 @@ func TestToolRuntimeRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
 			result, err := toolRuntime.Execute(context.Background(), call, func(_ context.Context, event pi.ToolEvent) {
 				events = append(events, event)
 			})
-			if err != nil || !result.IsError {
+			if err != nil || !result.IsError || result.ErrorCode != pierrors.ErrorCodeToolInvalidArguments {
 				t.Fatalf("Execute() = (%#v, %v), want ordinary error result", result, err)
 			}
 			if len(events) != 2 || events[0].Phase != pi.ToolEventStart || events[1].Phase != pi.ToolEventEnd {
@@ -101,6 +104,31 @@ func TestToolRuntimeRejectsInvalidCallsBeforeToolExecution(t *testing.T) {
 	}
 	if got := calls.Load(); got != 0 {
 		t.Fatalf("tool calls = %d, want 0", got)
+	}
+}
+
+func TestToolRuntimeClassifiesFilesystemAndRuntimeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want pierrors.ErrorCode
+	}{
+		{name: "not found", err: fmt.Errorf("read: %w", fs.ErrNotExist), want: pierrors.ErrorCodeToolResourceNotFound},
+		{name: "runtime", err: errors.New("operation failed"), want: pierrors.ErrorCodeToolRuntime},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := testTool("read", func(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
+				return ai.ToolOutput{}, tt.err
+			})
+			toolRuntime := newTestToolRuntime(t, pi.DefaultMiddlewareRegistrations(), tool)
+			result, err := toolRuntime.Execute(context.Background(), ai.ToolCall{
+				ID: "call", Name: "read", Arguments: json.RawMessage(`{"text":"x"}`),
+			}, nil)
+			if err != nil || result.ErrorCode != tt.want || toolResultText(t, result) != tt.err.Error() {
+				t.Fatalf("Execute() = (%#v, %v)", result, err)
+			}
+		})
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 func TestFindUniqueTextMatchExact(t *testing.T) {
@@ -22,7 +23,7 @@ func TestFindUniqueTextMatchExact(t *testing.T) {
 
 func TestFindUniqueTextMatchRejectsExactAmbiguity(t *testing.T) {
 	_, err := findUniqueTextMatch("same\nsame\n", "same")
-	if err == nil || !strings.Contains(err.Error(), "2") {
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -37,7 +38,7 @@ func TestFindUniqueTextMatchNormalizesOnlyNewlines(t *testing.T) {
 
 func TestFindUniqueTextMatchRejectsNormalizedNewlineAmbiguity(t *testing.T) {
 	_, err := findUniqueTextMatch("x\r\ny\r\nx\r\ny", "x\ny")
-	if err == nil || !strings.Contains(err.Error(), "2") {
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -62,14 +63,14 @@ func TestFindUniqueTextMatchIgnoresLineIndentation(t *testing.T) {
 func TestFindUniqueTextMatchRejectsLineAmbiguity(t *testing.T) {
 	content := "\tif true {\n\t\trun()\n\t}\n\tif true {\n\t\trun()\n\t}\n"
 	_, err := findUniqueTextMatch(content, "if true {\nrun()\n}")
-	if err == nil || !strings.Contains(err.Error(), "2") {
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestFindUniqueTextMatchReportsNoMatch(t *testing.T) {
 	_, err := findUniqueTextMatch("present", "missing")
-	if err == nil || !strings.Contains(err.Error(), "read") {
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNoMatch {
 		t.Fatalf("error = %v", err)
 	}
 }

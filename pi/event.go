@@ -7,14 +7,16 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 type ToolResult struct {
-	ToolCallID string            `json:"tool_call_id"`
-	ToolName   string            `json:"tool_name"`
-	Content    []ai.ContentBlock `json:"content"`
-	Details    any               `json:"details,omitempty"`
-	IsError    bool              `json:"is_error"`
+	ToolCallID string             `json:"tool_call_id"`
+	ToolName   string             `json:"tool_name"`
+	Content    []ai.ContentBlock  `json:"content"`
+	Details    any                `json:"details,omitempty"`
+	IsError    bool               `json:"is_error"`
+	ErrorCode  pierrors.ErrorCode `json:"error_code,omitempty"`
 }
 
 type AgentEventType string

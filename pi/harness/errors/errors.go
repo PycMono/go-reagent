@@ -5,6 +5,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io/fs"
 )
 
 // ErrorCode is a stable machine-readable Pi error category.
@@ -108,6 +109,28 @@ func Classify(op string, err error) error {
 		return Wrap(ErrorCodeToolRuntime, op, err)
 	default:
 		return Wrap(ErrorCodeInternal, op, err)
+	}
+}
+
+func ClassifyTool(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var classified *Error
+	if stderrors.As(err, &classified) {
+		return err
+	}
+	switch {
+	case stderrors.Is(err, context.Canceled):
+		return Wrap(ErrorCodeCanceled, op, err)
+	case stderrors.Is(err, context.DeadlineExceeded):
+		return Wrap(ErrorCodeToolTimeout, op, err)
+	case stderrors.Is(err, fs.ErrNotExist):
+		return Wrap(ErrorCodeToolResourceNotFound, op, err)
+	case stderrors.Is(err, fs.ErrPermission):
+		return Wrap(ErrorCodeToolPermissionDenied, op, err)
+	default:
+		return Wrap(ErrorCodeToolRuntime, op, err)
 	}
 }
 
