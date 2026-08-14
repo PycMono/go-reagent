@@ -8,10 +8,19 @@ const DefaultHistoryMessageLimit = 100
 type Config struct {
 	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
+	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`
 	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
 	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
 	SnowflakeNodeID int                 `json:"snowflake_node_id" yaml:"snowflake_node_id" toml:"snowflake_node_id"`
+}
+
+type HTTPConfig struct {
+	Host          string `json:"host" yaml:"host" toml:"host"`
+	Port          string `json:"port" yaml:"port" toml:"port"`
+	ReadTimeout   int    `json:"read_timeout" yaml:"read_timeout" toml:"read_timeout"`
+	WriteTimeout  int    `json:"write_timeout" yaml:"write_timeout" toml:"write_timeout"`
+	SecureCookies bool   `json:"secure_cookies" yaml:"secure_cookies" toml:"secure_cookies"`
 }
 
 type ConversationConfig struct {

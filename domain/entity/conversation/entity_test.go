@@ -15,7 +15,7 @@ func TestConversationTableEntitiesMatchPersistenceSchema(t *testing.T) {
 	}{
 		{
 			name: "conversation", entity: Conversation{}, tableName: "agent_conversations",
-			columns: map[string]string{"ID": "column:id", "UserID": "column:user_id", "ConversationID": "column:conversation_id", "Version": "column:version"},
+			columns: map[string]string{"ID": "column:id", "UserID": "column:user_id", "ConversationID": "column:conversation_id", "Name": "column:name", "Version": "column:version"},
 		},
 		{
 			name: "message", entity: Message{}, tableName: "agent_messages",
@@ -44,6 +44,19 @@ func TestConversationTableEntitiesMatchPersistenceSchema(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConversationNameMatchesWebChatSchema(t *testing.T) {
+	field, ok := reflect.TypeOf(Conversation{}).FieldByName("Name")
+	if !ok {
+		t.Fatal("Conversation.Name is missing")
+	}
+	tag := field.Tag.Get("gorm")
+	for _, want := range []string{"column:name", "size:255", "not null"} {
+		if !containsTag(tag, want) {
+			t.Fatalf("Name gorm tag = %q, want containing %q", tag, want)
+		}
 	}
 }
 

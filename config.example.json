@@ -1,5 +1,12 @@
 {
   "snowflake_node_id": 0,
+  "http": {
+    "host": "127.0.0.1",
+    "port": "8080",
+    "read_timeout": 30,
+    "write_timeout": 0,
+    "secure_cookies": false
+  },
   "currentPlatform": "deepseek",
   "platforms": [
     {

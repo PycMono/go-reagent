@@ -63,3 +63,26 @@ func TestModelInvocationMigrationDefinesRequiredSchema(t *testing.T) {
 		t.Fatalf("down migration = %q, want %q", got, want)
 	}
 }
+
+func TestWebChatMigrationDefinesConversationName(t *testing.T) {
+	up, err := os.ReadFile("../../../migrations/0003_web_chat.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE agent_conversations",
+		"ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT 'Untitled Chat'",
+	} {
+		if !strings.Contains(string(up), want) {
+			t.Fatalf("up migration missing %q", want)
+		}
+	}
+
+	down, err := os.ReadFile("../../../migrations/0003_web_chat.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(down)), "ALTER TABLE agent_conversations DROP COLUMN name;"; got != want {
+		t.Fatalf("down migration = %q, want %q", got, want)
+	}
+}
