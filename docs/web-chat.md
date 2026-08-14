@@ -1,0 +1,72 @@
+# 本地 Web Chat
+
+`cmd/server` 提供一个基于 Gin、Go Template 和原生 JavaScript 的本地聊天页面。浏览器通过 HttpOnly Cookie 获得匿名身份；会话、用户消息、模型回复、工具调用结果和模型调用账本均由现有会话 Runner 写入 MySQL。Web 层不会绕过或修改 `pi`。
+
+## 1. 初始化数据库
+
+创建数据库后，按顺序执行迁移，不能跳过中间版本：
+
+```bash
+mysql -uroot -p harness < migrations/0001_conversation_persistence.up.sql
+mysql -uroot -p harness < migrations/0002_model_invocation_observability.up.sql
+mysql -uroot -p harness < migrations/0003_web_chat.up.sql
+```
+
+`0003_web_chat` 只为 `agent_conversations` 增加 `name`。会话列表里的 `message_total` 在查询时从 `agent_messages` 聚合，不持久化冗余的最后一条消息。
+
+## 2. 配置
+
+复制 `config.example.json` 为 `config.json`，填入有效模型平台、API Key 和定价，然后启用会话持久化。使用本地 `harness` MySQL 时可配置为：
+
+```json
+{
+  "http": {
+    "host": "127.0.0.1",
+    "port": "8080",
+    "read_timeout": 30,
+    "write_timeout": 0,
+    "secure_cookies": false
+  },
+  "conversation": {
+    "enabled": true,
+    "history_message_limit": 100
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "harness",
+    "user": "root",
+    "password": "123456",
+    "max_open": 100,
+    "max_idle": 10,
+    "conn_lifetime": 3600,
+    "conn_timeout": 3,
+    "log_level": 3,
+    "slow_threshold": 500
+  }
+}
+```
+
+`write_timeout` 必须保持为 `0`，否则长时间运行的 SSE 连接可能被服务器提前截断。生产配置仍需包含一个被 `currentPlatform` 选中的有效平台，其 `baseURL`、`apiKey`、`model` 和 `pricing` 都不能为空。
+
+## 3. 启动
+
+模板和静态资源使用仓库内的 `frontend/` 相对路径，因此请在仓库根目录运行：
+
+```bash
+CONFIG_PATH=./config.json go run ./cmd/server
+```
+
+打开 <http://127.0.0.1:8080>。健康检查地址为 <http://127.0.0.1:8080/health>。
+
+页面不需要 Node 服务或前端构建步骤。模型可以通过现有 pi Registry 调用 `read`、`edit`、`write`、`apply_patch`、`exec` 和 `process` 等本地工具；工具范围仍受当前 Workspace 和 Agent 规则约束。
+
+## 4. 身份与安全边界
+
+- 每个浏览器 Cookie Jar 对应一个匿名用户，Cookie 名为 `reagent_visitor`，有效期一年。
+- 清理或丢失 Cookie 会获得新用户身份，原会话仍在数据库中，但新身份无法读取它们。
+- 所有会话查询、重命名、删除、消息详情和运行取消均按 Cookie 用户做所有权校验。
+- 状态变更接口拒绝跨源浏览器请求；服务启动时也拒绝非回环监听地址。
+- 当前实现只支持本机使用。不要通过反向代理、端口转发或修改校验的方式暴露到局域网或公网；该部署方式不在安全支持范围内。
+
+若本机使用 HTTPS 终止，请把 `secure_cookies` 改为 `true`。纯 HTTP 的 `127.0.0.1` 开发环境保持 `false`。
