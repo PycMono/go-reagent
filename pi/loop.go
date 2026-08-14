@@ -71,7 +71,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 				reporter.Report(ctx, NewThinkingEvent())
 			}
 			callSequence++
-			thinkResp, err := l.provider.Generate(ctx, contextHistory, nil)
+			thinkResp, err := l.generateWithRetry(ctx, contextHistory, nil)
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
@@ -104,7 +104,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
 		callSequence++
-		actionResp, err := l.provider.Generate(ctx, contextHistory, availableTools)
+		actionResp, err := l.generateWithRetry(ctx, contextHistory, availableTools)
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
