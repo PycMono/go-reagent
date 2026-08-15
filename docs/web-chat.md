@@ -20,6 +20,9 @@ mysql -uroot -p harness < migrations/0003_web_chat.up.sql
 
 ```json
 {
+  "agent": {
+    "workspace_dir": "./workspaces/chat"
+  },
   "http": {
     "host": "127.0.0.1",
     "port": "8080",
@@ -49,6 +52,8 @@ mysql -uroot -p harness < migrations/0003_web_chat.up.sql
 
 `write_timeout` 必须保持为 `0`，否则长时间运行的 SSE 连接可能被服务器提前截断。生产配置仍需包含一个被 `currentPlatform` 选中的有效平台，其 `baseURL`、`apiKey`、`model` 和 `pricing` 都不能为空。
 
+`agent.workspace_dir` 选择唯一聊天 Agent 的 Workspace，空值默认使用 `./workspaces/chat`。相对路径以服务进程的当前目录为基准；路径必须存在、必须是目录，并且不能回退到进程当前目录。Workspace 中必须包含非空、UTF-8 的普通文件 `AGENTS.md`。
+
 ## 3. 启动
 
 模板和静态资源使用仓库内的 `frontend/` 相对路径，因此请在仓库根目录运行：
@@ -59,9 +64,25 @@ CONFIG_PATH=./config.json go run ./cmd/server
 
 打开 <http://127.0.0.1:8080>。健康检查地址为 <http://127.0.0.1:8080/health>。
 
-页面不需要 Node 服务或前端构建步骤。模型可以通过现有 pi Registry 调用 `read`、`edit`、`write`、`apply_patch`、`exec` 和 `process` 等本地工具；工具范围仍受当前 Workspace 和 Agent 规则约束。
+页面不需要 Node 服务或前端构建步骤。Web Agent 默认只注册受 Workspace 边界保护的 `read`，不会获得 `write`、`edit`、`apply_patch`、`exec` 或 `process`。需要查询天气、知识库、课程或订单时，应在业务 Fx 图中显式注册对应的真实 `ai.Tool`。
 
-## 4. 身份与安全边界
+## 4. 定制聊天 Agent
+
+默认 Workspace 结构如下：
+
+```text
+workspaces/chat/
+├── AGENTS.md       # 身份、行业、表达方式和长期规则
+├── skills/         # 可选：条件性流程
+├── docs/           # 可选：本地参考资料
+└── assets/         # 可选：其他资源
+```
+
+Workspace 可以没有 Skill，仅凭有效 `AGENTS.md` 正常聊天。存在匹配 Skill 时，模型必须先通过 `read` 完整读取对应 `SKILL.md`。修改 Workspace 文本会在下一次 Run 生效；新增或修改 Go 业务工具需要重新构建并重启服务。
+
+`AGENTS.md + Skills + Documents + 业务 Tools` 用于把同一个 Agent 配置成某个行业的专业助手，不会训练或修改模型权重。当前版本不提供在线训练、Agent 版本发布、多 Agent 选择或管理页面。
+
+## 5. 身份与安全边界
 
 - 每个浏览器 Cookie Jar 对应一个匿名用户，Cookie 名为 `reagent_visitor`，有效期一年。
 - 清理或丢失 Cookie 会获得新用户身份，原会话仍在数据库中，但新身份无法读取它们。

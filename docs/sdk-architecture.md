@@ -8,8 +8,8 @@ go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Co
 pi/ai <- pi/harness <- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers
-application -> config + conversation + infrastructure + transport + pi
-cmd/reagent -> application
+application/web -> config + conversation + infrastructure + pi
+cmd/server -> application/web
 ```
 
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
@@ -18,7 +18,7 @@ cmd/reagent -> application
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
 - `pi/test`：根 `pi` 的集中式公开 API、运行循环和包边界测试；各 Harness 子包的白盒测试仍与实现放在同一包。
 - `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载。
-- `application`：CLI 生命周期与业务组件组合。
+- `application/web`：浏览器聊天应用装配；`application/service/chat`：Conversation 用例。
 
 `pi/ai` 不依赖根 `pi` 或业务包；`pi/harness` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
@@ -71,7 +71,7 @@ type Runner interface {
 func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 ```
 
-`pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。使用默认 Provider、工具、Workspace 和 Loop 时，把 `pi.Register` 加入 Fx 图。不再存在 `pi/agent` 子包或第二套 SDK 门面。
+`pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。`pi.CoreRegister` 只组装 Agent Core，`pi.ReadOnlyToolsRegister` 提供 Workspace 和 `read`，`pi.CodingToolsRegister` 提供完整本地 Coding 工具；`pi.Register` 保留为 Core 与 Coding 工具的兼容聚合。
 
 `pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Compaction/Action 模型调用及其 Usage、成本与耗时。
 
@@ -111,13 +111,13 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 
 默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking、Compaction 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ErrorCodeAIGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
 
-`pi.Runner.Run` 通过最后一个参数接收 Reporter；不需要进度事件时传 `nil`。仓库 CLI 注入 Terminal/WeCom Reporter。
+`pi.Runner.Run` 通过最后一个参数接收 Reporter；不需要进度事件时传 `nil`。浏览器聊天由 Application Service 把 Agent Event 转换成 SSE 事件。
 
 ## Workspace
 
-`New` 从进程当前工作目录绑定 Workspace。每次 Run 都会重新读取该 Workspace 中的 `AGENTS.md` 并发现 `.agents/skills`、`.claw/skills` 或 `skills`，因此文件内容更新可以在下一次 Run 生效；构造 Agent 后再切换进程工作目录不会改变已绑定的 Workspace。
+Workspace 由调用方以 `pi.WorkDir` 显式提供。每次 Run 都会重新读取该 Workspace 中的 `AGENTS.md` 并发现 `.agents/skills`、`.claw/skills` 或 `skills`，因此文件内容更新可以在下一次 Run 生效；构造 Agent 后再切换进程工作目录不会改变已绑定的 Workspace。
 
-业务系统应在自己的 Workspace 提供领域专属 AGENTS.md 和 Skills。仓库根目录中的文件只定义自带 CLI 的默认 Agent。
+业务系统应在自己的 Workspace 提供领域专属 `AGENTS.md`、可选 Skills 和资料。没有 Skill 时可以直接聊天；存在有效 Skill 时 Runtime 要求工具组包含 `read`。仓库根目录中的 `AGENTS.md` 与 `skills/repository-development` 只定义仓库开发行为，不属于浏览器 Agent。
 
 ## 并发与取消
 
@@ -166,12 +166,14 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 
 `pi.Agent` 不拥有 Fx App，也不定义第二套 Close 协议。Provider、Workspace 和后台进程等资源全部由调用方 Fx App 的 `Start`/`Stop` 生命周期管理；取消某个 Run 只影响该次调用。
 
-## CLI 与会话存储
+## Web Chat 与会话存储
 
-自带 CLI 通过 `application.Register` 组合 `pi`、基础设施、Conversation 业务和 Transport：
+唯一产品 Agent 入口 `cmd/server` 通过 `application/web.Register` 组合 `pi`、基础设施、Conversation 业务和 Gin：
 
 ```text
-Find Conversation -> List Messages -> pi.Runner.Run -> AppendTurn
+Cookie User -> Conversation -> List Messages -> pi.Runner.Run -> AppendTurn -> SSE
 ```
 
-CLI 可以通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`。数据库保留完整的 Action/Tool 轨迹用于审计，但下一轮只将客户文本和不含 ToolCall 的最终 AI 文本映射为业务 `Message`，不会向公共历史暴露内部工具协议。Terminal 和 WeCom 通过 Reporter 接收事件。这些业务适配不属于 `pi` SDK 的状态或扩展接口。隐藏 Thinking 文本和完整 Provider 请求没有持久化路径。
+Web 使用 `agent.workspace_dir`（默认 `./workspaces/chat`），组合 `CoreRegister + ReadOnlyToolsRegister` 并传入 `ThinkingEnabled(false)`。因此浏览器 Agent 默认只有 `read` 和业务显式注册的工具，不包含文件修改、命令执行或进程管理能力。
+
+Conversation Runner 通过 MySQL 加载有界 History，并在同一事务中保存 Input、`NewMessages` 与 `Invocations`。数据库保留完整的 Action/Tool 轨迹用于审计，但下一轮只将客户文本和不含 ToolCall 的最终 AI 文本映射为业务 `Message`，不会向公共历史暴露内部工具协议。Cookie 身份、会话所有权、SSE、取消和持久化均属于 Web 业务层，不进入 `pi` SDK。
