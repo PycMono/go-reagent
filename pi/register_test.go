@@ -1,12 +1,15 @@
 package pi
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/harness"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -16,6 +19,50 @@ func TestReadOnlyToolsRegisterExposesOnlyRead(t *testing.T) {
 	if want := []string{"read"}; !slices.Equal(got, want) {
 		t.Fatalf("tool names = %v, want %v", got, want)
 	}
+}
+
+func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
+	provider := &registerTestProvider{}
+	runtime, err := NewToolRuntime(ToolRuntimeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &registerTestReporter{}
+	loop := newLoop(provider, NewScheduler(runtime, 1), ThinkingEnabled(false))
+
+	_, err = loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
+		Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("你好")},
+	}}}, reporter)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("Provider calls = %d, want 1", provider.calls)
+	}
+	if !slices.Equal(reporter.events, []AgentEventType{AgentEventMessage}) {
+		t.Fatalf("events = %v, want [%s]", reporter.events, AgentEventMessage)
+	}
+}
+
+type registerTestProvider struct {
+	calls int
+}
+
+func (p *registerTestProvider) Generate(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+	p.calls++
+	return &ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("你好")},
+		Usage:   &ai.Usage{PlatformID: "test", Model: "test-model"},
+	}, nil
+}
+
+type registerTestReporter struct {
+	events []AgentEventType
+}
+
+func (r *registerTestReporter) Report(_ context.Context, event AgentEvent) {
+	r.events = append(r.events, event.Type)
 }
 
 func TestCodingToolsRegisterPreservesCompleteDefaultSet(t *testing.T) {
