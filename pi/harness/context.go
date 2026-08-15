@@ -50,10 +50,6 @@ func (f *ContextBuilder) Build(
 	request ContextRequest,
 	definitions []ai.ToolDefinition,
 ) (Context, error) {
-	if !hasToolDefinition(definitions, "read") {
-		return Context{}, errors.New("agent runtime: required tool read is not registered")
-	}
-
 	snapshot, err := skills.Discover(f.workDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("%w: 发现 Agent Skills 失败: %w", pierrors.ErrWorkspaceInvalid, err)
@@ -63,8 +59,8 @@ func (f *ContextBuilder) Build(
 	}
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
-	if snapshot.Empty() {
-		return Context{}, fmt.Errorf("%w: at least one eligible Skill is required", pierrors.ErrWorkspaceInvalid)
+	if !snapshot.Empty() && !hasToolDefinition(definitions, "read") {
+		return Context{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
 	systemMessage, promptReport, err := f.composer.Build(snapshot)
