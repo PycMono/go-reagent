@@ -2,17 +2,25 @@ package config
 
 import "github.com/PycMono/go-reagent/pi/ai/providers"
 
-const DefaultHistoryMessageLimit = 100
+const (
+	DefaultHistoryMessageLimit = 100
+	DefaultAgentWorkspaceDir   = "./workspaces/chat"
+)
 
 // Config is the go-reagent business-service configuration.
 type Config struct {
 	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
 	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`
+	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
 	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
 	SnowflakeNodeID int                 `json:"snowflake_node_id" yaml:"snowflake_node_id" toml:"snowflake_node_id"`
+}
+
+type AgentConfig struct {
+	WorkspaceDir string `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
 }
 
 type HTTPConfig struct {

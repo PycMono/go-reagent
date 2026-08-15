@@ -11,6 +11,7 @@ func (config *Config) normalizeAndValidate() error {
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
 		return err
 	}
+	config.Agent.normalize()
 	if err := config.HTTP.normalizeAndValidate(); err != nil {
 		return err
 	}
@@ -21,6 +22,13 @@ func (config *Config) normalizeAndValidate() error {
 		return err
 	}
 	return config.Conversation.normalizeAndValidate(&config.MySQL)
+}
+
+func (config *AgentConfig) normalize() {
+	config.WorkspaceDir = strings.TrimSpace(config.WorkspaceDir)
+	if config.WorkspaceDir == "" {
+		config.WorkspaceDir = DefaultAgentWorkspaceDir
+	}
 }
 
 func (config *HTTPConfig) normalizeAndValidate() error {
