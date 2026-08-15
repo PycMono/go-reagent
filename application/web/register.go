@@ -7,7 +7,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/PycMono/go-reagent/application"
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
@@ -16,15 +15,21 @@ import (
 	"go.uber.org/fx"
 )
 
+var agentRegister = fx.Options(
+	pi.CoreRegister,
+	pi.ReadOnlyToolsRegister,
+	fx.Supply(pi.ThinkingEnabled(false)),
+)
+
 var Register = fx.Options(
-	pi.Register,
+	agentRegister,
 	infrastructureweb.Register,
 	conversation.Register,
 	chatservice.Register,
 	fx.Provide(
 		config.NewFromEnvironment,
 		config.NewPlatform,
-		application.NewWorkDir,
+		NewChatWorkDir,
 	),
 	fx.Invoke(validateConfig),
 )
