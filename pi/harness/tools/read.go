@@ -41,7 +41,7 @@ func (t *ReadTool) Definition() ai.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path":   map[string]any{"type": "string", "description": "相对于工作区的文件路径，例如 cmd/reagent/main.go"},
+				"path":   map[string]any{"type": "string", "description": "相对于工作区的文件路径，例如 docs/guide.md"},
 				"offset": map[string]any{"type": "integer", "minimum": 1, "description": "可选，1-based 起始行，默认 1"},
 				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": defaultReadFileMaxLines, "description": "可选，最多返回行数，默认且最大 2000"},
 			},
