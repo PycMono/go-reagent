@@ -7,6 +7,9 @@
     "write_timeout": 0,
     "secure_cookies": false
   },
+  "agent": {
+    "workspace_dir": "./workspaces/chat"
+  },
   "currentPlatform": "deepseek",
   "platforms": [
     {

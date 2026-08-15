@@ -61,6 +61,32 @@ func TestLoadConfigDefaultsHTTPServer(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultsAndNormalizesAgentWorkspace(t *testing.T) {
+	tests := []struct {
+		name      string
+		agent     string
+		workspace string
+	}{
+		{name: "missing", workspace: DefaultAgentWorkspaceDir},
+		{name: "blank", agent: `,"agent":{"workspace_dir":"  "}`, workspace: DefaultAgentWorkspaceDir},
+		{name: "trimmed", agent: `,"agent":{"workspace_dir":"  ./workspaces/legal  "}`, workspace: "./workspaces/legal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, `{
+				"currentPlatform":"x",
+				"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}]`+tt.agent+`
+			}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Agent.WorkspaceDir != tt.workspace {
+				t.Fatalf("WorkspaceDir = %q, want %q", cfg.Agent.WorkspaceDir, tt.workspace)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsInvalidHTTPServer(t *testing.T) {
 	tests := []struct {
 		name string
