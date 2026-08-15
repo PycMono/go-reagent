@@ -1,12 +1,15 @@
 package web
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/harness"
 )
 
 func TestNewChatWorkDirResolvesConfiguredDirectory(t *testing.T) {
@@ -25,6 +28,31 @@ func TestNewChatWorkDirResolvesConfiguredDirectory(t *testing.T) {
 	}
 	if !os.SameFile(gotInfo, wantInfo) {
 		t.Fatalf("NewChatWorkDir() = %q, want directory %q", got, root)
+	}
+}
+
+func TestDefaultChatWorkspacePromptDoesNotLoadRepositoryCodingIdentity(t *testing.T) {
+	workspace := filepath.Join("..", "..", "workspaces", "chat")
+	workDir, err := NewChatWorkDir(&config.Config{Agent: config.AgentConfig{WorkspaceDir: workspace}})
+	if err != nil {
+		t.Fatalf("NewChatWorkDir() error = %v", err)
+	}
+	builder := harness.NewContextBuilder(harness.NewPromptComposer(string(workDir)), string(workDir))
+	got, err := builder.Build(context.Background(), harness.ContextRequest{
+		Input: ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("你好")}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	systemText, err := ai.TextContent(got.Messages[0].Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(systemText, "通用聊天助手") {
+		t.Fatalf("system prompt missing Chat identity: %q", systemText)
+	}
+	if strings.Contains(systemText, "仓库自带命令行程序") || strings.Contains(systemText, "repository-development") {
+		t.Fatalf("system prompt leaked repository Coding identity: %q", systemText)
 	}
 }
 

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +15,7 @@ import (
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	pagectl "github.com/PycMono/go-reagent/infrastructure/controller/http/page"
 	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
@@ -35,6 +38,62 @@ func TestRegisterResolvesWebGraphWithoutCLIInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Web Register graph is invalid: %v", err)
 	}
+}
+
+func TestAgentRegisterIncludesExplicitBusinessTool(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test chat Agent."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var runtime pi.ToolRuntime
+	app := fxtest.New(
+		t,
+		agentRegister,
+		fx.Supply(
+			pi.WorkDir(root),
+			providers.Options{
+				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
+				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
+			},
+		),
+		fx.Provide(fx.Annotate(
+			newRegisterTestBusinessTool,
+			fx.As(new(ai.Tool)),
+			fx.ResultTags(`group:"agent_tools"`),
+		)),
+		fx.Populate(&runtime),
+	)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+
+	definitions := runtime.Definitions()
+	names := make([]string, len(definitions))
+	for index, definition := range definitions {
+		names[index] = definition.Name
+	}
+	if !slices.Equal(names, []string{"course_query", "read"}) {
+		t.Fatalf("Web Agent tools = %v, want [course_query read]", names)
+	}
+}
+
+type registerTestBusinessTool struct{}
+
+func newRegisterTestBusinessTool() *registerTestBusinessTool {
+	return &registerTestBusinessTool{}
+}
+
+func (*registerTestBusinessTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name: "course_query",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (*registerTestBusinessTool) Execute(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
+	return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("course")}}, nil
 }
 
 func TestValidateConfigRequiresPersistenceAndLoopback(t *testing.T) {

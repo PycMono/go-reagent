@@ -94,12 +94,13 @@ result, err := runner.Run(ctx, pi.RunRequest{
 ```text
 workspace/
 ├── AGENTS.md                  # 必需：Agent 身份、职责和行为边界
-├── skills/                    # 三种 Skill 根目录至少存在一种
-│   └── <skill>/SKILL.md       # 必需：至少一个格式有效且环境匹配的 Skill
-└── resources/                 # 可选：业务方准备的知识或其他只读资源
+├── skills/                    # 可选：按需加载的多步骤流程
+│   └── <skill>/SKILL.md
+├── docs/                      # 可选：业务参考资料
+└── assets/                    # 可选：其他 Workspace 资源
 ```
 
-Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开始时，Runtime 都会重新读取 `AGENTS.md` 并发现当前可用 Skills；缺少或不安全的 `AGENTS.md`、没有有效 Skill，或者 Registry 没有注册受限 `read`，都会在首次 Provider 调用前直接返回错误。
+Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开始时，Runtime 都会重新读取 `AGENTS.md` 并发现当前可用 Skills。Workspace 可以不包含 Skill；存在有效 Skill 时必须注册受限 `read`，确保模型能在使用流程前完整读取对应 `SKILL.md`。缺少或不安全的 `AGENTS.md`、Skill 发现发生致命错误，或者存在 Skill 却没有 `read`，都会在首次 Provider 调用前返回错误。
 
 `read` 是所有 Agent 的基础工具，用于按需完整读取选中的 `SKILL.md` 及 Workspace 资源。`write`、`edit`、`apply_patch`、`exec` 和 `process` 只适用于确实需要这些能力的 Agent，可以不注册。SDK 核心不会根据业务类型动态挑选工具，也不会内置客服、订单等业务 Tool；业务封装决定固定注册哪些领域工具。
 
@@ -114,7 +115,7 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 + 当前 Input
 ```
 
-仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 仅服务于自带 CLI 示例。业务系统应提供自己的 Workspace，例如把客服身份写入 `AGENTS.md`，把售后流程、训练规范等分别做成领域 Skill，而无需修改 Runtime 核心。
+仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；部署方可以把行业身份写入该目录的 `AGENTS.md`，把售后流程、课程咨询或合同审查等条件性流程做成 Skill，而无需修改 Runtime 核心或训练模型权重。
 
 ## 项目布局
 
@@ -140,18 +141,17 @@ go-reagent/
 ├── config/                    # 业务配置、平台列表与 Configor 加载
 ├── domain/                    # 业务实体与 Repository 接口
 ├── infrastructure/           # MySQL 驱动和持久化实现
-├── application/              # CLI 应用生命周期与用例组合
+├── application/              # Web 应用装配与聊天用例
 ├── conversation/             # 会话业务编排
-├── transport/                # Terminal 与 WeCom
+├── transport/                # 可复用的 Terminal 与 WeCom 适配器
 ├── cmd/
-│   ├── reagent/              # 自带 CLI 入口
-│   ├── server/               # 本地 Go Template Web Chat
+│   ├── server/               # 唯一产品 Agent 入口
 │   └── ping/                 # 独立 HTTP ping 示例
-├── AGENTS.md                 # 自带 CLI 的默认 Agent 定义
-├── skills/                   # 自带 CLI 的默认 Skills
+├── workspaces/chat/          # 浏览器聊天 Agent 的默认 Workspace
+├── AGENTS.md                 # 仓库开发 Agent 定义
+├── skills/                   # 仓库开发 Skills
 ├── config.example.json       # 不含真实密钥的配置模板
-├── migrations/               # CLI MySQL 会话迁移
-└── tests/integration/        # 跨包组合与边界测试
+└── migrations/               # MySQL 会话迁移
 ```
 
 公共依赖方向固定为：
@@ -160,8 +160,8 @@ go-reagent/
 pi/ai <- pi/harness <- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers
-application -> config + conversation + infrastructure + transport + pi
-cmd/reagent -> application
+application/web -> config + conversation + infrastructure + pi
+cmd/server -> application/web
 ```
 
 `pi/ai` 定义模型与 Tool 的底层协议；根 `pi` 是唯一 Agent Core；`pi/harness` 提供默认 Workspace 能力，并由 `pi/register.go` 组装。业务配置、会话存储和消息渠道不会进入 SDK `Run` 路径。详见 [SDK 架构](docs/sdk-architecture.md)。
@@ -187,6 +187,9 @@ chmod 600 config.json
 
 ```json
 {
+  "agent": {
+    "workspace_dir": "./workspaces/chat"
+  },
   "currentPlatform": "deepseek",
   "platforms": [
     {
@@ -212,7 +215,7 @@ chmod 600 config.json
 然后启动：
 
 ```bash
-go run ./cmd/reagent
+CONFIG_PATH=./config.json go run ./cmd/server
 ```
 
 切换到其他已配置平台时只需修改 `currentPlatform`：
@@ -242,73 +245,43 @@ go run ./cmd/reagent
 | `CONFIG_PATH` | `config.json` | 指定其他平台配置文件 |
 | `CONFIGOR_ENV` | `development`（测试时为 `test`） | 加载环境叠加文件，如 `config.production.json` |
 | `CONFIGOR_CURRENTPLATFORM` | 配置文件中的值 | 覆盖当前平台选择 |
-| `AGENT_PROMPT` | 新建 `ping.go` 并完成 Git 提交 | 覆盖启动测试任务 |
 
 例如使用另一份配置：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.json go run ./cmd/reagent
+CONFIG_PATH=/secure/reagent/config.json go run ./cmd/server
 ```
 
 例如加载 YAML 基础配置及其 `production` 叠加文件：
 
 ```bash
-CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd/reagent
+CONFIG_PATH=/secure/reagent/config.yaml CONFIGOR_ENV=production go run ./cmd/server
 ```
 
 Configor 会先加载基础文件，再加载同目录下的环境文件，例如 `config.production.yaml`。如果基础文件和环境文件都不存在，则尝试同扩展名的 example 文件，例如 `config.example.yaml`。字段也可以通过 `CONFIGOR_` 前缀的环境变量覆盖；数组内字段按结构路径命名，例如 `CONFIGOR_PLATFORMS_0_APIKEY`。
 
 `config.json` 已加入 `.gitignore`，不要把真实 API Key 写入 `config.example.json`。
 
-### 企业微信群通知
-
-在企业微信群中创建群机器人后，将机器人 Webhook 地址写入本地 `config.json`：
-
-```json
-{
-  "bot": {
-    "wecom": {
-      "webhookURL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=填写本地机器人Key"
-    }
-  }
-}
-```
-
-`webhookURL` 为空时只输出到终端；配置后，Terminal 和企业微信群 Reporter 同时启用。运行时事件
-统一为 `thinking`、`tool_start`、`tool_update`、`tool_end` 和 `message`；消息、更新与结果的 Content
-当前只允许文本块。Terminal 实时显示 `exec` 的 stdout/stderr `tool_update`，同时显示工具开始、最终
-状态和模型回复。WeCom 主动过滤 Thinking、所有 update、成功结果和非 Assistant 消息，只发送工具
-开始、工具失败和最终 Assistant 回复，避免流式输出刷屏。单条 Markdown 最多 4096 字节，超长内容
-会在合法 UTF-8 边界截断。
-
-当前能力仅为单向群通知，不接收群消息，也不需要配置企业微信回调、Token 或 EncodingAESKey。
-Webhook 地址等同于发送凭证，只能保存在已被 Git 忽略的本地配置中，不能写入示例配置、日志或提交。
-
 ### Fx 启动与退出
 
-SDK 与 CLI 复用 `pi.Register` 提供的 Fx 图：
+SDK 调用方可以使用 `pi.Register` 获得兼容的完整 Coding 工具图，也可以按能力组合注册模块：
 
 ```text
-Options -> ai.Provider -> CostTracker -> pi.Loop / Registry / Runner
-WorkDir        -> Workspace / AGENTS / Skills / 默认工具
+pi.CoreRegister + pi.ReadOnlyToolsRegister -> read-only Agent
+pi.CoreRegister + 业务 Tool Providers      -> 行业 Agent
+pi.Register                               -> 完整 Coding 工具兼容图
 ```
 
-调用方在自己的 Fx App 中组合 `pi.Register`，并由 Fx 生命周期统一启动和停止资源。自带 CLI 在同一个 Fx App
-中组合 `pi.Register` 与业务模块，不会嵌套创建第二个 App。CLI 的 AgentRunner
-在 `OnStart` 中异步执行一次任务；收到 SIGINT/SIGTERM 时，`OnStop` 会先取消并等待运行，再按 Fx
-逆序生命周期关闭后台进程管理器。
-
-当前入口开启慢思考模式，挂载六个真实本地工具，默认要求模型新建 `ping.go`、验证代码并完成 Git 提交。
+浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister`，传入 `ThinkingEnabled(false)`，只暴露 `read` 与业务显式注册的工具。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
 
 ### 日志输出
 
-运行日志通过 `go-logger-sdk` 以 JSON 写入 stdout，每条日志都包含
-`module=go-reagent`，并通过 `component`、`turn`、`phase`、`tool` 和
+运行日志通过 `go-logger-sdk` 以 JSON 写入 stdout，Web 服务日志包含
+`module=go-reagent-web`，并通过 `component`、`turn`、`phase`、`tool` 和
 `tool_call_id` 等结构化字段标识来源与执行上下文。平台启动日志只记录平台 ID、协议和模型，
 不会记录 API Key、Authorization Header 或完整平台配置。
 
-模型的内部思考 Trace 和最终回复仍以纯文本输出，因此直接运行命令时会看到 JSON 运行日志与
-模型文本结果共存；接入日志平台时应按 JSON 行采集运行日志。
+浏览器聊天关闭独立 Thinking 阶段，最终回复通过现有 SSE 通道发送并持久化。
 
 每次成功模型调用都会输出包含平台、模型、输入/输出 Token、USD/1M tokens 单价、`cost_usd` 和 `latency_ms` 的结构化计量日志。上游缺少或返回非法 Usage 时会输出 `usage_missing`/`usage_invalid` 并终止 Run，不会估算或伪造零成本；Provider 调用失败只记录失败耗时，不生成成本记录。日志不包含消息正文、工具参数、API Key 或完整 Provider 请求。
 
@@ -326,9 +299,9 @@ WorkDir        -> Workspace / AGENTS / Skills / 默认工具
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
 - 同一安全波中的调用必须语义独立；需要前序结果的操作仍应拆成多个模型轮次。
 
-### 最终工具协议
+### 完整 SDK 工具协议
 
-Registry 只注册下列六个名称；参数使用驼峰字段，不提供旧名称或旧字段别名：
+兼容聚合 `pi.Register` 注册下列六个名称；Web 产品默认只注册其中的 `read`：
 
 | 工具 | 参数字段 |
 | --- | --- |
@@ -402,7 +375,7 @@ go test ./...
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
 - 通过 Reporter 广播统一 Agent Event；增量更新只到 Terminal，不进入模型历史或 WeCom。
 - 支持配置化企业微信群机器人 Webhook，将工具开始、失败和最终回复发送为 Markdown 通知。
-- 基于 Uber Fx 的私有默认图、SDK `Close` 生命周期，以及 CLI 一次性 Runner 的取消和退出码处理。
+- 基于 Uber Fx 的可组合 Core、只读工具和完整 Coding 工具注册图。
 - 模型生成错误和空响应防护，并保留官方 SDK 错误解包链。
 - 工具调用 ID 的整批前置校验。
 - 取消信号的 Provider 与工具执行前置检查。
@@ -422,7 +395,7 @@ go test ./...
 - [ ] 增加可配置的轮次、Token、时间与成本预算。
 - [x] 增加支持多格式、环境叠加和字段覆盖的平台启动配置。
 - [x] 发布 `ai -> agent -> reagent` 公共 SDK 包结构。
-- [x] 在自带 CLI 中增加可选 MySQL 会话持久化。
+- [x] 在浏览器聊天中增加 MySQL 会话持久化。
 - [ ] 增加飞书等外部消息渠道适配。
 - [x] 增加企业微信群机器人单向生命周期通知。
 - [ ] 增加企业微信和飞书的双向消息接入。
