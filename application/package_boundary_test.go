@@ -1,4 +1,4 @@
-package application
+package application_test
 
 import (
 	"os/exec"
@@ -6,18 +6,16 @@ import (
 	"testing"
 )
 
-func TestCLIEntryDoesNotDependOnWebOrCacheSDKs(t *testing.T) {
-	command := exec.Command("go", "list", "-deps", "./cmd/reagent")
+func TestServerEntryDoesNotDependOnOneShotTransport(t *testing.T) {
+	command := exec.Command("go", "list", "-deps", "./cmd/server")
 	command.Dir = ".."
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go list cmd/reagent: %v: %s", err, strings.TrimSpace(string(output)))
+		t.Fatalf("go list cmd/server: %v: %s", err, strings.TrimSpace(string(output)))
 	}
 	for _, dependency := range strings.Fields(string(output)) {
-		if dependency == "github.com/PycMono/go-gin-sdk" ||
-			dependency == "github.com/PycMono/go-cache-sdk" ||
-			dependency == "github.com/gin-gonic/gin" {
-			t.Fatalf("CLI unexpectedly depends on Web package %s", dependency)
+		if dependency == "github.com/PycMono/go-reagent/transport" {
+			t.Fatalf("Web server unexpectedly depends on one-shot transport package %s", dependency)
 		}
 	}
 }
