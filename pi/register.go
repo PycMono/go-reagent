@@ -16,26 +16,49 @@ const defaultMaxParallelTools = 4
 // WorkDir is the Agent workspace path supplied to the Fx graph.
 type WorkDir string
 
-// Register provides the complete reusable default Agent graph.
-var Register = fx.Options(
+// ThinkingEnabled controls whether Loop runs the separate planning phase.
+type ThinkingEnabled bool
+
+// CoreRegister provides Agent Core without choosing any concrete tools.
+var CoreRegister = fx.Options(
 	fx.Provide(
 		newPromptComposer,
 		newContextBuilder,
-		newToolRoot,
-		tools.NewWorkspace,
-		tools.NewProcessSupervisor,
-		fx.Annotate(tools.NewReadTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		fx.Annotate(tools.NewEditTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		fx.Annotate(tools.NewWriteTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		fx.Annotate(tools.NewApplyPatchTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		fx.Annotate(tools.NewExecTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		fx.Annotate(tools.NewProcessTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
 		newProvider,
 		newToolRuntime,
 		newScheduler,
 		newLoop,
 		fx.Annotate(New, fx.As(fx.Self()), fx.As(new(Runner))),
 	),
+)
+
+// ReadOnlyToolsRegister provides the Workspace-scoped read tool.
+var ReadOnlyToolsRegister = fx.Options(
+	fx.Provide(
+		newToolRoot,
+		tools.NewWorkspace,
+		fx.Annotate(tools.NewReadTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+	),
+)
+
+// CodingToolsRegister provides the complete local Coding tool set.
+var CodingToolsRegister = fx.Options(
+	ReadOnlyToolsRegister,
+	fx.Provide(
+		tools.NewProcessSupervisor,
+		fx.Annotate(tools.NewEditTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(tools.NewWriteTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(tools.NewApplyPatchTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(tools.NewExecTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		fx.Annotate(tools.NewProcessTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+	),
+)
+
+// Register preserves the complete reusable default Agent graph.
+var Register = fx.Options(
+	CoreRegister,
+	CodingToolsRegister,
+	fx.Supply(ThinkingEnabled(true)),
 )
 
 type toolRuntimeParams struct {
@@ -76,8 +99,8 @@ func newScheduler(toolRuntime ToolRuntime) *Scheduler {
 	return NewScheduler(toolRuntime, defaultMaxParallelTools)
 }
 
-func newLoop(provider ai.Provider, scheduler *Scheduler) *Loop {
-	return NewLoop(provider, scheduler, true)
+func newLoop(provider ai.Provider, scheduler *Scheduler, enabled ThinkingEnabled) *Loop {
+	return NewLoop(provider, scheduler, bool(enabled))
 }
 
 func newToolRoot(workDir WorkDir) tools.Root {
