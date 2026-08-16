@@ -160,3 +160,145 @@ func clientForGeocodingFixture(t *testing.T, status int, fixture string) *Client
 	t.Cleanup(server.Close)
 	return newClient(server.URL+"/v1/search", server.URL+"/v1/forecast", server.Client())
 }
+
+const forecastFixture = `{
+  "daily": {
+    "time": ["2026-08-16", "2026-08-17"],
+    "weather_code": [0, 61],
+    "temperature_2m_min": [22.5, 23.1],
+    "temperature_2m_max": [30.0, 31.2],
+    "precipitation_probability_max": [10, 70],
+    "wind_speed_10m_max": [8.2, 18.4]
+  }
+}`
+
+func TestForecastMapsRequestedDailyRange(t *testing.T) {
+	request := forecastRequest(2)
+	client := clientForForecastFixture(t, http.StatusOK, forecastFixture, func(r *http.Request) {
+		query := r.URL.Query()
+		if r.URL.Path != "/v1/forecast" || query.Get("latitude") != "39.9042" ||
+			query.Get("longitude") != "116.4074" || query.Get("timezone") != "Asia/Shanghai" ||
+			query.Get("start_date") != "2026-08-16" || query.Get("end_date") != "2026-08-17" ||
+			query.Get("daily") != "weather_code,temperature_2m_min,temperature_2m_max,precipitation_probability_max,wind_speed_10m_max" ||
+			r.Header.Get("User-Agent") == "" {
+			t.Fatalf("forecast request = %s %#v", r.URL.String(), r.Header)
+		}
+	})
+
+	got, err := client.Forecast(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := service.Forecast{
+		Location: request.Location,
+		Days: []service.DailyForecast{
+			{Date: "2026-08-16", WeatherCode: 0, Condition: "clear", TemperatureMinC: 22.5, TemperatureMaxC: 30, PrecipitationProbability: 10, WindSpeedMaxKPH: 8.2},
+			{Date: "2026-08-17", WeatherCode: 61, Condition: "rain", TemperatureMinC: 23.1, TemperatureMaxC: 31.2, PrecipitationProbability: 70, WindSpeedMaxKPH: 18.4},
+		},
+	}
+	if len(got.Days) != len(want.Days) || got.Location != want.Location {
+		t.Fatalf("forecast = %#v", got)
+	}
+	for i := range want.Days {
+		if got.Days[i] != want.Days[i] {
+			t.Fatalf("day %d = %#v, want %#v", i, got.Days[i], want.Days[i])
+		}
+	}
+}
+
+func TestForecastPreservesUnknownWeatherCode(t *testing.T) {
+	fixture := strings.ReplaceAll(forecastFixture, `"weather_code": [0, 61]`, `"weather_code": [123, 61]`)
+	got, err := clientForForecastFixture(t, http.StatusOK, fixture, nil).Forecast(context.Background(), forecastRequest(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Days[0].WeatherCode != 123 || got.Days[0].Condition != "unknown" {
+		t.Fatalf("day = %#v", got.Days[0])
+	}
+}
+
+func TestForecastRejectsInvalidDailyPayloads(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		fixture string
+		want    string
+	}{
+		{name: "missing daily", status: http.StatusOK, fixture: `{}`, want: "missing daily"},
+		{name: "wrong first date", status: http.StatusOK, fixture: strings.Replace(forecastFixture, "2026-08-16", "2026-08-15", 1), want: "date sequence"},
+		{name: "non consecutive date", status: http.StatusOK, fixture: strings.Replace(forecastFixture, "2026-08-17", "2026-08-18", 1), want: "date sequence"},
+		{name: "short weather codes", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[0, 61]`, `[0]`, 1), want: "array lengths"},
+		{name: "short minimum temperatures", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[22.5, 23.1]`, `[22.5]`, 1), want: "array lengths"},
+		{name: "short maximum temperatures", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[30.0, 31.2]`, `[30.0]`, 1), want: "array lengths"},
+		{name: "short precipitation", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[10, 70]`, `[10]`, 1), want: "array lengths"},
+		{name: "short wind", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[8.2, 18.4]`, `[8.2]`, 1), want: "array lengths"},
+		{name: "non success", status: http.StatusServiceUnavailable, fixture: "forecast-secret-body", want: "HTTP 503"},
+		{name: "malformed JSON", status: http.StatusOK, fixture: `{"daily":`, want: "invalid JSON"},
+		{name: "oversized", status: http.StatusOK, fixture: strings.Repeat("x", (1<<20)+1), want: "exceeds 1 MiB"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := clientForForecastFixture(t, test.status, test.fixture, nil)
+			_, err := client.Forecast(context.Background(), forecastRequest(2))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want category %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), "forecast-secret-body") || strings.Contains(err.Error(), "/v1/forecast?") {
+				t.Fatalf("error leaks upstream details: %v", err)
+			}
+		})
+	}
+}
+
+func TestForecastHonorsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client := newClient(server.URL, server.URL, server.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.Forecast(ctx, forecastRequest(2))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
+	}
+}
+
+func TestForecastHonorsHTTPTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	httpClient := server.Client()
+	httpClient.Timeout = 10 * time.Millisecond
+	client := newClient(server.URL, server.URL, httpClient)
+	_, err := client.Forecast(context.Background(), forecastRequest(2))
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+}
+
+func forecastRequest(days int) service.ForecastRequest {
+	return service.ForecastRequest{
+		Location: service.Location{
+			Name: "Beijing", Country: "China", CountryCode: "CN", Admin1: "Beijing",
+			Latitude: 39.9042, Longitude: 116.4074, Timezone: "Asia/Shanghai",
+		},
+		StartDate: time.Date(2026, 8, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*60*60)),
+		Days:      days,
+	}
+}
+
+func clientForForecastFixture(t *testing.T, status int, fixture string, inspect func(*http.Request)) *Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if inspect != nil {
+			inspect(r)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, fixture)
+	}))
+	t.Cleanup(server.Close)
+	return newClient(server.URL+"/v1/search", server.URL+"/v1/forecast", server.Client())
+}
