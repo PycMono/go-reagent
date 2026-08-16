@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/harness/skills"
 )
 
 func TestNewChatWorkDirResolvesConfiguredDirectory(t *testing.T) {
@@ -40,7 +41,7 @@ func TestDefaultChatWorkspacePromptDoesNotLoadRepositoryCodingIdentity(t *testin
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(string(workDir)), string(workDir))
 	got, err := builder.Build(context.Background(), harness.ContextRequest{
 		Input: ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("你好")}},
-	}, nil)
+	}, []ai.ToolDefinition{{Name: "read"}})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -53,6 +54,17 @@ func TestDefaultChatWorkspacePromptDoesNotLoadRepositoryCodingIdentity(t *testin
 	}
 	if strings.Contains(systemText, "仓库自带命令行程序") || strings.Contains(systemText, "repository-development") {
 		t.Fatalf("system prompt leaked repository Coding identity: %q", systemText)
+	}
+}
+
+func TestDefaultChatWorkspaceSkillsHaveNoDiagnostics(t *testing.T) {
+	workspace := filepath.Join("..", "..", "workspaces", "chat")
+	snapshot, err := skills.Discover(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics := snapshot.Diagnostics(); len(diagnostics) != 0 {
+		t.Fatalf("Skill diagnostics = %#v", diagnostics)
 	}
 }
 
