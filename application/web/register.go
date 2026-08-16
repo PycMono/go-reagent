@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
+	chattools "github.com/PycMono/go-reagent/application/tool/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
+	"github.com/PycMono/go-reagent/infrastructure/driver/openmeteo"
 	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
@@ -18,6 +20,8 @@ import (
 var agentRegister = fx.Options(
 	pi.CoreRegister,
 	pi.ReadOnlyToolsRegister,
+	chattools.Register,
+	openmeteo.Register,
 	fx.Supply(pi.ThinkingEnabled(false)),
 )
 

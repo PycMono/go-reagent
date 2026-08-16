@@ -71,8 +71,9 @@ func TestAgentRegisterIncludesExplicitBusinessTool(t *testing.T) {
 	for index, definition := range definitions {
 		names[index] = definition.Name
 	}
-	if !slices.Equal(names, []string{"course_query", "read"}) {
-		t.Fatalf("Web Agent tools = %v, want [course_query read]", names)
+	want := []string{"calculate", "course_query", "get_current_time", "get_weather", "read"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("Web Agent tools = %v, want %v", names, want)
 	}
 }
 
@@ -120,7 +121,7 @@ func TestValidateConfigRequiresPersistenceAndLoopback(t *testing.T) {
 	}
 }
 
-func TestAgentRegisterUsesDirectReadOnlyRuntime(t *testing.T) {
+func TestAgentRegisterUsesDirectGeneralChatRuntime(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test chat Agent."), 0o600); err != nil {
 		t.Fatal(err)
@@ -149,8 +150,14 @@ func TestAgentRegisterUsesDirectReadOnlyRuntime(t *testing.T) {
 	for index, definition := range definitions {
 		names[index] = definition.Name
 	}
-	if !slices.Equal(names, []string{"read"}) {
-		t.Fatalf("Web Agent tools = %v, want [read]", names)
+	want := []string{"calculate", "get_current_time", "get_weather", "read"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("Web Agent tools = %v, want %v", names, want)
+	}
+	for _, forbidden := range []string{"apply_patch", "edit", "exec", "process", "write"} {
+		if slices.Contains(names, forbidden) {
+			t.Fatalf("Web Agent exposed %q", forbidden)
+		}
 	}
 	if bool(thinking) {
 		t.Fatal("Web Agent unexpectedly enables the separate Thinking phase")
