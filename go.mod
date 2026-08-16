@@ -10,6 +10,7 @@ require (
 	github.com/PycMono/go-mysql-sdk v1.0.2
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/bwmarrin/snowflake v0.3.0
+	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.10.0
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
