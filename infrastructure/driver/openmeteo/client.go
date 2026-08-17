@@ -28,6 +28,19 @@ type Client struct {
 	httpClient   *http.Client
 }
 
+type transportError struct {
+	operation string
+	err       error
+}
+
+func (e *transportError) Error() string {
+	return e.operation + " failed"
+}
+
+func (e *transportError) Unwrap() error {
+	return e.err
+}
+
 func NewClient() *Client {
 	return newClient(defaultGeocodingURL, defaultForecastURL, &http.Client{
 		Timeout: 10 * time.Second,
@@ -64,7 +77,7 @@ func (c *Client) ResolveLocations(ctx context.Context, query service.LocationQue
 	request.Header.Set("User-Agent", userAgent)
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request Open-Meteo geocoding: %w", err)
+		return nil, &transportError{operation: "request Open-Meteo geocoding", err: err}
 	}
 	defer response.Body.Close()
 
@@ -123,18 +136,18 @@ func (c *Client) Forecast(ctx context.Context, request service.ForecastRequest) 
 	httpRequest.Header.Set("User-Agent", userAgent)
 	response, err := c.httpClient.Do(httpRequest)
 	if err != nil {
-		return service.Forecast{}, fmt.Errorf("request Open-Meteo forecast: %w", err)
+		return service.Forecast{}, &transportError{operation: "request Open-Meteo forecast", err: err}
 	}
 	defer response.Body.Close()
 
 	var payload struct {
 		Daily *struct {
-			Time                     []string  `json:"time"`
-			WeatherCode              []int     `json:"weather_code"`
-			TemperatureMinC          []float64 `json:"temperature_2m_min"`
-			TemperatureMaxC          []float64 `json:"temperature_2m_max"`
-			PrecipitationProbability []int     `json:"precipitation_probability_max"`
-			WindSpeedMaxKPH          []float64 `json:"wind_speed_10m_max"`
+			Time                     []*string  `json:"time"`
+			WeatherCode              []*int     `json:"weather_code"`
+			TemperatureMinC          []*float64 `json:"temperature_2m_min"`
+			TemperatureMaxC          []*float64 `json:"temperature_2m_max"`
+			PrecipitationProbability []*int     `json:"precipitation_probability_max"`
+			WindSpeedMaxKPH          []*float64 `json:"wind_speed_10m_max"`
 		} `json:"daily"`
 	}
 	if err := decodeResponse(response, &payload); err != nil {
@@ -152,14 +165,19 @@ func (c *Client) Forecast(ctx context.Context, request service.ForecastRequest) 
 
 	days := make([]service.DailyForecast, request.Days)
 	for i := range request.Days {
+		if daily.Time[i] == nil || daily.WeatherCode[i] == nil || daily.TemperatureMinC[i] == nil ||
+			daily.TemperatureMaxC[i] == nil || daily.PrecipitationProbability[i] == nil ||
+			daily.WindSpeedMaxKPH[i] == nil {
+			return service.Forecast{}, errors.New("Open-Meteo forecast response contains null values")
+		}
 		expectedDate := request.StartDate.AddDate(0, 0, i).Format("2006-01-02")
-		if daily.Time[i] != expectedDate {
+		if *daily.Time[i] != expectedDate {
 			return service.Forecast{}, errors.New("Open-Meteo forecast response has invalid date sequence")
 		}
 		days[i] = service.DailyForecast{
-			Date: daily.Time[i], WeatherCode: daily.WeatherCode[i], Condition: conditionForCode(daily.WeatherCode[i]),
-			TemperatureMinC: daily.TemperatureMinC[i], TemperatureMaxC: daily.TemperatureMaxC[i],
-			PrecipitationProbability: daily.PrecipitationProbability[i], WindSpeedMaxKPH: daily.WindSpeedMaxKPH[i],
+			Date: *daily.Time[i], WeatherCode: *daily.WeatherCode[i], Condition: conditionForCode(*daily.WeatherCode[i]),
+			TemperatureMinC: *daily.TemperatureMinC[i], TemperatureMaxC: *daily.TemperatureMaxC[i],
+			PrecipitationProbability: *daily.PrecipitationProbability[i], WindSpeedMaxKPH: *daily.WindSpeedMaxKPH[i],
 		}
 	}
 	return service.Forecast{Location: request.Location, Days: days}, nil

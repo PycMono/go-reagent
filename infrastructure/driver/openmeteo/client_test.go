@@ -232,6 +232,12 @@ func TestForecastRejectsInvalidDailyPayloads(t *testing.T) {
 		{name: "short maximum temperatures", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[30.0, 31.2]`, `[30.0]`, 1), want: "array lengths"},
 		{name: "short precipitation", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[10, 70]`, `[10]`, 1), want: "array lengths"},
 		{name: "short wind", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[8.2, 18.4]`, `[8.2]`, 1), want: "array lengths"},
+		{name: "null date", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `["2026-08-16", "2026-08-17"]`, `[null, "2026-08-17"]`, 1), want: "null values"},
+		{name: "null weather code", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[0, 61]`, `[null, 61]`, 1), want: "null values"},
+		{name: "null minimum temperature", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[22.5, 23.1]`, `[null, 23.1]`, 1), want: "null values"},
+		{name: "null maximum temperature", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[30.0, 31.2]`, `[null, 31.2]`, 1), want: "null values"},
+		{name: "null precipitation", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[10, 70]`, `[null, 70]`, 1), want: "null values"},
+		{name: "null wind", status: http.StatusOK, fixture: strings.Replace(forecastFixture, `[8.2, 18.4]`, `[null, 18.4]`, 1), want: "null values"},
 		{name: "non success", status: http.StatusServiceUnavailable, fixture: "forecast-secret-body", want: "HTTP 503"},
 		{name: "malformed JSON", status: http.StatusOK, fixture: `{"daily":`, want: "invalid JSON"},
 		{name: "oversized", status: http.StatusOK, fixture: strings.Repeat("x", (1<<20)+1), want: "exceeds 1 MiB"},
@@ -247,6 +253,40 @@ func TestForecastRejectsInvalidDailyPayloads(t *testing.T) {
 				t.Fatalf("error leaks upstream details: %v", err)
 			}
 		})
+	}
+}
+
+func TestResolveLocationsRedactsTransportErrorURL(t *testing.T) {
+	cause := errors.New("transport-secret")
+	client := newClient(
+		"https://geocoding-secret.example/v1/search", "https://forecast.example/v1/forecast",
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, cause })},
+	)
+	_, err := client.ResolveLocations(context.Background(), service.LocationQuery{Name: "location-secret", Limit: 5})
+	if err == nil || !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want wrapped cause", err)
+	}
+	for _, secret := range []string{"transport-secret", "location-secret", "geocoding-secret.example", "/v1/search?"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaks %q: %v", secret, err)
+		}
+	}
+}
+
+func TestForecastRedactsTransportErrorURL(t *testing.T) {
+	cause := errors.New("transport-secret")
+	client := newClient(
+		"https://geocoding.example/v1/search", "https://forecast-secret.example/v1/forecast",
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, cause })},
+	)
+	_, err := client.Forecast(context.Background(), forecastRequest(2))
+	if err == nil || !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want wrapped cause", err)
+	}
+	for _, secret := range []string{"transport-secret", "forecast-secret.example", "39.9042", "116.4074", "Asia/Shanghai", "/v1/forecast?"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaks %q: %v", secret, err)
+		}
 	}
 }
 
@@ -301,4 +341,10 @@ func clientForForecastFixture(t *testing.T, status int, fixture string, inspect 
 	}))
 	t.Cleanup(server.Close)
 	return newClient(server.URL+"/v1/search", server.URL+"/v1/forecast", server.Client())
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
