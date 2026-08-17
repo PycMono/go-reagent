@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/PycMono/go-reagent/frontend"
 	chatctl "github.com/PycMono/go-reagent/infrastructure/controller/http/chat"
 	pagectl "github.com/PycMono/go-reagent/infrastructure/controller/http/page"
 	"github.com/gin-gonic/gin"
@@ -36,5 +37,5 @@ func RegisterRoutes(router *gin.Engine, chatCtl *chatctl.Controller) {
 
 func RegisterPageRoutes(router *gin.Engine, pageCtl *pagectl.Controller) {
 	router.GET("/", pageCtl.Chat)
-	router.Static("/static", "frontend/static")
+	router.StaticFS("/static", http.FS(frontend.Static))
 }
