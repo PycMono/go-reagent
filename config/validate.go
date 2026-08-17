@@ -21,7 +21,10 @@ func (config *Config) normalizeAndValidate() error {
 	if err := config.Bot.normalizeAndValidate(); err != nil {
 		return err
 	}
-	return config.Conversation.normalizeAndValidate(&config.MySQL)
+	if err := config.Conversation.normalizeAndValidate(&config.MySQL); err != nil {
+		return err
+	}
+	return config.Redis.normalizeAndValidate()
 }
 
 func (config *AgentConfig) normalize() {
@@ -66,6 +69,25 @@ func (config *ConversationConfig) normalizeAndValidate(mysql *MySQLConfig) error
 		return nil
 	}
 	return mysql.normalizeAndValidate()
+}
+
+func (config *RedisConfig) normalizeAndValidate() error {
+	if len(config.Addr) == 0 {
+		return errors.New("redis.addr 不能为空")
+	}
+	for index := range config.Addr {
+		config.Addr[index] = strings.TrimSpace(config.Addr[index])
+		if config.Addr[index] == "" {
+			return errors.New("redis.addr 不能包含空地址")
+		}
+	}
+	if config.DB < 0 {
+		return errors.New("redis.db 不能小于 0")
+	}
+	if config.PoolSize < 1 {
+		return errors.New("redis.pool_size 必须大于 0")
+	}
+	return nil
 }
 
 func (config *MySQLConfig) normalizeAndValidate() error {

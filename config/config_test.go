@@ -3,14 +3,56 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestLoadConfigParsesAndNormalizesRequiredRedis(t *testing.T) {
+	path := writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"redis":{"addr":[" 127.0.0.1:6379 "],"password":"redis-secret","db":2,"pool_size":5}
+	}`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Redis.Addr, []string{"127.0.0.1:6379"}) || cfg.Redis.Password != "redis-secret" ||
+		cfg.Redis.DB != 2 || cfg.Redis.PoolSize != 5 {
+		t.Fatalf("Redis = %#v", cfg.Redis)
+	}
+}
+
+func TestLoadConfigRejectsInvalidRequiredRedisWithoutLeakingPassword(t *testing.T) {
+	const credential = "never-print-redis-password"
+	tests := []struct {
+		name  string
+		redis string
+		want  string
+	}{
+		{name: "missing", redis: `{}`, want: "redis.addr"},
+		{name: "empty address", redis: `{"addr":["  "],"password":"` + credential + `","db":0,"pool_size":5}`, want: "redis.addr"},
+		{name: "negative db", redis: `{"addr":["127.0.0.1:6379"],"password":"` + credential + `","db":-1,"pool_size":5}`, want: "redis.db"},
+		{name: "zero pool", redis: `{"addr":["127.0.0.1:6379"],"password":"` + credential + `","db":0,"pool_size":0}`, want: "redis.pool_size"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"redis":` + test.redis + `}`
+			_, err := Load(writeConfig(t, document))
+			if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), credential) {
+				t.Fatalf("Load() error = %v, want %q without credential", err, test.want)
+			}
+		})
+	}
+}
 
 func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"conversation":{"enabled":true,"history_message_limit":100},
 		"mysql":{
 			"host":"127.0.0.1","port":3306,"database":"biz","user":"root","password":"123456",
@@ -37,7 +79,8 @@ func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{
 		"currentPlatform":"x",
-		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}]
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +93,8 @@ func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
 func TestLoadConfigDefaultsHTTPServer(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{
 		"currentPlatform":"x",
-		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}]
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -74,9 +118,10 @@ func TestLoadConfigDefaultsAndNormalizesAgentWorkspace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := Load(writeConfig(t, `{
-				"currentPlatform":"x",
-				"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}]`+tt.agent+`
-			}`))
+					"currentPlatform":"x",
+					"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+					"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}`+tt.agent+`
+				}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +227,8 @@ func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 				"apiKey": "",
 				"model": "glm-4.5-air","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
 			}
-		]
+		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
 	cfg, err := Load(path)
@@ -214,6 +260,7 @@ func TestLoadConfigNormalizesOptionalWeComWebhookURL(t *testing.T) {
 		"platforms":[
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
 	}`)
 
@@ -231,7 +278,8 @@ func TestLoadConfigAllowsMissingWeComWebhookURL(t *testing.T) {
 		"currentPlatform":"deepseek",
 		"platforms":[
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
-		]
+		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
 	cfg, err := Load(path)
@@ -281,6 +329,12 @@ platforms:
     pricing:
       input_usd_per_million_tokens: 0.15
       output_usd_per_million_tokens: 0.60
+redis:
+  addr:
+    - "127.0.0.1:6379"
+  password: ""
+  db: 0
+  pool_size: 5
 `,
 		},
 		{
@@ -297,6 +351,12 @@ model = " deepseek-chat "
 [platforms.pricing]
 input_usd_per_million_tokens = 0.15
 output_usd_per_million_tokens = 0.60
+
+[redis]
+addr = ["127.0.0.1:6379"]
+password = ""
+db = 0
+pool_size = 5
 `,
 		},
 	}
@@ -332,7 +392,8 @@ func TestLoadConfigAppliesShellEnvironmentOverride(t *testing.T) {
 		"platforms":[
 			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
 			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
-		]
+		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
 	cfg, err := Load(path)
@@ -356,7 +417,8 @@ func TestLoadConfigAppliesEnvironmentFileOverlay(t *testing.T) {
 		"platforms":[
 			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
 			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
-		]
+		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 	writeConfigAt(t, dir, "config.test.json", `{"currentPlatform":"backup"}`)
 
@@ -380,7 +442,8 @@ func TestLoadConfigFallsBackToExampleFile(t *testing.T) {
 		"currentPlatform":"example",
 		"platforms":[
 			{"id":"example","protocol":"openai","baseURL":"https://example.test/","apiKey":"example-key","model":"example-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
-		]
+		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
 	cfg, err := Load(path)
@@ -402,6 +465,7 @@ func TestLoadConfigUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 		"platforms":[
 			{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"unknown":true
 	} {"ignored":"trailing document"}`)
 
