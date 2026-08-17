@@ -14,6 +14,7 @@ import (
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/conversation"
+	agentprofileentity "github.com/PycMono/go-reagent/domain/entity/agentprofile"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi"
@@ -25,6 +26,26 @@ type controllerIDs struct {
 	mu     sync.Mutex
 	values []string
 }
+
+type controllerCatalog struct{}
+
+func (controllerCatalog) List() []agentprofileentity.Profile {
+	return []agentprofileentity.Profile{
+		{Code: "general", Name: "通用助手", Description: "日常问答", Icon: "message-circle", Selectable: true, Welcome: "今天想一起完成什么？", Instructions: "hidden"},
+		{Code: "writing", Name: "写作助手", Description: "内容写作", Icon: "pen-line", Selectable: true, Welcome: "想写点什么？"},
+	}
+}
+
+func (controllerCatalog) Find(code string) (agentprofileentity.Profile, bool) {
+	for _, profile := range (controllerCatalog{}).List() {
+		if profile.Code == strings.TrimSpace(code) {
+			return profile, true
+		}
+	}
+	return agentprofileentity.Profile{}, false
+}
+
+func (controllerCatalog) DefaultCode() string { return "general" }
 
 func (f *controllerIDs) NextID() string {
 	f.mu.Lock()
@@ -85,6 +106,7 @@ func testRouter(service *chatservice.Service) *gin.Engine {
 		c.Next()
 	})
 	ctl := NewController(service)
+	router.GET("/api/v1/agent-profiles", ctl.ListAgentProfiles)
 	routes := router.Group("/api/v1/conversations")
 	routes.POST("", ctl.CreateConversation)
 	routes.GET("", ctl.ListConversations)
@@ -98,18 +120,20 @@ func testRouter(service *chatservice.Service) *gin.Engine {
 
 func TestControllerCRUDUsesBusinessContextIdentity(t *testing.T) {
 	repo := &controllerRepo{found: true, deleteErr: commonerrors.ErrNotFound}
-	service := chatservice.NewService(repo, &controllerIDs{values: []string{"internal-1", "chat-1"}}, nil)
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"internal-1", "chat-1"}}, nil, controllerCatalog{})
 	router := testRouter(service)
 
 	create := httptest.NewRecorder()
-	router.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil))
-	if create.Code != http.StatusOK || repo.created == nil || repo.created.UserID != "visitor-1" {
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", strings.NewReader(`{"profile_code":"writing"}`))
+	createRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(create, createRequest)
+	if create.Code != http.StatusOK || repo.created == nil || repo.created.UserID != "visitor-1" || repo.created.ProfileCode != "writing" || !strings.Contains(create.Body.String(), `"profile_code":"writing"`) {
 		t.Fatalf("create status/repo = %d / %#v", create.Code, repo.created)
 	}
 
 	list := httptest.NewRecorder()
-	router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=5&keyword=docs", nil))
-	if list.Code != http.StatusOK || repo.listQuery.UserID != "visitor-1" || repo.listQuery.Limit != 5 || repo.listQuery.Keyword != "docs" {
+	router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=5&keyword=docs&profile_code=general", nil))
+	if list.Code != http.StatusOK || repo.listQuery.UserID != "visitor-1" || repo.listQuery.Limit != 5 || repo.listQuery.Keyword != "docs" || repo.listQuery.ProfileCode != "general" {
 		t.Fatalf("list status/query = %d / %#v", list.Code, repo.listQuery)
 	}
 
@@ -134,10 +158,21 @@ func TestControllerCRUDUsesBusinessContextIdentity(t *testing.T) {
 	}
 }
 
+func TestControllerListsPublicAgentProfiles(t *testing.T) {
+	service := chatservice.NewService(&controllerRepo{}, &controllerIDs{}, nil, controllerCatalog{})
+	response := httptest.NewRecorder()
+	testRouter(service).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/agent-profiles", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"default_profile":"general"`) ||
+		!strings.Contains(response.Body.String(), `"code":"writing"`) || strings.Contains(response.Body.String(), "hidden") {
+		t.Fatalf("profile response = %d / %s", response.Code, response.Body.String())
+	}
+}
+
 func TestControllerRejectsMalformedInput(t *testing.T) {
 	repo := &controllerRepo{}
-	router := testRouter(chatservice.NewService(repo, &controllerIDs{}, nil))
+	router := testRouter(chatservice.NewService(repo, &controllerIDs{}, nil, controllerCatalog{}))
 	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/conversations", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/chat-1", strings.NewReader(`{"name":`)),
 		httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/chat-1", strings.NewReader(`{"name":""}`)),
 		httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=101", nil),
@@ -161,7 +196,7 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
 		return pi.RunResult{}, nil
 	})
-	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner)
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})
 	router := testRouter(service)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/chat-1/runs", bytes.NewBufferString(`{"content":"hello"}`))
@@ -203,7 +238,7 @@ func TestCancelRunForwardsPathAndBusinessIdentity(t *testing.T) {
 		close(canceled)
 		return pi.RunResult{}, ctx.Err()
 	})
-	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner)
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})
 	router := testRouter(service)
 	runDone := make(chan struct{})
 	go func() {

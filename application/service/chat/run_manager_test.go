@@ -70,7 +70,7 @@ func (f *runRepoFake) RenameIfUntitled(_ context.Context, userID, conversationID
 }
 
 func newRunService(repo *runRepoFake, runner conversation.Runner, ids ...string) *Service {
-	return NewService(repo, &idFake{values: ids}, runner)
+	return NewService(repo, &idFake{values: ids}, runner, testCatalog())
 }
 
 func receiveUntilTerminal(t *testing.T, events <-chan vo.RunEventVO) []vo.RunEventVO {

@@ -13,6 +13,7 @@ func TestRegisterRoutesExposesChatAPIAndHealth(t *testing.T) {
 	RegisterRoutes(router, &chatctl.Controller{})
 	want := map[string]bool{
 		"GET /health":                                        true,
+		"GET /api/v1/agent-profiles":                         true,
 		"POST /api/v1/conversations":                         true,
 		"GET /api/v1/conversations":                          true,
 		"PATCH /api/v1/conversations/:id":                    true,
