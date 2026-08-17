@@ -12,14 +12,18 @@ import (
 	"github.com/PycMono/go-reagent/infrastructure"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
 
 func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
+	redisClient := goredis.NewUniversalClient(&goredis.UniversalOptions{Addrs: []string{"127.0.0.1:1"}})
+	t.Cleanup(func() { _ = redisClient.Close() })
 	app := fxtest.New(t,
 		fx.Supply(cfg),
+		fx.Replace(fx.Annotate(redisClient, fx.As(new(goredis.UniversalClient)))),
 		fx.Provide(func() pi.Runner { return &registeredRuntimeFake{} }),
 		infrastructure.Register,
 		conversation.Register,
