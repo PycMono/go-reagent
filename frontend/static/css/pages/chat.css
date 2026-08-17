@@ -932,6 +932,10 @@ textarea:focus-visible,
   border-radius: 999px;
 }
 
+.older-messages[hidden] {
+  display: none;
+}
+
 .qb-chat__composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;

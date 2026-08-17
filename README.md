@@ -115,9 +115,9 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 + 当前 Input
 ```
 
-仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；部署方可以把行业身份写入该目录的 `AGENTS.md`，把售后流程、课程咨询或合同审查等条件性流程做成 Skill，而无需修改 Runtime 核心或训练模型权重。
+仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；根 AGENTS/Skills 是所有聊天助手共享的基础层，会话绑定的 Agent Profile 再叠加角色 AGENTS 和专属 Skills，无需修改 Runtime 核心或训练模型权重。
 
-默认 Chat Workspace 提供天气、写作、决策和学习讲解四个条件性 Skill。Web 默认工具为 `calculate`、`get_current_time`、`get_weather`、`read`；天气数据来自 Open-Meteo，无需 API Key，重名地点会先要求消歧。Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具。
+默认 Chat Workspace 提供通用、写作、学习、健康、法律、汽车、职场和育儿八个 Agent Profile，以及天气、写作、决策和学习讲解四个通用 Skill。Profile 创建后固定在会话上，Run 时由服务端读取，不能由客户端中途切换。Web 默认工具为 `calculate`、`get_current_time`、`get_weather`、`read`；天气数据来自 Open-Meteo，无需 API Key，重名地点会先要求消歧。Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具。
 
 ## 项目布局
 
@@ -150,6 +150,8 @@ go-reagent/
 │   ├── server/               # 唯一产品 Agent 入口
 │   └── ping/                 # 独立 HTTP ping 示例
 ├── workspaces/chat/          # 浏览器聊天 Agent 的默认 Workspace
+│   └── profiles/             # 会话级 Agent Profile Catalog、AGENTS 与专属 Skills
+├── frontend/                 # 编译进 Go 二进制的模板、CSS 与原生 JavaScript
 ├── AGENTS.md                 # 仓库开发 Agent 定义
 ├── skills/                   # 仓库开发 Skills
 ├── config.example.json       # 不含真实密钥的配置模板
@@ -176,7 +178,7 @@ cmd/server -> application/web
 
 ## 快速开始
 
-需要使用浏览器聊天、会话列表、详细消息和本地工具状态时，参见 [本地 Web Chat 启动指南](docs/web-chat.md)。Web 页面由 Go 服务直接提供，不需要单独部署 Node 服务。
+需要使用浏览器聊天、Agent Profile、会话列表、详细消息和本地工具状态时，参见 [本地 Web Chat 启动指南](docs/web-chat.md)。Web 模板和静态资源编译进 Go 二进制，不需要携带前端目录或单独部署 Node 服务。
 
 复制本地配置模板并限制文件权限。默认示例使用 JSON，也可以通过 `CONFIG_PATH` 指定 YAML 或 TOML：
 

@@ -28,6 +28,7 @@ func TestChatPageContainsRequiredApplicationShell(t *testing.T) {
 		`id="conversationSidebar"`, `id="chatMain"`, `id="chatMessages"`,
 		`id="runStatus"`, `id="chatComposer"`, `id="chatInput"`, `id="sendBtn"`,
 		`/static/css/pages/chat.css`, `/static/js/pages/chat.js`,
+		`<link rel="icon" href="data:,">`,
 	} {
 		if !strings.Contains(response.Body.String(), required) {
 			t.Errorf("page missing %s", required)
