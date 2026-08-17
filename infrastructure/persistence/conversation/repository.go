@@ -65,11 +65,15 @@ func (repo *Repo) Create(ctx context.Context, conversation *conversationentity.C
 	}
 	conversation.UserID = strings.TrimSpace(conversation.UserID)
 	conversation.ConversationID = strings.TrimSpace(conversation.ConversationID)
+	conversation.ProfileCode = strings.TrimSpace(conversation.ProfileCode)
 	if conversation.UserID == "" {
 		return errors.New("mysql conversation: user ID is required")
 	}
 	if conversation.ConversationID == "" {
 		return errors.New("mysql conversation: conversation ID is required")
+	}
+	if conversation.ProfileCode == "" {
+		conversation.ProfileCode = "general"
 	}
 	if conversation.ID == "" {
 		conversation.ID = repo.idService.NextID()

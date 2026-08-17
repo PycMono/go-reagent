@@ -18,10 +18,11 @@ type MessageCursor struct {
 }
 
 type ListQuery struct {
-	UserID  string
-	Keyword string
-	Cursor  *ListCursor
-	Limit   int
+	UserID      string
+	Keyword     string
+	ProfileCode string
+	Cursor      *ListCursor
+	Limit       int
 }
 
 type ListPage struct {

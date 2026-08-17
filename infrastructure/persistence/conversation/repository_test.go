@@ -23,7 +23,7 @@ func TestRepositoryFindByUserIDAndConversationIDLoadsMetadataOnly(t *testing.T) 
 	now := time.Now()
 	expectOwnedConversation(mock, "user-1", "conversation-1").
 		WillReturnRows(sqlmock.NewRows(conversationColumns).
-			AddRow("conversation-pk-7", "user-1", "conversation-1", 3, now, now))
+			AddRow("conversation-pk-7", "user-1", "conversation-1", "writing", 3, now, now))
 
 	repository := newTestRepository(provider)
 	conversation, found, err := repository.FindByUserIDAndConversationID(context.Background(), "user-1", "conversation-1")
@@ -31,7 +31,7 @@ func TestRepositoryFindByUserIDAndConversationIDLoadsMetadataOnly(t *testing.T) 
 		t.Fatalf("FindByUserIDAndConversationID() = %#v, %v, %v", conversation, found, err)
 	}
 	if conversation.ID != "conversation-pk-7" || conversation.UserID != "user-1" ||
-		conversation.ConversationID != "conversation-1" || conversation.Version != 3 {
+		conversation.ConversationID != "conversation-1" || conversation.ProfileCode != "writing" || conversation.Version != 3 {
 		t.Fatalf("conversation = %#v", conversation)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -84,6 +84,9 @@ func TestRepositoryCreateAssignsStringID(t *testing.T) {
 	}
 	if conversation.ID != "generated-1" {
 		t.Fatalf("created conversation ID = %q, want generated-1", conversation.ID)
+	}
+	if conversation.ProfileCode != "general" {
+		t.Fatalf("created conversation ProfileCode = %q, want general", conversation.ProfileCode)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -210,7 +213,7 @@ func newRepositoryTestProvider(t *testing.T) (*contextDBProvider, sqlmock.Sqlmoc
 }
 
 var (
-	conversationColumns = []string{"id", "user_id", "conversation_id", "version", "created_at", "updated_at"}
+	conversationColumns = []string{"id", "user_id", "conversation_id", "profile_code", "version", "created_at", "updated_at"}
 	messageColumns      = []string{"id", "conversation_id", "turn_version", "ordinal", "run_id", "role", "payload", "created_at"}
 )
 

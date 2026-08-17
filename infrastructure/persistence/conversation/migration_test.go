@@ -86,3 +86,29 @@ func TestWebChatMigrationDefinesConversationName(t *testing.T) {
 		t.Fatalf("down migration = %q, want %q", got, want)
 	}
 }
+
+func TestAgentProfileMigrationDefinesConversationProfile(t *testing.T) {
+	up, err := os.ReadFile("../../../migrations/0004_agent_profiles.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE agent_conversations",
+		"ADD COLUMN profile_code VARCHAR(64) NOT NULL DEFAULT 'general' AFTER name",
+		"idx_agent_conversations_user_profile_updated",
+		"user_id, profile_code, updated_at, id",
+	} {
+		if !strings.Contains(string(up), want) {
+			t.Fatalf("up migration missing %q", want)
+		}
+	}
+	down, err := os.ReadFile("../../../migrations/0004_agent_profiles.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"DROP INDEX idx_agent_conversations_user_profile_updated", "DROP COLUMN profile_code"} {
+		if !strings.Contains(string(down), want) {
+			t.Fatalf("down migration missing %q", want)
+		}
+	}
+}

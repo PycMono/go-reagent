@@ -58,6 +58,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 		"../../../migrations/0001_conversation_persistence.up.sql",
 		"../../../migrations/0002_model_invocation_observability.up.sql",
 		"../../../migrations/0003_web_chat.up.sql",
+		"../../../migrations/0004_agent_profiles.up.sql",
 	} {
 		migration, err := os.ReadFile(migrationPath)
 		if err != nil {
@@ -94,7 +95,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := conversationpersistence.NewConversationRepo(provider, transactions, idService)
-	created := &conversationentity.Conversation{UserID: userID, ConversationID: conversationID, Name: "Integration Chat"}
+	created := &conversationentity.Conversation{UserID: userID, ConversationID: conversationID, Name: "Integration Chat", ProfileCode: "writing"}
 	if err := repository.Create(ctx, created); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("initial conversation = %#v, %v, %v", conversation, found, err)
 	}
-	if conversation.ID == "" || conversation.Version != 0 {
+	if conversation.ID == "" || conversation.ProfileCode != "writing" || conversation.Version != 0 {
 		t.Fatalf("initial conversation = %#v", conversation)
 	}
 	cleanupConversationID = conversation.ID
