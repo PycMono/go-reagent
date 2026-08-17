@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/PycMono/go-cache-sdk v1.0.3
 	github.com/PycMono/go-context-sdk v1.0.2
 	github.com/PycMono/go-gin-sdk v0.0.6
 	github.com/PycMono/go-logger-sdk v1.0.5
@@ -14,6 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/jinzhu/configor v1.2.2
 	github.com/openai/openai-go/v3 v3.47.0
+	github.com/redis/go-redis/v9 v9.19.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	go.uber.org/fx v1.23.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -23,7 +25,6 @@ require (
 
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/PycMono/go-cache-sdk v1.0.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.6.0 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
@@ -54,7 +55,6 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/sirupsen/logrus v1.9.2 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
