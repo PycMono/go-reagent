@@ -44,6 +44,44 @@ func TestRendererRejectsMissingOrInvalidTemplateTree(t *testing.T) {
 	}
 }
 
+func TestProductionChatPageRendersAgentProfileControls(t *testing.T) {
+	renderer, err := NewProductionRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := renderer.Render("chat.html", map[string]string{"Title": "Reagent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"profilePicker", "profileStarters", "sessionProfile", "profileFilter"} {
+		if !strings.Contains(body, `id="`+id+`"`) {
+			t.Fatalf("chat page missing Profile control %q", id)
+		}
+	}
+}
+
+func TestProductionRendererDoesNotDependOnProcessWorkingDirectory(t *testing.T) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(workingDirectory); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	renderer, err := NewProductionRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renderer.Render("chat.html", map[string]string{"Title": "Reagent"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeTemplate(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, name)

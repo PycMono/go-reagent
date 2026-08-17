@@ -11,7 +11,10 @@
       </button>
       <div class="qb-chat__session-heading">
         <span class="qb-chat__session-kicker">WORKSPACE AGENT</span>
-        <h1 class="qb-chat__session-title" id="sessionTitle">新对话</h1>
+        <div class="qb-chat__session-line">
+          <h1 class="qb-chat__session-title" id="sessionTitle">新对话</h1>
+          <span class="qb-chat__session-profile" id="sessionProfile" hidden></span>
+        </div>
       </div>
       <div class="qb-chat__header-state" title="服务已连接">
         <span class="status-beacon" aria-hidden="true"></span><span>Local</span>
@@ -20,10 +23,13 @@
 
     <section class="qb-chat__messages" id="chatMessages" aria-live="polite" aria-label="聊天消息">
       <div class="qb-chat__welcome" id="chatWelcome">
-        <div class="qb-chat__welcome-mark" aria-hidden="true"><span>R</span></div>
-        <p class="qb-chat__welcome-kicker">PI-POWERED LOCAL AGENT</p>
-        <h2>今天想一起完成什么？</h2>
-        <p>我可以理解当前工作区、调用已注册的本地工具，并把完整对话保存下来。</p>
+        <div class="qb-chat__welcome-mark" aria-hidden="true"><span id="welcomeProfileIcon">R</span></div>
+        <p class="qb-chat__welcome-kicker">选择适合这次对话的助手</p>
+        <h2 id="profileWelcomeTitle">正在加载助手</h2>
+        <p class="qb-chat__welcome-description" id="profileWelcomeDescription">每个对话会固定使用创建时选择的助手。</p>
+        <p class="qb-chat__profile-error" id="profileLoadError" role="status" hidden>助手列表暂时无法加载，请刷新页面后重试。</p>
+        <div class="qb-chat__profile-picker" id="profilePicker" role="listbox" aria-label="选择助手"></div>
+        <div class="qb-chat__profile-starters" id="profileStarters" aria-label="推荐问题"></div>
       </div>
     </section>
 

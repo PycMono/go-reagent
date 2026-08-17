@@ -15,6 +15,13 @@
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
     <input id="conversationSearch" type="search" placeholder="搜索对话" autocomplete="off">
   </label>
+  <label class="qb-chat__profile-filter-label" for="profileFilter">助手筛选</label>
+  <div class="qb-chat__profile-filter-shell">
+    <span class="qb-chat__profile-filter-icon" aria-hidden="true">◇</span>
+    <select id="profileFilter" aria-label="按助手筛选会话" disabled>
+      <option value="">全部助手</option>
+    </select>
+  </div>
   <div class="qb-chat__history-label"><span>最近对话</span><span id="conversationCount"></span></div>
   <nav class="qb-chat__history-list" id="conversationList" aria-live="polite"></nav>
   <button class="qb-chat__load-more" id="loadMoreConversations" type="button" hidden>加载更多</button>
