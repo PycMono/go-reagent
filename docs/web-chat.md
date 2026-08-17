@@ -10,9 +10,10 @@
 mysql -uroot -p harness < migrations/0001_conversation_persistence.up.sql
 mysql -uroot -p harness < migrations/0002_model_invocation_observability.up.sql
 mysql -uroot -p harness < migrations/0003_web_chat.up.sql
+mysql -uroot -p harness < migrations/0004_agent_profiles.up.sql
 ```
 
-`0003_web_chat` 只为 `agent_conversations` 增加 `name`。会话列表里的 `message_total` 在查询时从 `agent_messages` 聚合，不持久化冗余的最后一条消息。
+`0003_web_chat` 为 `agent_conversations` 增加 `name`；`0004_agent_profiles` 增加非空 `profile_code` 和用户/Profile/更新时间联合索引。既有会话通过字段默认值迁移为 `general`。会话列表里的 `message_total` 在查询时从 `agent_messages` 聚合，不持久化冗余的最后一条消息。
 
 ## 2. 配置
 
@@ -64,7 +65,7 @@ Redis 是必需依赖。服务启动时会连接配置的 Redis 并执行 `PING`
 
 ## 3. 启动
 
-模板和静态资源使用仓库内的 `frontend/` 相对路径，因此请在仓库根目录运行：
+开发时可在仓库根目录运行：
 
 ```bash
 CONFIG_PATH=./config.json go run ./cmd/server
@@ -72,7 +73,7 @@ CONFIG_PATH=./config.json go run ./cmd/server
 
 打开 <http://127.0.0.1:8080>。健康检查地址为 <http://127.0.0.1:8080/health>。
 
-页面不需要 Node 服务或前端构建步骤。Web Agent 默认注册 `calculate`、`get_current_time`、`get_weather` 和受 Workspace 边界保护的 `read`。天气数据来自 Open-Meteo，无需 API Key；重名地点会返回候选并先请用户确认，不会默认选择第一个。
+Go Templates、CSS 和 JavaScript 通过 `go:embed` 编译进 server 二进制。部署已构建二进制时不需要携带 `frontend/` 目录，也不需要 Node 服务或前端构建步骤。Web Agent 默认注册 `calculate`、`get_current_time`、`get_weather` 和受 Workspace 边界保护的 `read`。天气数据来自 Open-Meteo，无需 API Key；重名地点会返回候选并先请用户确认，不会默认选择第一个。
 
 Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具，也不会获得 `write`、`edit`、`apply_patch`、`exec` 或 `process`。知识库、课程、订单等行业能力仍应在业务 Fx 图中显式注册对应的真实 `ai.Tool`。
 
@@ -82,19 +83,51 @@ Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工�
 
 ```text
 workspaces/chat/
-├── AGENTS.md       # 身份、行业、表达方式和长期规则
-├── skills/         # 天气、写作、决策和学习讲解等条件性流程
-├── docs/           # 可选：本地参考资料
-└── assets/         # 可选：其他资源
+├── AGENTS.md                    # 所有助手共享的身份和基础规则
+├── skills/                      # 天气、写作、决策和学习讲解等通用流程
+└── profiles/
+    ├── catalog.yaml             # 版本化 Profile 公共元数据
+    ├── general/AGENTS.md
+    ├── writing/AGENTS.md
+    └── writing/skills/...       # 只注入写作 Profile 的专属 Skills
 ```
 
 默认 Workspace 提供 `weather-assistance`、`writing-assistance`、`decision-support` 和 `learning-explanation`。普通问候、闲聊、翻译和用户已提供文本的简单总结不需要 Skill。存在匹配 Skill 时，模型必须先通过 `read` 完整读取对应 `SKILL.md`。
 
 Workspace 可以没有 Skill，仅凭有效 `AGENTS.md` 正常聊天。修改 Workspace Skill 会在下一次 Run 生效；新增或修改 Go Tool 需要重新构建并重启服务。
 
-`AGENTS.md + Skills + Documents + 业务 Tools` 用于把同一个 Agent 配置成某个行业的专业助手，不会训练或修改模型权重。当前版本不提供在线训练、Agent 版本发布、多 Agent 选择或管理页面。
+页面提供 `general`、`writing`、`learning`、`health`、`legal`、`automotive`、`workplace` 和 `parenting` 八个 Agent Profile。用户发送第一条消息时才创建会话并持久化 `profile_code`；创建后没有修改入口，Run API 也不接受 Profile 参数。每轮 Run 由服务端读取会话 Profile，叠加对应 AGENTS 和专属 Skill 目录，避免历史上下文中途混用。
 
-## 5. 身份与安全边界
+Profile Catalog 随仓库版本发布，不提供后台、在线训练或热更新。新增 Profile 时必须同时提交 `catalog.yaml` 条目、`profiles/<code>/AGENTS.md` 和可选的 `profiles/<code>/skills/`，再通过 Catalog 测试后重新构建。停用 Profile 时先设置 `selectable: false`：新会话不能选择，但既有会话仍可显示和运行。只有完成数据库引用迁移后才能删除 code；运行中的既有会话引用不存在的 code 会返回内部配置错误，不会静默切换为 `general`。
+
+`AGENTS.md + Skills + Documents + 业务 Tools` 只配置模型上下文和真实工具能力，不会训练或修改模型权重。Profile 隔离是行为边界，不是文件系统权限边界；第一期所有 Profile 共用现有工具，不提供在线训练或 Profile 管理页面。
+
+## 5. Profile API
+
+查询公开 Profile Catalog：
+
+```http
+GET /api/v1/agent-profiles
+```
+
+创建会话必须显式提交一个存在且 `selectable=true` 的 code：
+
+```http
+POST /api/v1/conversations
+Content-Type: application/json
+
+{"profile_code":"writing"}
+```
+
+会话列表可以与 keyword、cursor 和 limit 组合做 Profile 精确筛选：
+
+```http
+GET /api/v1/conversations?profile_code=writing
+```
+
+Profile API 只返回名称、说明、图标、欢迎语和推荐问题，不返回 AGENTS 正文或 Skill 路径。
+
+## 6. 身份与安全边界
 
 - 每个浏览器 Cookie Jar 对应一个匿名用户，Cookie 名为 `reagent_visitor`，有效期一年。
 - 清理或丢失 Cookie 会获得新用户身份，原会话仍在数据库中，但新身份无法读取它们。
