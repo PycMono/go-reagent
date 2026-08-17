@@ -11,6 +11,7 @@ import (
 	chattools "github.com/PycMono/go-reagent/application/tool/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
+	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	"github.com/PycMono/go-reagent/infrastructure/driver/openmeteo"
 	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/pi"
@@ -34,6 +35,7 @@ var Register = fx.Options(
 		config.NewFromEnvironment,
 		config.NewPlatform,
 		NewChatWorkDir,
+		agentprofiledriver.NewCatalog,
 	),
 	fx.Invoke(validateConfig),
 )

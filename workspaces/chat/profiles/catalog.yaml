@@ -1,0 +1,99 @@
+version: 1
+default_profile: general
+profiles:
+  - code: general
+    name: 通用助手
+    description: 日常问答、分析与决策
+    icon: message-circle
+    order: 10
+    selectable: true
+    welcome: 今天想一起完成什么？
+    starters:
+      - title: 帮我分析一个问题
+        prompt: 帮我分析这个问题：
+      - title: 给我一些实用建议
+        prompt: 针对这件事给我一些实用建议：
+  - code: writing
+    name: 写作助手
+    description: 文案、改写、总结和平台内容
+    icon: pen-line
+    order: 20
+    selectable: true
+    welcome: 今天想写点什么？
+    starters:
+      - title: 写一篇小红书文案
+        prompt: 帮我写一篇小红书文案，主题是：
+      - title: 润色这段文字
+        prompt: 请帮我润色下面这段文字：
+  - code: learning
+    name: 学习导师
+    description: 概念讲解、练习和学习计划
+    icon: graduation-cap
+    order: 30
+    selectable: true
+    welcome: 今天想弄懂什么？
+    starters:
+      - title: 讲解一个概念
+        prompt: 请用容易理解的方式讲解：
+      - title: 制定学习计划
+        prompt: 请帮我制定一个学习计划，目标是：
+  - code: health
+    name: 健康助手
+    description: 健康知识和就医信息整理
+    icon: heart-pulse
+    order: 40
+    selectable: true
+    welcome: 有什么健康问题需要一起梳理？
+    starters:
+      - title: 整理症状信息
+        prompt: 请帮我整理这些症状，以便就医时描述：
+      - title: 看懂检查报告
+        prompt: 请用通俗语言解释这份检查报告中的术语：
+  - code: legal
+    name: 法律助手
+    description: 法律常识和材料梳理
+    icon: scale
+    order: 50
+    selectable: true
+    welcome: 需要梳理哪类法律问题？
+    starters:
+      - title: 梳理事件时间线
+        prompt: 请帮我把以下事件整理成法律事项时间线：
+      - title: 看懂合同条款
+        prompt: 请用通俗语言解释这段合同条款：
+  - code: automotive
+    name: 汽车顾问
+    description: 选车、用车和维修知识
+    icon: car-front
+    order: 60
+    selectable: true
+    welcome: 今天想聊选车还是用车？
+    starters:
+      - title: 对比两款车
+        prompt: 请帮我对比这两款车：
+      - title: 分析车辆异常
+        prompt: 我的车辆出现了以下现象，请帮我分析可能原因：
+  - code: workplace
+    name: 职场助手
+    description: 汇报、邮件、方案和沟通
+    icon: briefcase
+    order: 70
+    selectable: true
+    welcome: 今天要处理哪件工作？
+    starters:
+      - title: 写一封工作邮件
+        prompt: 请帮我写一封工作邮件，目的是：
+      - title: 整理工作汇报
+        prompt: 请帮我把这些信息整理成工作汇报：
+  - code: parenting
+    name: 育儿助手
+    description: 育儿知识和亲子内容
+    icon: baby
+    order: 80
+    selectable: true
+    welcome: 今天想聊哪件育儿小事？
+    starters:
+      - title: 安排亲子活动
+        prompt: 请根据这些条件推荐亲子活动：
+      - title: 写一篇亲子分享
+        prompt: 请帮我写一篇亲子生活分享，主题是：
