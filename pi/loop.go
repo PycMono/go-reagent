@@ -3,6 +3,7 @@ package pi
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -78,7 +79,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			if reporter != nil {
 				reporter.Report(ctx, NewThinkingEvent())
 			}
-			generated, err := l.generate(ctx, contextHistory, nil)
+			generated, err := l.generate(ctx, contextHistory, nil, nil)
 			contextHistory = generated.context
 			if generated.compactionUsage != nil {
 				recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
@@ -97,11 +98,6 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
 			}
 			recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)
-			thinkingText, err := ai.TextContent(thinkResp.Content)
-			if err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: response content: %w", err))
-			}
-			fmt.Printf("🧠 [内部思考 Trace]: %s\n", thinkingText)
 			contextHistory = append(contextHistory, *thinkResp, ai.Message{
 				Role:    ai.RoleUser,
 				Content: []ai.ContentBlock{ai.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
@@ -111,7 +107,14 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
-		generated, err := l.generate(ctx, contextHistory, availableTools)
+		if reporter != nil {
+			reporter.Report(ctx, NewMessageStartEvent())
+		}
+		generated, err := l.generate(ctx, contextHistory, availableTools, func(block ai.ContentBlock) {
+			if reporter != nil {
+				reporter.Report(ctx, NewMessageUpdateEvent(block))
+			}
+		})
 		contextHistory = generated.context
 		if generated.compactionUsage != nil {
 			recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
@@ -132,10 +135,10 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		recordInvocation(ModelInvocationPhaseAction, *actionResp.Usage)
 		contextHistory = append(contextHistory, *actionResp)
 		newMessages = append(newMessages, *actionResp)
+		if reporter != nil {
+			reporter.Report(ctx, NewMessageEndEvent(*actionResp))
+		}
 		if len(actionResp.ToolCalls) == 0 {
-			if reporter != nil {
-				reporter.Report(ctx, NewMessageEvent(*actionResp))
-			}
 			return finish(nil)
 		}
 		if err := validateToolCalls(actionResp.ToolCalls); err != nil {
@@ -210,6 +213,9 @@ func validateActionResponse(response *ai.Message) error {
 	if content == "" && len(response.ToolCalls) == 0 {
 		return errors.New("assistant message contains no content or tool calls")
 	}
+	if response.FinishReason == ai.FinishReasonLength && len(response.ToolCalls) != 0 {
+		return errors.New("truncated response must not execute tool calls")
+	}
 
 	return nil
 }
@@ -224,6 +230,9 @@ func validateToolCalls(calls []ai.ToolCall) error {
 			return fmt.Errorf("duplicate tool call ID %q", call.ID)
 		}
 		seen[call.ID] = struct{}{}
+		if !json.Valid(call.Arguments) {
+			return fmt.Errorf("tool call %q arguments are invalid JSON", call.ID)
+		}
 	}
 
 	return nil

@@ -39,8 +39,9 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 	if provider.calls != 1 {
 		t.Fatalf("Provider calls = %d, want 1", provider.calls)
 	}
-	if !slices.Equal(reporter.events, []AgentEventType{AgentEventMessage}) {
-		t.Fatalf("events = %v, want [%s]", reporter.events, AgentEventMessage)
+	wantEvents := []AgentEventType{AgentEventMessageStart, AgentEventMessageUpdate, AgentEventMessageEnd}
+	if !slices.Equal(reporter.events, wantEvents) {
+		t.Fatalf("events = %v, want %v", reporter.events, wantEvents)
 	}
 }
 
@@ -48,14 +49,34 @@ type registerTestProvider struct {
 	calls int
 }
 
-func (p *registerTestProvider) Generate(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+func (p *registerTestProvider) Stream(context.Context, []ai.Message, []ai.ToolDefinition) ai.Stream {
 	p.calls++
-	return &ai.Message{
+	message := &ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("你好")},
 		Usage:   &ai.Usage{PlatformID: "test", Model: "test-model"},
-	}, nil
+	}
+	return &registerTestStream{message: message}
 }
+
+type registerTestStream struct {
+	step    int
+	message *ai.Message
+}
+
+func (s *registerTestStream) Next() bool { s.step++; return s.step <= 3 }
+func (s *registerTestStream) Current() ai.StreamEvent {
+	switch s.step {
+	case 1:
+		return ai.StreamEvent{Type: ai.StreamEventStart}
+	case 2:
+		return ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: "你好"}
+	default:
+		return ai.StreamEvent{Type: ai.StreamEventDone}
+	}
+}
+func (s *registerTestStream) Result() (*ai.Message, error) { return s.message, nil }
+func (s *registerTestStream) Close() error                 { return nil }
 
 type registerTestReporter struct {
 	events []AgentEventType

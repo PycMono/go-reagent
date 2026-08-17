@@ -11,6 +11,7 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	anthropicstream "github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 )
 
 // AnthropicImpl adapts the Anthropic Messages protocol.
@@ -33,18 +34,18 @@ func NewAnthropic(config Options) ai.Provider {
 	}
 }
 
-func (p *AnthropicImpl) Generate(
+func (p *AnthropicImpl) Stream(
 	ctx context.Context,
 	msgs []ai.Message,
 	availableTools []ai.ToolDefinition,
-) (*ai.Message, error) {
+) ai.Stream {
 	messages, system, err := toAnthropicMessages(msgs)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
+		return newFailedAnthropicStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	tools, err := toAnthropicTools(availableTools)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
+		return newFailedAnthropicStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := anthropicsdk.MessageNewParams{
@@ -57,20 +58,128 @@ func (p *AnthropicImpl) Generate(
 		params.Tools = tools
 	}
 
-	response, err := p.client.Messages.New(ctx, params)
-	if err != nil {
-		return nil, p.classifyError(err)
+	return &anthropicStream{provider: p, stream: p.client.Messages.NewStreaming(ctx, params)}
+}
+
+type anthropicStream struct {
+	provider *AnthropicImpl
+	stream   *anthropicstream.Stream[anthropicsdk.MessageStreamEventUnion]
+	message  anthropicsdk.Message
+	current  ai.StreamEvent
+	started  bool
+	terminal bool
+	result   *ai.Message
+	err      error
+}
+
+func newFailedAnthropicStream(err error) ai.Stream {
+	return &anthropicStream{err: err}
+}
+
+func (s *anthropicStream) Next() bool {
+	if s.terminal {
+		return false
 	}
-	if response.StopReason == anthropicsdk.StopReasonModelContextWindowExceeded {
-		return nil, pierrors.Wrap(
+	if !s.started {
+		s.started = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventStart}
+		return true
+	}
+	if s.stream == nil {
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+
+	for s.stream.Next() {
+		event := s.stream.Current()
+		if err := s.message.Accumulate(event); err != nil {
+			s.err = pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", err)
+			s.terminal = true
+			s.current = ai.StreamEvent{Type: ai.StreamEventError}
+			return true
+		}
+		switch current := event.AsAny().(type) {
+		case anthropicsdk.ContentBlockStartEvent:
+			if current.ContentBlock.Type == "tool_use" {
+				s.current = ai.StreamEvent{
+					Type: ai.StreamEventToolCallDelta,
+					ToolCallDelta: &ai.ToolCallDelta{
+						Index: int(current.Index), IDDelta: current.ContentBlock.ID, NameDelta: current.ContentBlock.Name,
+					},
+				}
+				return true
+			}
+		case anthropicsdk.ContentBlockDeltaEvent:
+			switch delta := current.Delta.AsAny().(type) {
+			case anthropicsdk.TextDelta:
+				if delta.Text != "" {
+					s.current = ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: delta.Text}
+					return true
+				}
+			case anthropicsdk.InputJSONDelta:
+				if delta.PartialJSON != "" {
+					s.current = ai.StreamEvent{
+						Type: ai.StreamEventToolCallDelta,
+						ToolCallDelta: &ai.ToolCallDelta{
+							Index: int(current.Index), ArgumentsDelta: delta.PartialJSON,
+						},
+					}
+					return true
+				}
+			}
+		case anthropicsdk.MessageStopEvent:
+			if err := s.finish(); err != nil {
+				s.err = err
+				s.terminal = true
+				s.current = ai.StreamEvent{Type: ai.StreamEventError}
+				return true
+			}
+			s.terminal = true
+			s.current = ai.StreamEvent{Type: ai.StreamEventDone}
+			return true
+		}
+	}
+
+	if err := s.stream.Err(); err != nil {
+		s.err = s.provider.classifyError(err)
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+	if err := s.finish(); err != nil {
+		s.err = err
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+	s.terminal = true
+	s.current = ai.StreamEvent{Type: ai.StreamEventDone}
+	return true
+}
+
+func (s *anthropicStream) Current() ai.StreamEvent { return s.current }
+
+func (s *anthropicStream) Result() (*ai.Message, error) { return s.result, s.err }
+
+func (s *anthropicStream) Close() error {
+	if s.stream == nil {
+		return nil
+	}
+	return s.stream.Close()
+}
+
+func (s *anthropicStream) finish() error {
+	if s.message.StopReason == anthropicsdk.StopReasonModelContextWindowExceeded {
+		return pierrors.Wrap(
 			pierrors.ErrorCodeAIContextOverflow,
-			"anthropic generate",
+			"anthropic stream",
 			errors.New("model context window exceeded"),
 		)
 	}
 
-	result := &ai.Message{Role: ai.RoleAssistant}
-	for _, block := range response.Content {
+	result := &ai.Message{Role: ai.RoleAssistant, FinishReason: anthropicFinishReason(s.message.StopReason)}
+	for _, block := range s.message.Content {
 		switch block.Type {
 		case "text":
 			result.Content = append(result.Content, ai.TextBlock(block.Text))
@@ -82,15 +191,23 @@ func (p *AnthropicImpl) Generate(
 			})
 		}
 	}
-	if response.JSON.Usage.Valid() && response.Usage.JSON.InputTokens.Valid() &&
-		response.Usage.JSON.OutputTokens.Valid() {
-		result.Usage = &ai.Usage{
-			InputTokens:  response.Usage.InputTokens,
-			OutputTokens: response.Usage.OutputTokens,
-		}
+	result.Usage = &ai.Usage{
+		InputTokens:  s.message.Usage.InputTokens,
+		OutputTokens: s.message.Usage.OutputTokens,
 	}
+	s.result = result
+	return nil
+}
 
-	return result, nil
+func anthropicFinishReason(reason anthropicsdk.StopReason) ai.FinishReason {
+	switch reason {
+	case anthropicsdk.StopReasonToolUse:
+		return ai.FinishReasonToolUse
+	case anthropicsdk.StopReasonMaxTokens:
+		return ai.FinishReasonLength
+	default:
+		return ai.FinishReasonStop
+	}
 }
 
 func (p *AnthropicImpl) classifyError(err error) error {

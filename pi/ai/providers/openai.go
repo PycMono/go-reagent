@@ -10,6 +10,7 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	openaisstream "github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -33,39 +34,142 @@ func NewOpenAi(config Options) ai.Provider {
 	}
 }
 
-func (p *OpenAIImpl) Generate(
+func (p *OpenAIImpl) Stream(
 	ctx context.Context,
 	msgs []ai.Message,
 	availableTools []ai.ToolDefinition,
-) (*ai.Message, error) {
+) ai.Stream {
 	openAIMessages, err := toOpenAIMessages(msgs)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s 消息转换失败: %w", p.name, err))
+		return newFailedOpenAIStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	openAITools, err := toOpenAITools(availableTools)
 	if err != nil {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err))
+		return newFailedOpenAIStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := openaisdk.ChatCompletionNewParams{
-		Model:    p.model,
-		Messages: openAIMessages,
+		Model:         p.model,
+		Messages:      openAIMessages,
+		StreamOptions: openaisdk.ChatCompletionStreamOptionsParam{IncludeUsage: openaisdk.Bool(true)},
 	}
 	if len(openAITools) > 0 {
 		params.Tools = openAITools
 	}
 
-	response, err := p.client.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return nil, p.classifyError(err)
+	return &openAIStream{provider: p, stream: p.client.Chat.Completions.NewStreaming(ctx, params)}
+}
+
+type openAIStream struct {
+	provider    *OpenAIImpl
+	stream      *openaisstream.Stream[openaisdk.ChatCompletionChunk]
+	accumulator openaisdk.ChatCompletionAccumulator
+	current     ai.StreamEvent
+	pending     []ai.StreamEvent
+	started     bool
+	terminal    bool
+	usageSeen   bool
+	result      *ai.Message
+	err         error
+}
+
+func newFailedOpenAIStream(err error) ai.Stream {
+	return &openAIStream{err: err}
+}
+
+func (s *openAIStream) Next() bool {
+	if len(s.pending) > 0 {
+		s.current = s.pending[0]
+		s.pending = s.pending[1:]
+		return true
 	}
+	if s.terminal {
+		return false
+	}
+	if !s.started {
+		s.started = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventStart}
+		return true
+	}
+	if s.stream == nil {
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+
+	for s.stream.Next() {
+		chunk := s.stream.Current()
+		if !s.accumulator.AddChunk(chunk) {
+			s.err = pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", errors.New("流式响应拼接失败"))
+			s.terminal = true
+			s.current = ai.StreamEvent{Type: ai.StreamEventError}
+			return true
+		}
+		if chunk.JSON.Usage.Valid() && chunk.Usage.JSON.PromptTokens.Valid() &&
+			chunk.Usage.JSON.CompletionTokens.Valid() {
+			s.usageSeen = true
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				s.pending = append(s.pending, ai.StreamEvent{
+					Type: ai.StreamEventTextDelta, TextDelta: choice.Delta.Content,
+				})
+			}
+			for _, call := range choice.Delta.ToolCalls {
+				s.pending = append(s.pending, ai.StreamEvent{
+					Type: ai.StreamEventToolCallDelta,
+					ToolCallDelta: &ai.ToolCallDelta{
+						Index: int(call.Index), IDDelta: call.ID,
+						NameDelta: call.Function.Name, ArgumentsDelta: call.Function.Arguments,
+					},
+				})
+			}
+		}
+		if len(s.pending) > 0 {
+			s.current = s.pending[0]
+			s.pending = s.pending[1:]
+			return true
+		}
+	}
+
+	if err := s.stream.Err(); err != nil {
+		s.err = s.provider.classifyError(err)
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+	if err := s.finish(); err != nil {
+		s.err = err
+		s.terminal = true
+		s.current = ai.StreamEvent{Type: ai.StreamEventError}
+		return true
+	}
+	s.terminal = true
+	s.current = ai.StreamEvent{Type: ai.StreamEventDone}
+	return true
+}
+
+func (s *openAIStream) Current() ai.StreamEvent { return s.current }
+
+func (s *openAIStream) Result() (*ai.Message, error) { return s.result, s.err }
+
+func (s *openAIStream) Close() error {
+	if s.stream == nil {
+		return nil
+	}
+	return s.stream.Close()
+}
+
+func (s *openAIStream) finish() error {
+	response := s.accumulator.ChatCompletion
 	if len(response.Choices) == 0 {
-		return nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai generate", fmt.Errorf("%s API 返回空 choices", p.name))
+		return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s API 返回空 choices", s.provider.name))
 	}
 
 	message := response.Choices[0].Message
 	result := &ai.Message{
-		Role: ai.RoleAssistant,
+		Role:         ai.RoleAssistant,
+		FinishReason: openAIFinishReason(response.Choices[0].FinishReason),
 	}
 	if message.Content != "" {
 		result.Content = []ai.ContentBlock{ai.TextBlock(message.Content)}
@@ -80,15 +184,25 @@ func (p *OpenAIImpl) Generate(
 			Arguments: json.RawMessage(toolCall.Function.Arguments),
 		})
 	}
-	if response.JSON.Usage.Valid() && response.Usage.JSON.PromptTokens.Valid() &&
-		response.Usage.JSON.CompletionTokens.Valid() {
+	if s.usageSeen {
 		result.Usage = &ai.Usage{
 			InputTokens:  response.Usage.PromptTokens,
 			OutputTokens: response.Usage.CompletionTokens,
 		}
 	}
+	s.result = result
+	return nil
+}
 
-	return result, nil
+func openAIFinishReason(reason string) ai.FinishReason {
+	switch reason {
+	case "tool_calls", "function_call":
+		return ai.FinishReasonToolUse
+	case "length":
+		return ai.FinishReasonLength
+	default:
+		return ai.FinishReasonStop
+	}
 }
 
 func (p *OpenAIImpl) classifyError(err error) error {

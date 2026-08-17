@@ -28,11 +28,11 @@ type scriptedProvider struct {
 	afterCall func(int)
 }
 
-func (p *scriptedProvider) Generate(
+func (p *scriptedProvider) Stream(
 	_ context.Context,
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
-) (*ai.Message, error) {
+) ai.Stream {
 	p.mu.Lock()
 	call := len(p.requests) + 1
 	p.requests = append(p.requests, append([]ai.Message(nil), messages...))
@@ -43,7 +43,7 @@ func (p *scriptedProvider) Generate(
 	if p.afterCall != nil {
 		p.afterCall(call)
 	}
-	return withTestUsage(step.response), step.err
+	return newTestStream(withTestUsage(step.response), step.err)
 }
 
 func (p *scriptedProvider) snapshots() ([][]ai.Message, [][]ai.ToolDefinition) {
@@ -141,7 +141,7 @@ func TestAgentCompactsOnceAfterContextOverflow(t *testing.T) {
 	if len(requests) != 3 {
 		t.Fatalf("provider calls = %d, want 3", len(requests))
 	}
-	if len(tools[1]) != 0 || !messagesContain(requests[1], "Summarize the supplied earlier conversation") {
+	if len(tools[1]) != 0 || !messagesContain(requests[1], "请总结所提供的早期对话") {
 		t.Fatalf("summary request/tools = %#v/%#v", requests[1], tools[1])
 	}
 	if !messagesContain(requests[2], "# Earlier conversation summary\nold work summarized") ||

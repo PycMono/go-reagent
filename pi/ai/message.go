@@ -10,6 +10,15 @@ const (
 	RoleTool      Role = "tool"      // RoleTool 表示工具执行结果。
 )
 
+// FinishReason 表示模型结束当前响应的原因。
+type FinishReason string
+
+const (
+	FinishReasonStop    FinishReason = "stop"
+	FinishReasonToolUse FinishReason = "tool_use"
+	FinishReasonLength  FinishReason = "length"
+)
+
 // Message 表示对话上下文中传递的一条消息。
 type Message struct {
 	// Role 表示消息角色。
@@ -18,6 +27,8 @@ type Message struct {
 	Content []ContentBlock `json:"content,omitempty"`
 	// Usage 保存生成当前模型消息时产生的用量信息。
 	Usage *Usage `json:"usage,omitempty"`
+	// FinishReason 保存模型结束当前响应的统一原因。
+	FinishReason FinishReason `json:"finish_reason,omitempty"`
 
 	// ToolCalls 保存模型请求执行的工具调用，允许同时包含多个调用。
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`

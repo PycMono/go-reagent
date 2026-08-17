@@ -114,40 +114,79 @@ type loopWeatherProvider struct {
 	calls      int
 }
 
-func (p *loopWeatherProvider) Generate(_ context.Context, messages []ai.Message, tools []ai.ToolDefinition) (*ai.Message, error) {
+func (p *loopWeatherProvider) Stream(_ context.Context, messages []ai.Message, tools []ai.ToolDefinition) ai.Stream {
 	p.calls++
 	switch p.calls {
 	case 1:
 		if len(tools) != 1 || tools[0].Name != "get_weather" {
-			return nil, fmt.Errorf("tools = %#v", tools)
+			return newLoopWeatherStream(nil, fmt.Errorf("tools = %#v", tools))
 		}
 		arguments, _ := json.Marshal(map[string]any{"location": p.location})
-		return meteredMessage(ai.Message{
-			Role:      ai.RoleAssistant,
-			ToolCalls: []ai.ToolCall{{ID: "weather-1", Name: "get_weather", Arguments: arguments}},
-		}), nil
+		return newLoopWeatherStream(meteredMessage(ai.Message{
+			Role:         ai.RoleAssistant,
+			ToolCalls:    []ai.ToolCall{{ID: "weather-1", Name: "get_weather", Arguments: arguments}},
+			FinishReason: ai.FinishReasonToolUse,
+		}), nil)
 	case 2:
 		if len(messages) == 0 || messages[len(messages)-1].Role != ai.RoleTool {
-			return nil, errors.New("tool result was not appended to provider context")
+			return newLoopWeatherStream(nil, errors.New("tool result was not appended to provider context"))
 		}
 		text, err := ai.TextContent(messages[len(messages)-1].Content)
 		if err != nil {
-			return nil, err
+			return newLoopWeatherStream(nil, err)
 		}
 		var payload struct {
 			Status string `json:"status"`
 		}
 		if err := json.Unmarshal([]byte(text), &payload); err != nil {
-			return nil, fmt.Errorf("decode tool result: %w", err)
+			return newLoopWeatherStream(nil, fmt.Errorf("decode tool result: %w", err))
 		}
 		if payload.Status != p.wantStatus {
-			return nil, fmt.Errorf("tool status = %q, want %q", payload.Status, p.wantStatus)
+			return newLoopWeatherStream(nil, fmt.Errorf("tool status = %q, want %q", payload.Status, p.wantStatus))
 		}
-		return meteredMessage(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}), nil
+		return newLoopWeatherStream(meteredMessage(ai.Message{
+			Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}, FinishReason: ai.FinishReasonStop,
+		}), nil)
 	default:
-		return nil, fmt.Errorf("unexpected provider call %d", p.calls)
+		return newLoopWeatherStream(nil, fmt.Errorf("unexpected provider call %d", p.calls))
 	}
 }
+
+type loopWeatherStream struct {
+	events  []ai.StreamEvent
+	index   int
+	message *ai.Message
+	err     error
+}
+
+func newLoopWeatherStream(message *ai.Message, err error) ai.Stream {
+	events := []ai.StreamEvent{{Type: ai.StreamEventStart}}
+	if err != nil {
+		events = append(events, ai.StreamEvent{Type: ai.StreamEventError})
+	} else {
+		if message != nil {
+			for _, block := range message.Content {
+				if block.Type == ai.ContentTypeText && block.Text != "" {
+					events = append(events, ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: block.Text})
+				}
+			}
+		}
+		events = append(events, ai.StreamEvent{Type: ai.StreamEventDone})
+	}
+	return &loopWeatherStream{events: events, message: message, err: err}
+}
+
+func (s *loopWeatherStream) Next() bool {
+	if s.index >= len(s.events) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *loopWeatherStream) Current() ai.StreamEvent      { return s.events[s.index-1] }
+func (s *loopWeatherStream) Result() (*ai.Message, error) { return s.message, s.err }
+func (s *loopWeatherStream) Close() error                 { return nil }
 
 func meteredMessage(message ai.Message) *ai.Message {
 	message.Usage = &ai.Usage{PlatformID: "test", Model: "test"}

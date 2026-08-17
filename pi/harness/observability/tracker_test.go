@@ -14,8 +14,35 @@ import (
 
 type providerFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)
 
-func (f providerFunc) Generate(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) (*ai.Message, error) {
-	return f(ctx, messages, tools)
+func (f providerFunc) Stream(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) ai.Stream {
+	message, err := f(ctx, messages, tools)
+	return &providerStream{message: message, err: err}
+}
+
+type providerStream struct {
+	step    int
+	message *ai.Message
+	err     error
+}
+
+func (s *providerStream) Next() bool { s.step++; return s.step <= 2 }
+func (s *providerStream) Current() ai.StreamEvent {
+	if s.step == 1 {
+		return ai.StreamEvent{Type: ai.StreamEventStart}
+	}
+	if s.err != nil {
+		return ai.StreamEvent{Type: ai.StreamEventError}
+	}
+	return ai.StreamEvent{Type: ai.StreamEventDone}
+}
+func (s *providerStream) Result() (*ai.Message, error) { return s.message, s.err }
+func (s *providerStream) Close() error                 { return nil }
+
+func streamResult(stream ai.Stream) (*ai.Message, error) {
+	defer stream.Close()
+	for stream.Next() {
+	}
+	return stream.Result()
 }
 
 func TestCostTrackerCalculatesEverySuccessfulCall(t *testing.T) {
@@ -39,7 +66,7 @@ func TestCostTrackerCalculatesEverySuccessfulCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tracker.Generate(context.Background(), nil, nil)
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +89,12 @@ func TestCostTrackerRejectsMissingUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tracker.Generate(context.Background(), nil, nil)
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
 	if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
-		t.Fatalf("Generate() error = %v, want generation error", err)
+		t.Fatalf("Stream().Result() error = %v, want generation error", err)
 	}
 	if result != nil {
-		t.Fatalf("Generate() result = %#v, want nil on missing Usage", result)
+		t.Fatalf("Stream().Result() = %#v, want nil on missing Usage", result)
 	}
 }
 
@@ -82,8 +109,8 @@ func TestCostTrackerRejectsInvalidTokenUsage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result, err := tracker.Generate(context.Background(), nil, nil); result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
-			t.Fatalf("Generate() = %#v, %v, want nil generation error", result, err)
+		if result, err := streamResult(tracker.Stream(context.Background(), nil, nil)); result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
+			t.Fatalf("Stream().Result() = %#v, %v, want nil generation error", result, err)
 		}
 	}
 }
@@ -98,9 +125,9 @@ func TestCostTrackerAllowsFreePricing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tracker.Generate(context.Background(), nil, nil)
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
 	if err != nil || result.Usage.CostUSD != 0 {
-		t.Fatalf("Generate() = %#v, %v", result, err)
+		t.Fatalf("Stream().Result() = %#v, %v", result, err)
 	}
 }
 
@@ -114,9 +141,9 @@ func TestCostTrackerRejectsCostOutsideLedgerRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tracker.Generate(context.Background(), nil, nil)
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
 	if result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
-		t.Fatalf("Generate() = %#v, %v, want nil generation error", result, err)
+		t.Fatalf("Stream().Result() = %#v, %v, want nil generation error", result, err)
 	}
 }
 
@@ -132,9 +159,9 @@ func TestCostTrackerPreservesDelegateError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotResponse, gotErr := tracker.Generate(context.Background(), nil, nil)
+	gotResponse, gotErr := streamResult(tracker.Stream(context.Background(), nil, nil))
 	if gotResponse != response || !errors.Is(gotErr, want) {
-		t.Fatalf("Generate() = %#v, %v, want original response/error", gotResponse, gotErr)
+		t.Fatalf("Stream().Result() = %#v, %v, want original response/error", gotResponse, gotErr)
 	}
 }
 
@@ -182,7 +209,7 @@ func TestCostTrackerKeepsConcurrentCallsIndependent(t *testing.T) {
 	errorsCh := make(chan error, callCount)
 	for range callCount {
 		go func() {
-			result, err := tracker.Generate(context.Background(), nil, nil)
+			result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
 			results <- result
 			errorsCh <- err
 		}()
@@ -216,8 +243,8 @@ func TestCostTrackerErrorsDoNotLeakContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = tracker.Generate(context.Background(), nil, nil)
+	_, err = streamResult(tracker.Stream(context.Background(), nil, nil))
 	if err == nil || strings.Contains(err.Error(), "private output") {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Stream().Result() error = %v", err)
 	}
 }

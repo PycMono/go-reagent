@@ -64,13 +64,17 @@ func (r *terminalReporter) Report(_ context.Context, event pi.AgentEvent) {
 			message += fmt.Sprintf("   错误: %s\n", content)
 		}
 		r.write(message)
-	case pi.AgentEventMessage:
-		if event.Message == nil {
+	case pi.AgentEventMessageStart:
+		r.write("\n🤖 Agent 回复:\n")
+	case pi.AgentEventMessageUpdate:
+		if event.Delta == nil {
 			return
 		}
-		if content := terminalEventText(event.Message.Content); content != "" {
-			r.write(fmt.Sprintf("\n🤖 Agent 回复:\n%s\n\n", content))
+		if content := terminalEventText([]ai.ContentBlock{*event.Delta}); content != "" {
+			r.write(content)
 		}
+	case pi.AgentEventMessageEnd:
+		r.write("\n\n")
 	}
 }
 

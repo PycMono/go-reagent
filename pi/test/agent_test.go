@@ -20,19 +20,19 @@ type agentProviderFake struct {
 	requests  [][]ai.Message
 }
 
-func (p *agentProviderFake) Generate(
+func (p *agentProviderFake) Stream(
 	_ context.Context,
 	messages []ai.Message,
 	_ []ai.ToolDefinition,
-) (*ai.Message, error) {
+) ai.Stream {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.requests = append(p.requests, messages)
 	index := len(p.requests) - 1
 	if index >= len(p.responses) {
-		return nil, fmt.Errorf("unexpected provider call %d", index+1)
+		return newTestStream(nil, fmt.Errorf("unexpected provider call %d", index+1))
 	}
-	return withTestUsage(p.responses[index]), nil
+	return newTestStream(withTestUsage(p.responses[index]), nil)
 }
 
 type agentToolRuntimeFake struct {
@@ -114,17 +114,14 @@ func TestAgentRunReturnsEveryCostedInvocationInCallOrder(t *testing.T) {
 			t.Fatalf("Thinking leaked: %#v", result.NewMessages)
 		}
 	}
-	messageEventCount := 0
+	messageEvents := make([]pi.AgentEvent, 0)
 	for _, event := range reporter.Events() {
-		if event.Type == pi.AgentEventMessage {
-			messageEventCount++
-			if event.Message == nil || event.Message.Content[0].Text != "done" {
-				t.Fatalf("message event = %#v", event)
-			}
+		if event.Type == pi.AgentEventMessageEnd {
+			messageEvents = append(messageEvents, event)
 		}
 	}
-	if messageEventCount != 1 {
-		t.Fatalf("message event count = %d, want 1", messageEventCount)
+	if len(messageEvents) != 2 || messageEvents[1].Message == nil || messageEvents[1].Message.Content[0].Text != "done" {
+		t.Fatalf("message events = %#v", messageEvents)
 	}
 }
 
@@ -272,12 +269,12 @@ func TestAgentRunSupportsConcurrentIndependentRequests(t *testing.T) {
 
 type echoAgentProvider struct{}
 
-func (*echoAgentProvider) Generate(_ context.Context, messages []ai.Message, _ []ai.ToolDefinition) (*ai.Message, error) {
+func (*echoAgentProvider) Stream(_ context.Context, messages []ai.Message, _ []ai.ToolDefinition) ai.Stream {
 	text, err := ai.TextContent(messages[len(messages)-1].Content)
 	if err != nil {
-		return nil, err
+		return newTestStream(nil, err)
 	}
-	return &ai.Message{
+	return newTestStream(&ai.Message{
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done:" + text)}, Usage: costedUsage(0),
-	}, nil
+	}, nil)
 }

@@ -39,7 +39,10 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
 		IsError:    true,
 	}))
-	reporter.Report(ctx, pi.NewMessageEvent(ai.Message{
+	reporter.Report(ctx, pi.NewMessageStartEvent())
+	reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("完")))
+	reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("成")))
+	reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("完成")},
 	}))
@@ -59,6 +62,9 @@ func TestTerminalReporterPrintsLifecycleEvents(t *testing.T) {
 			t.Fatalf("terminal output missing %q: %q", want, got)
 		}
 	}
+	if strings.Count(got, "完成") != 1 {
+		t.Fatalf("streamed reply was duplicated: %q", got)
+	}
 }
 
 func TestTerminalDisplayArgumentsTruncatesAtRuneBoundary(t *testing.T) {
@@ -75,10 +81,12 @@ func TestTerminalDisplayArgumentsTruncatesAtRuneBoundary(t *testing.T) {
 func TestTerminalReporterIgnoresEmptyMessageAndSerializesConcurrentEvents(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newTerminalReporter(&output)
-	reporter.Report(context.Background(), pi.NewMessageEvent(ai.Message{Role: ai.RoleAssistant}))
-	if output.Len() != 0 {
-		t.Fatalf("empty message output = %q", output.String())
+	reporter.Report(context.Background(), pi.NewMessageStartEvent())
+	reporter.Report(context.Background(), pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant}))
+	if got := output.String(); !strings.Contains(got, "Agent 回复") || strings.Contains(got, "空消息") {
+		t.Fatalf("empty streamed message output = %q", got)
 	}
+	output.Reset()
 
 	var waitGroup sync.WaitGroup
 	for index := range 16 {

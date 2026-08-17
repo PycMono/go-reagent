@@ -16,9 +16,9 @@ import (
 
 const maxGenerateRetries = 2
 
-const compactionSystemPrompt = `Summarize the supplied earlier conversation for another agent to continue the same task.
-Preserve user goals, explicit constraints, accepted decisions, completed work, pending work, exact file paths, identifiers, tool results, and stable error codes.
-Do not answer the user and do not continue the task.`
+const compactionSystemPrompt = `请总结所提供的早期对话，以便另一个 Agent 继续完成同一任务。
+请保留用户目标、明确约束、已确认的决策、已完成工作、待完成工作、准确的文件路径、标识符、工具执行结果和稳定错误码。
+不要回答用户，也不要继续执行任务。`
 
 type generationResult struct {
 	message         *ai.Message
@@ -37,16 +37,17 @@ func (l *Loop) generateWithRetry(
 	ctx context.Context,
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
-) (*ai.Message, error) {
+	onText func(ai.ContentBlock),
+) (*ai.Message, bool, error) {
 	for attempt := 0; ; attempt++ {
-		response, err := l.provider.Generate(ctx, messages, tools)
+		response, published, err := consumeStream(l.provider.Stream(ctx, messages, tools), onText)
 		if err == nil {
-			return response, nil
+			return response, published, nil
 		}
 		code := pierrors.ErrorCodeOf(err)
-		if attempt >= maxGenerateRetries ||
+		if published || attempt >= maxGenerateRetries ||
 			(code != pierrors.ErrorCodeAITransient && code != pierrors.ErrorCodeAIRateLimited) {
-			return response, err
+			return response, published, err
 		}
 		delay := retryDelay(attempt)
 		logsdk.Warn(ctx, "model generation retry",
@@ -59,19 +60,40 @@ func (l *Loop) generateWithRetry(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		case <-timer.C:
 		}
 	}
+}
+
+func consumeStream(stream ai.Stream, onText func(ai.ContentBlock)) (*ai.Message, bool, error) {
+	defer stream.Close()
+	published := false
+	for stream.Next() {
+		event := stream.Current()
+		switch event.Type {
+		case ai.StreamEventTextDelta:
+			if onText != nil && event.TextDelta != "" {
+				published = true
+				onText(ai.TextBlock(event.TextDelta))
+			}
+		case ai.StreamEventDone, ai.StreamEventError:
+			message, err := stream.Result()
+			return message, published, err
+		}
+	}
+	message, err := stream.Result()
+	return message, published, err
 }
 
 func (l *Loop) generate(
 	ctx context.Context,
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
+	onText func(ai.ContentBlock),
 ) (generationResult, error) {
-	response, err := l.generateWithRetry(ctx, messages, tools)
-	if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIContextOverflow {
+	response, published, err := l.generateWithRetry(ctx, messages, tools, onText)
+	if err == nil || published || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIContextOverflow {
 		return generationResult{message: response, context: messages}, err
 	}
 
@@ -83,7 +105,7 @@ func (l *Loop) generate(
 	if compactErr != nil {
 		return generationResult{context: messages}, compactErr
 	}
-	response, err = l.generateWithRetry(ctx, compacted, tools)
+	response, _, err = l.generateWithRetry(ctx, compacted, tools, onText)
 	return generationResult{
 		message:         response,
 		context:         compacted,
@@ -96,10 +118,10 @@ func (l *Loop) compact(ctx context.Context, plan harness.CompactionPlan) ([]ai.M
 	if err != nil {
 		return nil, nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", fmt.Errorf("encode summary input: %w", err))
 	}
-	response, err := l.generateWithRetry(ctx, []ai.Message{
+	response, _, err := l.generateWithRetry(ctx, []ai.Message{
 		{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock(compactionSystemPrompt)}},
 		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(string(encoded))}},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

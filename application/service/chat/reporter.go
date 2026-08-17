@@ -72,7 +72,17 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 			}
 			return result, true, true
 		}
-	case pi.AgentEventMessage:
+	case pi.AgentEventMessageStart:
+		result.Type = vo.RunEventMessageStarted
+		return result, true, true
+	case pi.AgentEventMessageUpdate:
+		if event.Delta == nil {
+			return vo.RunEventVO{}, false, false
+		}
+		result.Type = vo.RunEventMessageDelta
+		result.Delta = &vo.ContentBlockVO{Type: string(event.Delta.Type), Text: event.Delta.Text}
+		return result, true, true
+	case pi.AgentEventMessageEnd:
 		if event.Message == nil {
 			return vo.RunEventVO{}, false, false
 		}

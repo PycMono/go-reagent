@@ -22,8 +22,9 @@ import (
 
 type rawProviderFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)
 
-func (f rawProviderFunc) Generate(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) (*ai.Message, error) {
-	return f(ctx, messages, tools)
+func (f rawProviderFunc) Stream(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) ai.Stream {
+	message, err := f(ctx, messages, tools)
+	return newTestStream(message, err)
 }
 
 func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
@@ -73,22 +74,22 @@ type fakeProvider struct {
 	availableTools [][]ai.ToolDefinition
 }
 
-func (p *fakeProvider) Generate(
+func (p *fakeProvider) Stream(
 	_ context.Context,
 	messages []ai.Message,
 	availableTools []ai.ToolDefinition,
-) (*ai.Message, error) {
+) ai.Stream {
 	p.requests = append(p.requests, append([]ai.Message(nil), messages...))
 	p.availableTools = append(p.availableTools, append([]ai.ToolDefinition(nil), availableTools...))
 	if p.err != nil {
-		return nil, p.err
+		return newTestStream(nil, p.err)
 	}
 
 	index := len(p.requests) - 1
 	if index >= len(p.responses) {
-		return nil, fmt.Errorf("unexpected provider call %d", index+1)
+		return newTestStream(nil, fmt.Errorf("unexpected provider call %d", index+1))
 	}
-	return withTestUsage(p.responses[index]), nil
+	return newTestStream(withTestUsage(p.responses[index]), nil)
 }
 
 type fakeToolRuntime struct {
@@ -185,10 +186,18 @@ func TestLoopReportsEveryLifecycleEventWithoutAggregation(t *testing.T) {
 	result := toolResult(call, "file A", false)
 	want := []pi.AgentEvent{
 		pi.NewThinkingEvent(),
+		pi.NewMessageStartEvent(),
+		pi.NewMessageUpdateEvent(ai.TextBlock("starting tool")),
+		pi.NewMessageEndEvent(ai.Message{
+			Role: ai.RoleAssistant, Content: blocks("starting tool"),
+			ToolCalls: []ai.ToolCall{call}, Usage: costedUsage(0),
+		}),
 		pi.NewToolStartEvent(call),
 		pi.NewToolEndEvent(call, result),
 		pi.NewThinkingEvent(),
-		pi.NewMessageEvent(ai.Message{
+		pi.NewMessageStartEvent(),
+		pi.NewMessageUpdateEvent(ai.TextBlock("done")),
+		pi.NewMessageEndEvent(ai.Message{
 			Role:    ai.RoleAssistant,
 			Content: blocks("done"),
 			Usage:   costedUsage(0),
@@ -401,12 +410,13 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 	events := reporter.Events()
 	messageEvents := make([]pi.AgentEvent, 0)
 	for _, event := range events {
-		if event.Type == pi.AgentEventMessage {
+		if event.Type == pi.AgentEventMessageEnd {
 			messageEvents = append(messageEvents, event)
 		}
 	}
-	if len(messageEvents) != 1 || messageEvents[0].Message == nil || messageText(t, *messageEvents[0].Message) != "done" {
-		t.Fatalf("message events = %#v, want final done only", messageEvents)
+	if len(messageEvents) != 2 || messageEvents[0].Message == nil || messageText(t, *messageEvents[0].Message) != "working" ||
+		messageEvents[1].Message == nil || messageText(t, *messageEvents[1].Message) != "done" {
+		t.Fatalf("message events = %#v, want both Action responses", messageEvents)
 	}
 }
 

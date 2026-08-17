@@ -45,7 +45,8 @@ func TestChatJavaScriptContainsAPIAndSSEContract(t *testing.T) {
 	for _, required := range []string{
 		"/api/v1/conversations", "/messages", "/runs", "/cancel",
 		"run.started", "agent.thinking", "tool.started", "tool.updated",
-		"tool.completed", "message.completed", "run.failed", "run.completed",
+		"tool.completed", "message.started", "message.delta", "message.completed",
+		"run.failed", "run.completed",
 		"AbortController", "TextDecoder", "textContent",
 	} {
 		if !strings.Contains(source, required) {
