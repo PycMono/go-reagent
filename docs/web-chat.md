@@ -64,7 +64,9 @@ CONFIG_PATH=./config.json go run ./cmd/server
 
 打开 <http://127.0.0.1:8080>。健康检查地址为 <http://127.0.0.1:8080/health>。
 
-页面不需要 Node 服务或前端构建步骤。Web Agent 默认只注册受 Workspace 边界保护的 `read`，不会获得 `write`、`edit`、`apply_patch`、`exec` 或 `process`。需要查询天气、知识库、课程或订单时，应在业务 Fx 图中显式注册对应的真实 `ai.Tool`。
+页面不需要 Node 服务或前端构建步骤。Web Agent 默认注册 `calculate`、`get_current_time`、`get_weather` 和受 Workspace 边界保护的 `read`。天气数据来自 Open-Meteo，无需 API Key；重名地点会返回候选并先请用户确认，不会默认选择第一个。
+
+Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具，也不会获得 `write`、`edit`、`apply_patch`、`exec` 或 `process`。知识库、课程、订单等行业能力仍应在业务 Fx 图中显式注册对应的真实 `ai.Tool`。
 
 ## 4. 定制聊天 Agent
 
@@ -73,12 +75,14 @@ CONFIG_PATH=./config.json go run ./cmd/server
 ```text
 workspaces/chat/
 ├── AGENTS.md       # 身份、行业、表达方式和长期规则
-├── skills/         # 可选：条件性流程
+├── skills/         # 天气、写作、决策和学习讲解等条件性流程
 ├── docs/           # 可选：本地参考资料
 └── assets/         # 可选：其他资源
 ```
 
-Workspace 可以没有 Skill，仅凭有效 `AGENTS.md` 正常聊天。存在匹配 Skill 时，模型必须先通过 `read` 完整读取对应 `SKILL.md`。修改 Workspace 文本会在下一次 Run 生效；新增或修改 Go 业务工具需要重新构建并重启服务。
+默认 Workspace 提供 `weather-assistance`、`writing-assistance`、`decision-support` 和 `learning-explanation`。普通问候、闲聊、翻译和用户已提供文本的简单总结不需要 Skill。存在匹配 Skill 时，模型必须先通过 `read` 完整读取对应 `SKILL.md`。
+
+Workspace 可以没有 Skill，仅凭有效 `AGENTS.md` 正常聊天。修改 Workspace Skill 会在下一次 Run 生效；新增或修改 Go Tool 需要重新构建并重启服务。
 
 `AGENTS.md + Skills + Documents + 业务 Tools` 用于把同一个 Agent 配置成某个行业的专业助手，不会训练或修改模型权重。当前版本不提供在线训练、Agent 版本发布、多 Agent 选择或管理页面。
 
