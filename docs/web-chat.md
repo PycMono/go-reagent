@@ -34,6 +34,12 @@ mysql -uroot -p harness < migrations/0003_web_chat.up.sql
     "enabled": true,
     "history_message_limit": 100
   },
+  "redis": {
+    "addr": ["127.0.0.1:6379"],
+    "password": "",
+    "db": 0,
+    "pool_size": 5
+  },
   "mysql": {
     "host": "127.0.0.1",
     "port": 3306,
@@ -51,6 +57,8 @@ mysql -uroot -p harness < migrations/0003_web_chat.up.sql
 ```
 
 `write_timeout` 必须保持为 `0`，否则长时间运行的 SSE 连接可能被服务器提前截断。生产配置仍需包含一个被 `currentPlatform` 选中的有效平台，其 `baseURL`、`apiKey`、`model` 和 `pricing` 都不能为空。
+
+Redis 是必需依赖。服务启动时会连接配置的 Redis 并执行 `PING`；连接失败时 Fx 启动失败，HTTP Server 不会开始监听。示例密码保持为空，生产密码只写入已忽略的本地配置或安全的环境覆盖，不要提交到仓库。
 
 `agent.workspace_dir` 选择唯一聊天 Agent 的 Workspace，空值默认使用 `./workspaces/chat`。相对路径以服务进程的当前目录为基准；路径必须存在、必须是目录，并且不能回退到进程当前目录。Workspace 中必须包含非空、UTF-8 的普通文件 `AGENTS.md`。
 

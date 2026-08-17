@@ -206,6 +206,12 @@ chmod 600 config.json
       }
     }
   ],
+  "redis": {
+    "addr": ["127.0.0.1:6379"],
+    "password": "",
+    "db": 0,
+    "pool_size": 5
+  },
   "bot": {
     "wecom": {
       "webhookURL": ""
@@ -213,6 +219,8 @@ chmod 600 config.json
   }
 }
 ```
+
+Redis 是 Web 服务的启动强依赖。启动阶段会连接 Redis 并执行 `PING`，连接失败时服务不会开始监听 HTTP。真实 Redis 密码只应放在已忽略的本地配置或安全的环境覆盖中，不要提交到示例文件。
 
 然后启动：
 
