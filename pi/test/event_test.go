@@ -15,12 +15,16 @@ func TestAgentEventConstructorsSetDiscriminatedPayloads(t *testing.T) {
 		t.Fatalf("start = %#v", start)
 	}
 
-	message := pi.NewMessageEvent(ai.Message{
+	messageStart := pi.NewMessageStartEvent()
+	messageUpdate := pi.NewMessageUpdateEvent(ai.TextBlock("do"))
+	message := pi.NewMessageEndEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("done")},
 	})
-	if message.Type != pi.AgentEventMessage || message.Message == nil || message.Tool != nil {
-		t.Fatalf("message = %#v", message)
+	if messageStart.Type != pi.AgentEventMessageStart || messageUpdate.Type != pi.AgentEventMessageUpdate ||
+		messageUpdate.Delta == nil || messageUpdate.Delta.Text != "do" ||
+		message.Type != pi.AgentEventMessageEnd || message.Message == nil || message.Tool != nil {
+		t.Fatalf("message events = %#v / %#v / %#v", messageStart, messageUpdate, message)
 	}
 }
 

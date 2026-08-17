@@ -57,21 +57,25 @@ func TestWeComReporterFiltersAgentEvents(t *testing.T) {
 	reporter.Report(ctx, pi.NewToolEndEvent(call, pi.ToolResult{ToolCallID: call.ID, ToolName: call.Name}))
 	reporter.Report(ctx, pi.NewToolStartEvent(call))
 	reporter.Report(ctx, pi.NewToolEndEvent(call, pi.ToolResult{ToolCallID: call.ID, ToolName: call.Name, Content: []ai.ContentBlock{ai.TextBlock("permission denied")}, IsError: true}))
-	reporter.Report(ctx, pi.NewMessageEvent(ai.Message{
+	reporter.Report(ctx, pi.NewMessageStartEvent())
+	reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("do")))
+	reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("intermediate")},
+		ToolCalls: []ai.ToolCall{{ID: "call-2", Name: "read", Arguments: json.RawMessage(`{"path":"b.txt"}`)}},
+	}))
+	reporter.Report(ctx, pi.NewMessageStartEvent())
+	reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("done")))
+	reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock("done")},
 	}))
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 3 {
-		t.Fatalf("request count = %d, want 3", len(requests))
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
 	}
-	wantContents := []string{
-		"🛠️ **正在执行工具**：`read`\n参数：`{\"path\":\"a.txt\"}`",
-		"⚠️ **执行报错** (read)：\npermission denied",
-		"done",
-	}
+	wantContents := []string{"done"}
 	for index, want := range wantContents {
 		if requests[index].MsgType != "markdown" || requests[index].Markdown.Content != want {
 			t.Fatalf("request %d = %#v, want markdown %q", index, requests[index], want)
@@ -101,7 +105,7 @@ func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
 		{name: "tool", role: ai.RoleTool},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reporter.Report(context.Background(), pi.NewMessageEvent(ai.Message{
+			reporter.Report(context.Background(), pi.NewMessageEndEvent(ai.Message{
 				Role:    test.role,
 				Content: []ai.ContentBlock{ai.TextBlock("must not send")},
 			}))
@@ -113,7 +117,7 @@ func TestWeComReporterIgnoresNonAssistantMessages(t *testing.T) {
 }
 
 func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
-	requests := make(chan webhookRequest, 2)
+	requests := make(chan webhookRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		var payload webhookRequest
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
@@ -128,22 +132,11 @@ func TestWeComReporterFormatsToolErrorAndTruncatesUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWeComReporter() error = %v", err)
 	}
-	call := ai.ToolCall{ID: "call-1", Name: "read"}
-	reporter.Report(context.Background(), pi.NewToolEndEvent(call, pi.ToolResult{
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
-		Content:    []ai.ContentBlock{ai.TextBlock("permission denied")},
-		IsError:    true,
-	}))
-	reporter.Report(context.Background(), pi.NewMessageEvent(ai.Message{
+	reporter.Report(context.Background(), pi.NewMessageEndEvent(ai.Message{
 		Role:    ai.RoleAssistant,
 		Content: []ai.ContentBlock{ai.TextBlock(strings.Repeat("企", 2000))},
 	}))
 
-	errorRequest := <-requests
-	if got := errorRequest.Markdown.Content; got != "⚠️ **执行报错** (read)：\npermission denied" {
-		t.Fatalf("error content = %q", got)
-	}
 	longRequest := <-requests
 	if content := longRequest.Markdown.Content; len(content) > 4096 || !utf8.ValidString(content) || !strings.HasSuffix(content, "... (已截断)") {
 		t.Fatalf("truncated content bytes = %d, valid = %v, suffix = %v", len(content), utf8.ValidString(content), strings.HasSuffix(content, "... (已截断)"))

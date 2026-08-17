@@ -8,6 +8,7 @@ const state = {
   running: false,
   runId: "",
   runAbort: null,
+  streamingMessage: null,
   activityItems: new Map(),
   searchTimer: 0,
 };
@@ -213,6 +214,7 @@ async function manageConversation(conversation) {
 }
 
 function renderMessages(items) {
+  state.streamingMessage = null;
   ui.messages.replaceChildren();
   ui.messages.dataset.loaded = "true";
   if (!items || items.length === 0) {
@@ -236,6 +238,51 @@ function appendMessage(message, provisional) {
   if (provisional) element.dataset.provisional = "true";
   ui.messages.appendChild(element);
   ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function startStreamingMessage() {
+  const element = createMessageElement({
+    role: "assistant",
+    content: [{ type: "text", text: "" }],
+    created_at: new Date().toISOString(),
+  });
+  element.dataset.provisional = "true";
+  if (ui.welcome.parentNode === ui.messages) ui.welcome.remove();
+  ui.welcome.hidden = true;
+  ui.messages.appendChild(element);
+  state.streamingMessage = {
+    element: element,
+    body: element.querySelector(".qb-chat__message-body"),
+  };
+  ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function appendStreamingDelta(delta) {
+  if (!delta || delta.type !== "text" || !delta.text) return;
+  if (!state.streamingMessage) startStreamingMessage();
+  state.streamingMessage.body.textContent += delta.text;
+  ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function completeStreamingMessage(message) {
+  if (!message) return;
+  const completed = createMessageElement(message);
+  completed.dataset.provisional = "true";
+  if (state.streamingMessage) {
+    state.streamingMessage.element.replaceWith(completed);
+  } else {
+    if (ui.welcome.parentNode === ui.messages) ui.welcome.remove();
+    ui.welcome.hidden = true;
+    ui.messages.appendChild(completed);
+  }
+  state.streamingMessage = null;
+  ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function discardStreamingMessage() {
+  if (!state.streamingMessage) return;
+  state.streamingMessage.element.remove();
+  state.streamingMessage = null;
 }
 
 function createMessageElement(message) {
@@ -410,6 +457,7 @@ function addActivity(key, label, details) {
 }
 
 async function startRun(content) {
+  discardStreamingMessage();
   resetActivity();
   setRunning(true);
   state.runAbort = new AbortController();
@@ -449,11 +497,16 @@ async function startRun(content) {
       } else if (eventName === "tool.completed") {
         const tool = data.tool || {};
         addActivity("tool:" + tool.id, (tool.is_error ? "工具失败 · " : "工具完成 · ") + (tool.name || "unknown"), tool.content || tool.details);
+      } else if (eventName === "message.started") {
+        startStreamingMessage();
+      } else if (eventName === "message.delta") {
+        appendStreamingDelta(data.delta);
       } else if (eventName === "message.completed") {
-        if (data.message) appendMessage(data.message, true);
+        completeStreamingMessage(data.message);
         addActivity("message", "回复已生成，正在保存");
       } else if (eventName === "run.failed") {
         terminal = true;
+        discardStreamingMessage();
         addActivity("terminal", "本轮未完成", data.error && data.error.message);
         showToast(data.error && data.error.message ? data.error.message : "本轮回复失败");
       } else if (eventName === "run.completed") {
@@ -463,6 +516,7 @@ async function startRun(content) {
     });
     if (!terminal) throw new Error("连接提前结束，请重新发送");
   } catch (error) {
+    discardStreamingMessage();
     if (error.name !== "AbortError") showToast(error.message || "回复失败");
   } finally {
     setRunning(false);

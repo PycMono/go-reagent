@@ -56,6 +56,8 @@ const (
 	RunEventToolStarted      RunEventType = "tool.started"
 	RunEventToolUpdated      RunEventType = "tool.updated"
 	RunEventToolCompleted    RunEventType = "tool.completed"
+	RunEventMessageStarted   RunEventType = "message.started"
+	RunEventMessageDelta     RunEventType = "message.delta"
 	RunEventMessageCompleted RunEventType = "message.completed"
 	RunEventRunFailed        RunEventType = "run.failed"
 	RunEventRunCompleted     RunEventType = "run.completed"
@@ -86,9 +88,10 @@ type RunErrorVO struct {
 }
 
 type RunEventVO struct {
-	Type    RunEventType  `json:"-"`
-	RunID   string        `json:"run_id,omitempty"`
-	Tool    *ToolEventVO  `json:"tool,omitempty"`
-	Message *RunMessageVO `json:"message,omitempty"`
-	Error   *RunErrorVO   `json:"error,omitempty"`
+	Type    RunEventType    `json:"-"`
+	RunID   string          `json:"run_id,omitempty"`
+	Tool    *ToolEventVO    `json:"tool,omitempty"`
+	Delta   *ContentBlockVO `json:"delta,omitempty"`
+	Message *RunMessageVO   `json:"message,omitempty"`
+	Error   *RunErrorVO     `json:"error,omitempty"`
 }

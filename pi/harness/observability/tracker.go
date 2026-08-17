@@ -54,14 +54,56 @@ func newCostTracker(
 	return &CostTracker{next: next, platformID: platformID, model: model, pricing: pricing, now: now}, nil
 }
 
-// Generate delegates exactly once and rejects successful responses without valid Usage.
-func (t *CostTracker) Generate(
+// Stream wraps one provider stream and meters its final successful response.
+func (t *CostTracker) Stream(
 	ctx context.Context,
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
+) ai.Stream {
+	return &trackingStream{
+		ctx: ctx, next: t.next.Stream(ctx, messages, tools), tracker: t, startedAt: t.now(),
+	}
+}
+
+type trackingStream struct {
+	ctx       context.Context
+	next      ai.Stream
+	tracker   *CostTracker
+	startedAt time.Time
+	current   ai.StreamEvent
+	resolved  bool
+	response  *ai.Message
+	err       error
+}
+
+func (s *trackingStream) Next() bool {
+	if !s.next.Next() {
+		return false
+	}
+	s.current = s.next.Current()
+	return true
+}
+
+func (s *trackingStream) Current() ai.StreamEvent { return s.current }
+
+func (s *trackingStream) Result() (*ai.Message, error) {
+	if s.resolved {
+		return s.response, s.err
+	}
+	s.resolved = true
+	response, err := s.next.Result()
+	s.response, s.err = s.tracker.meter(s.ctx, s.startedAt, response, err)
+	return s.response, s.err
+}
+
+func (s *trackingStream) Close() error { return s.next.Close() }
+
+func (t *CostTracker) meter(
+	ctx context.Context,
+	startedAt time.Time,
+	response *ai.Message,
+	err error,
 ) (*ai.Message, error) {
-	startedAt := t.now()
-	response, err := t.next.Generate(ctx, messages, tools)
 	latencyMS := t.now().Sub(startedAt).Milliseconds()
 	if err != nil {
 		logsdk.Error(ctx, "model invocation failed",

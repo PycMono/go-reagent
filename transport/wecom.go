@@ -45,18 +45,8 @@ func NewWeComReporter(webhookURL string, client *http.Client) (*WeComReporter, e
 
 func (r *WeComReporter) Report(ctx context.Context, event pi.AgentEvent) {
 	switch event.Type {
-	case pi.AgentEventToolStart:
-		if event.Tool == nil {
-			return
-		}
-		r.send(ctx, fmt.Sprintf("🛠️ **正在执行工具**：`%s`\n参数：`%s`", event.Tool.Call.Name, event.Tool.Call.Arguments))
-	case pi.AgentEventToolEnd:
-		if event.Tool == nil || event.Tool.Result == nil || !event.Tool.Result.IsError {
-			return
-		}
-		r.send(ctx, fmt.Sprintf("⚠️ **执行报错** (%s)：\n%s", event.Tool.Call.Name, eventText(event.Tool.Result.Content)))
-	case pi.AgentEventMessage:
-		if event.Message == nil || event.Message.Role != ai.RoleAssistant {
+	case pi.AgentEventMessageEnd:
+		if event.Message == nil || event.Message.Role != ai.RoleAssistant || len(event.Message.ToolCalls) != 0 {
 			return
 		}
 		r.send(ctx, eventText(event.Message.Content))

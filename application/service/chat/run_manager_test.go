@@ -35,7 +35,9 @@ func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRe
 	select {
 	case err := <-r.release:
 		if err == nil {
-			reporter.Report(ctx, pi.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}))
+			reporter.Report(ctx, pi.NewMessageStartEvent())
+			reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("answer")))
+			reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}))
 		}
 		return pi.RunResult{}, err
 	case <-ctx.Done():
@@ -103,7 +105,8 @@ func TestRunLifecycleUsesOwnedConversationAndRenamesOnSuccess(t *testing.T) {
 	<-runner.started
 	runner.release <- nil
 	events := receiveUntilTerminal(t, run.Events)
-	if len(events) != 2 || events[0].Type != vo.RunEventMessageCompleted || events[1].Type != vo.RunEventRunCompleted {
+	if len(events) != 4 || events[0].Type != vo.RunEventMessageStarted || events[1].Type != vo.RunEventMessageDelta ||
+		events[2].Type != vo.RunEventMessageCompleted || events[3].Type != vo.RunEventRunCompleted {
 		t.Fatalf("events = %#v", events)
 	}
 	runner.mu.Lock()

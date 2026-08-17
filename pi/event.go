@@ -22,11 +22,13 @@ type ToolResult struct {
 type AgentEventType string
 
 const (
-	AgentEventThinking   AgentEventType = "thinking"
-	AgentEventToolStart  AgentEventType = "tool_start"
-	AgentEventToolUpdate AgentEventType = "tool_update"
-	AgentEventToolEnd    AgentEventType = "tool_end"
-	AgentEventMessage    AgentEventType = "message"
+	AgentEventThinking      AgentEventType = "thinking"
+	AgentEventToolStart     AgentEventType = "tool_start"
+	AgentEventToolUpdate    AgentEventType = "tool_update"
+	AgentEventToolEnd       AgentEventType = "tool_end"
+	AgentEventMessageStart  AgentEventType = "message_start"
+	AgentEventMessageUpdate AgentEventType = "message_update"
+	AgentEventMessageEnd    AgentEventType = "message_end"
 )
 
 type ToolEventPhase string
@@ -45,9 +47,10 @@ type ToolEvent struct {
 }
 
 type AgentEvent struct {
-	Type    AgentEventType `json:"type"`
-	Tool    *ToolEvent     `json:"tool,omitempty"`
-	Message *ai.Message    `json:"message,omitempty"`
+	Type    AgentEventType   `json:"type"`
+	Tool    *ToolEvent       `json:"tool,omitempty"`
+	Delta   *ai.ContentBlock `json:"delta,omitempty"`
+	Message *ai.Message      `json:"message,omitempty"`
 }
 
 func NewToolStart(call ai.ToolCall) ToolEvent {
@@ -91,8 +94,16 @@ func NewThinkingEvent() AgentEvent {
 	return AgentEvent{Type: AgentEventThinking}
 }
 
-func NewMessageEvent(message ai.Message) AgentEvent {
-	return AgentEvent{Type: AgentEventMessage, Message: &message}
+func NewMessageStartEvent() AgentEvent {
+	return AgentEvent{Type: AgentEventMessageStart}
+}
+
+func NewMessageUpdateEvent(delta ai.ContentBlock) AgentEvent {
+	return AgentEvent{Type: AgentEventMessageUpdate, Delta: &delta}
+}
+
+func NewMessageEndEvent(message ai.Message) AgentEvent {
+	return AgentEvent{Type: AgentEventMessageEnd, Message: &message}
 }
 
 // Reporter receives user-facing Agent lifecycle events.

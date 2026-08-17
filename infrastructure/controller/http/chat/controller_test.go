@@ -155,7 +155,10 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 	repo := &controllerRepo{found: true}
 	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
 		reporter.Report(ctx, pi.NewThinkingEvent())
-		reporter.Report(ctx, pi.NewMessageEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
+		reporter.Report(ctx, pi.NewMessageStartEvent())
+		reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("do")))
+		reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("ne")))
+		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
 		return pi.RunResult{}, nil
 	})
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner)
@@ -169,12 +172,20 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 		t.Fatalf("status/headers = %d / %#v", response.Code, response.Header())
 	}
 	body := response.Body.String()
-	for _, event := range []string{"run.started", "agent.thinking", "message.completed", "run.completed"} {
+	events := []string{"run.started", "agent.thinking", "message.started", "message.delta", "message.completed", "run.completed"}
+	last := -1
+	for _, event := range events {
 		if !strings.Contains(body, "event: "+event+"\n") || !strings.Contains(body, "data: {") {
 			t.Fatalf("missing %q in SSE body:\n%s", event, body)
 		}
+		index := strings.Index(body[last+1:], "event: "+event+"\n")
+		if index < 0 {
+			t.Fatalf("event %q is out of order in SSE body:\n%s", event, body)
+		}
+		last += index + 1
 	}
-	if !strings.Contains(body, `"run_id":"run-1"`) || !strings.Contains(body, `"text":"done"`) {
+	if strings.Count(body, "event: message.delta\n") != 2 || !strings.Contains(body, `"run_id":"run-1"`) ||
+		!strings.Contains(body, `"delta":{"type":"text","text":"do"}`) || !strings.Contains(body, `"text":"done"`) {
 		t.Fatalf("SSE data = %s", body)
 	}
 }
