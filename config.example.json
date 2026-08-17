@@ -55,6 +55,14 @@
     "enabled": false,
     "history_message_limit": 100
   },
+  "redis": {
+    "addr": [
+      "127.0.0.1:6379"
+    ],
+    "password": "",
+    "db": 0,
+    "pool_size": 5
+  },
   "mysql": {
     "host": "127.0.0.1",
     "port": 3306,

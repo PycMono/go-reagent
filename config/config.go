@@ -15,6 +15,7 @@ type Config struct {
 	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
 	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
+	Redis           RedisConfig         `json:"redis" yaml:"redis" toml:"redis"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
 	SnowflakeNodeID int                 `json:"snowflake_node_id" yaml:"snowflake_node_id" toml:"snowflake_node_id"`
 }
@@ -34,6 +35,13 @@ type HTTPConfig struct {
 type ConversationConfig struct {
 	Enabled             bool `json:"enabled" yaml:"enabled" toml:"enabled"`
 	HistoryMessageLimit int  `json:"history_message_limit" yaml:"history_message_limit" toml:"history_message_limit"`
+}
+
+type RedisConfig struct {
+	Addr     []string `json:"addr" yaml:"addr" toml:"addr"`
+	Password string   `json:"password" yaml:"password" toml:"password"`
+	DB       int      `json:"db" yaml:"db" toml:"db"`
+	PoolSize int      `json:"pool_size" yaml:"pool_size" toml:"pool_size"`
 }
 
 type MySQLConfig struct {
