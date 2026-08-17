@@ -20,8 +20,8 @@ func TestManagementRepoListsOwnedConversationsWithMessageTotals(t *testing.T) {
 	mock.ExpectQuery("SELECT .*message_total.*agent_conversations AS conversations.*LEFT JOIN agent_messages AS messages.*conversations.user_id.*conversations.name LIKE.*GROUP BY.*ORDER BY conversations.updated_at DESC, conversations.id DESC.*LIMIT").
 		WithArgs("visitor-1", "%chat%").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "user_id", "conversation_id", "name", "version", "created_at", "updated_at", "message_total",
-		}).AddRow("internal-1", "visitor-1", "chat-1", "Chat one", 2, now, now, 4))
+			"id", "user_id", "conversation_id", "name", "profile_code", "version", "created_at", "updated_at", "message_total",
+		}).AddRow("internal-1", "visitor-1", "chat-1", "Chat one", "writing", 2, now, now, 4))
 
 	page, err := newTestRepository(provider).ListByUserID(context.Background(), conversationrepo.ListQuery{
 		UserID: "visitor-1", Keyword: " chat ", Limit: 20,
@@ -33,7 +33,7 @@ func TestManagementRepoListsOwnedConversationsWithMessageTotals(t *testing.T) {
 		t.Fatalf("page = %#v", page)
 	}
 	item := page.Items[0]
-	if item.Conversation.ID != "internal-1" || item.Conversation.Name != "Chat one" || item.MessageTotal != 4 {
+	if item.Conversation.ID != "internal-1" || item.Conversation.Name != "Chat one" || item.Conversation.ProfileCode != "writing" || item.MessageTotal != 4 {
 		t.Fatalf("item = %#v", item)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -48,11 +48,11 @@ func TestManagementRepoListUsesExtraRowForHasMore(t *testing.T) {
 	mock.ExpectQuery("SELECT .*message_total.*agent_conversations AS conversations.*ORDER BY conversations.updated_at DESC, conversations.id DESC.*LIMIT").
 		WithArgs("visitor-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "user_id", "conversation_id", "name", "version", "created_at", "updated_at", "message_total",
+			"id", "user_id", "conversation_id", "name", "profile_code", "version", "created_at", "updated_at", "message_total",
 		}).
-			AddRow("internal-3", "visitor-1", "chat-3", "Three", 0, now, now, 0).
-			AddRow("internal-2", "visitor-1", "chat-2", "Two", 0, now, now, 0).
-			AddRow("internal-1", "visitor-1", "chat-1", "One", 0, now, now, 0))
+			AddRow("internal-3", "visitor-1", "chat-3", "Three", "general", 0, now, now, 0).
+			AddRow("internal-2", "visitor-1", "chat-2", "Two", "general", 0, now, now, 0).
+			AddRow("internal-1", "visitor-1", "chat-1", "One", "general", 0, now, now, 0))
 
 	page, err := newTestRepository(provider).ListByUserID(context.Background(), conversationrepo.ListQuery{
 		UserID: "visitor-1", Limit: 2,
@@ -62,6 +62,26 @@ func TestManagementRepoListUsesExtraRowForHasMore(t *testing.T) {
 	}
 	if !page.HasMore || len(page.Items) != 2 || page.Items[1].Conversation.ConversationID != "chat-2" {
 		t.Fatalf("page = %#v", page)
+	}
+}
+
+func TestManagementRepoFiltersConversationsByProfile(t *testing.T) {
+	provider, mock, cleanup := newRepositoryTestProvider(t)
+	defer cleanup()
+	mock.ExpectQuery("SELECT .*profile_code.*agent_conversations AS conversations.*conversations.user_id.*conversations.profile_code.*ORDER BY conversations.updated_at DESC, conversations.id DESC.*LIMIT").
+		WithArgs("visitor-1", "writing").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "conversation_id", "name", "profile_code", "version", "created_at", "updated_at", "message_total",
+		}))
+
+	page, err := newTestRepository(provider).ListByUserID(context.Background(), conversationrepo.ListQuery{
+		UserID: "visitor-1", ProfileCode: " writing ", Limit: 20,
+	})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("ListByUserID() page/error = %#v / %v", page, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

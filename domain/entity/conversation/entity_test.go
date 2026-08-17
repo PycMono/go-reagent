@@ -15,7 +15,7 @@ func TestConversationTableEntitiesMatchPersistenceSchema(t *testing.T) {
 	}{
 		{
 			name: "conversation", entity: Conversation{}, tableName: "agent_conversations",
-			columns: map[string]string{"ID": "column:id", "UserID": "column:user_id", "ConversationID": "column:conversation_id", "Name": "column:name", "Version": "column:version"},
+			columns: map[string]string{"ID": "column:id", "UserID": "column:user_id", "ConversationID": "column:conversation_id", "Name": "column:name", "ProfileCode": "column:profile_code", "Version": "column:version"},
 		},
 		{
 			name: "message", entity: Message{}, tableName: "agent_messages",
@@ -56,6 +56,18 @@ func TestConversationNameMatchesWebChatSchema(t *testing.T) {
 	for _, want := range []string{"column:name", "size:255", "not null"} {
 		if !containsTag(tag, want) {
 			t.Fatalf("Name gorm tag = %q, want containing %q", tag, want)
+		}
+	}
+}
+
+func TestConversationProfileMatchesAgentProfileSchema(t *testing.T) {
+	field, ok := reflect.TypeOf(Conversation{}).FieldByName("ProfileCode")
+	if !ok {
+		t.Fatal("Conversation.ProfileCode is missing")
+	}
+	for _, want := range []string{"column:profile_code", "size:64", "not null", "default:general"} {
+		if !containsTag(field.Tag.Get("gorm"), want) {
+			t.Fatalf("ProfileCode gorm tag = %q, want containing %q", field.Tag.Get("gorm"), want)
 		}
 	}
 }

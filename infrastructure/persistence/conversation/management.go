@@ -23,6 +23,7 @@ type conversationListRow struct {
 	UserID         string    `gorm:"column:user_id"`
 	ConversationID string    `gorm:"column:conversation_id"`
 	Name           string    `gorm:"column:name"`
+	ProfileCode    string    `gorm:"column:profile_code"`
 	Version        uint64    `gorm:"column:version"`
 	CreatedAt      time.Time `gorm:"column:created_at"`
 	UpdatedAt      time.Time `gorm:"column:updated_at"`
@@ -36,6 +37,7 @@ func (repo *Repo) ListByUserID(ctx context.Context, query conversationrepo.ListQ
 	}
 	query.UserID = strings.TrimSpace(query.UserID)
 	query.Keyword = strings.TrimSpace(query.Keyword)
+	query.ProfileCode = strings.TrimSpace(query.ProfileCode)
 	if query.UserID == "" {
 		return page, errors.New("mysql conversation management: user ID is required")
 	}
@@ -49,11 +51,14 @@ func (repo *Repo) ListByUserID(ctx context.Context, query conversationrepo.ListQ
 	var rows []conversationListRow
 	db := repo.provider.UseDB(ctx).
 		Table("agent_conversations AS conversations").
-		Select("conversations.id, conversations.user_id, conversations.conversation_id, conversations.name, conversations.version, conversations.created_at, conversations.updated_at, COUNT(messages.id) AS message_total").
+		Select("conversations.id, conversations.user_id, conversations.conversation_id, conversations.name, conversations.profile_code, conversations.version, conversations.created_at, conversations.updated_at, COUNT(messages.id) AS message_total").
 		Joins("LEFT JOIN agent_messages AS messages ON messages.conversation_id = conversations.id").
 		Where("conversations.user_id = ?", query.UserID)
 	if query.Keyword != "" {
 		db = db.Where("conversations.name LIKE ?", "%"+query.Keyword+"%")
+	}
+	if query.ProfileCode != "" {
+		db = db.Where("conversations.profile_code = ?", query.ProfileCode)
 	}
 	if query.Cursor != nil {
 		db = db.Where(
@@ -62,7 +67,7 @@ func (repo *Repo) ListByUserID(ctx context.Context, query conversationrepo.ListQ
 		)
 	}
 	err := db.
-		Group("conversations.id, conversations.user_id, conversations.conversation_id, conversations.name, conversations.version, conversations.created_at, conversations.updated_at").
+		Group("conversations.id, conversations.user_id, conversations.conversation_id, conversations.name, conversations.profile_code, conversations.version, conversations.created_at, conversations.updated_at").
 		Order("conversations.updated_at DESC, conversations.id DESC").
 		Limit(query.Limit + 1).
 		Scan(&rows).Error
@@ -79,7 +84,7 @@ func (repo *Repo) ListByUserID(ctx context.Context, query conversationrepo.ListQ
 		page.Items[index] = &conversationentity.ListItem{
 			Conversation: &conversationentity.Conversation{
 				ID: row.ID, UserID: row.UserID, ConversationID: row.ConversationID,
-				Name: row.Name, Version: row.Version, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+				Name: row.Name, ProfileCode: row.ProfileCode, Version: row.Version, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 			},
 			MessageTotal: row.MessageTotal,
 		}
