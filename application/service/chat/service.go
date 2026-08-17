@@ -12,6 +12,7 @@ import (
 	"github.com/PycMono/go-reagent/conversation"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/domain/repository"
+	agentprofilerepo "github.com/PycMono/go-reagent/domain/repository/agentprofile"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 )
 
@@ -25,17 +26,28 @@ type Service struct {
 	repository conversationrepo.IConversationManagementRepository
 	ids        repository.IIDService
 	runner     conversation.Runner
+	catalog    agentprofilerepo.Catalog
 
 	activeMu sync.Mutex
 	active   map[string]*activeRunEntry
 }
 
-func NewService(repository conversationrepo.IConversationManagementRepository, ids repository.IIDService, runner conversation.Runner) *Service {
-	return &Service{repository: repository, ids: ids, runner: runner, active: make(map[string]*activeRunEntry)}
+func NewService(
+	repository conversationrepo.IConversationManagementRepository,
+	ids repository.IIDService,
+	runner conversation.Runner,
+	catalog agentprofilerepo.Catalog,
+) *Service {
+	return &Service{repository: repository, ids: ids, runner: runner, catalog: catalog, active: make(map[string]*activeRunEntry)}
 }
 
-func (s *Service) CreateConversation(ctx context.Context, userID string) (*vo.ConversationVO, error) {
-	if !validIdentity(userID) || s == nil || s.repository == nil || s.ids == nil {
+func (s *Service) CreateConversation(ctx context.Context, userID string, param dto.CreateConversationDTO) (*vo.ConversationVO, error) {
+	if !validIdentity(userID) || s == nil || s.repository == nil || s.ids == nil || s.catalog == nil {
+		return nil, commonerrors.ErrInvalidParam
+	}
+	profileCode := strings.TrimSpace(param.ProfileCode)
+	profile, found := s.catalog.Find(profileCode)
+	if !found || !profile.Selectable {
 		return nil, commonerrors.ErrInvalidParam
 	}
 	conversation := &conversationentity.Conversation{
@@ -43,6 +55,7 @@ func (s *Service) CreateConversation(ctx context.Context, userID string) (*vo.Co
 		UserID:         strings.TrimSpace(userID),
 		ConversationID: s.ids.NextID(),
 		Name:           UntitledChat,
+		ProfileCode:    profile.Code,
 	}
 	if err := s.repository.Create(ctx, conversation); err != nil {
 		return nil, err
@@ -51,8 +64,14 @@ func (s *Service) CreateConversation(ctx context.Context, userID string) (*vo.Co
 }
 
 func (s *Service) ListConversations(ctx context.Context, userID string, query dto.ListConversationsQuery) (*vo.ConversationPageVO, error) {
-	if !validIdentity(userID) {
+	if !validIdentity(userID) || s == nil || s.repository == nil || s.catalog == nil {
 		return nil, commonerrors.ErrInvalidParam
+	}
+	profileCode := strings.TrimSpace(query.ProfileCode)
+	if profileCode != "" {
+		if _, found := s.catalog.Find(profileCode); !found {
+			return nil, commonerrors.ErrInvalidParam
+		}
 	}
 	limit, err := normalizeLimit(query.Limit)
 	if err != nil {
@@ -66,7 +85,7 @@ func (s *Service) ListConversations(ctx context.Context, userID string, query dt
 		}
 	}
 	page, err := s.repository.ListByUserID(ctx, conversationrepo.ListQuery{
-		UserID: strings.TrimSpace(userID), Keyword: strings.TrimSpace(query.Keyword), Cursor: cursor, Limit: limit,
+		UserID: strings.TrimSpace(userID), Keyword: strings.TrimSpace(query.Keyword), ProfileCode: profileCode, Cursor: cursor, Limit: limit,
 	})
 	if err != nil {
 		return nil, err
@@ -87,6 +106,26 @@ func (s *Service) ListConversations(ctx context.Context, userID string, query dt
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) ListAgentProfiles() *vo.AgentProfileCatalogVO {
+	result := &vo.AgentProfileCatalogVO{Items: make([]*vo.AgentProfileVO, 0)}
+	if s == nil || s.catalog == nil {
+		return result
+	}
+	result.DefaultProfile = s.catalog.DefaultCode()
+	for _, profile := range s.catalog.List() {
+		item := &vo.AgentProfileVO{
+			Code: profile.Code, Name: profile.Name, Description: profile.Description,
+			Icon: profile.Icon, Selectable: profile.Selectable, Welcome: profile.Welcome,
+			Starters: make([]vo.AgentProfileStarterVO, len(profile.Starters)),
+		}
+		for index, starter := range profile.Starters {
+			item.Starters[index] = vo.AgentProfileStarterVO{Title: starter.Title, Prompt: starter.Prompt}
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result
 }
 
 func (s *Service) ListMessages(ctx context.Context, userID, conversationID string, query dto.ListMessagesQuery) (*vo.MessagePageVO, error) {
@@ -168,7 +207,7 @@ func validIdentity(value string) bool { return strings.TrimSpace(value) != "" }
 
 func conversationVO(value *conversationentity.Conversation, total int64) *vo.ConversationVO {
 	return &vo.ConversationVO{
-		ID: value.ConversationID, Name: value.Name, MessageTotal: total,
+		ID: value.ConversationID, Name: value.Name, ProfileCode: value.ProfileCode, MessageTotal: total,
 		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
 }

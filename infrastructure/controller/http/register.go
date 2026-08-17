@@ -23,6 +23,7 @@ func RegisterRoutes(router *gin.Engine, chatCtl *chatctl.Controller) {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	router.GET(v1Prefix+"/agent-profiles", chatCtl.ListAgentProfiles)
 	conversations := router.Group(v1Prefix + "/conversations")
 	conversations.POST("", chatCtl.CreateConversation)
 	conversations.GET("", chatCtl.ListConversations)

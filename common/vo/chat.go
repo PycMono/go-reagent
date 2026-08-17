@@ -8,9 +8,30 @@ import (
 type ConversationVO struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	ProfileCode  string    `json:"profile_code"`
 	MessageTotal int64     `json:"message_total"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type AgentProfileStarterVO struct {
+	Title  string `json:"title"`
+	Prompt string `json:"prompt"`
+}
+
+type AgentProfileVO struct {
+	Code        string                  `json:"code"`
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
+	Icon        string                  `json:"icon"`
+	Selectable  bool                    `json:"selectable"`
+	Welcome     string                  `json:"welcome"`
+	Starters    []AgentProfileStarterVO `json:"starters"`
+}
+
+type AgentProfileCatalogVO struct {
+	Items          []*AgentProfileVO `json:"items"`
+	DefaultProfile string            `json:"default_profile"`
 }
 
 type ConversationPageVO struct {

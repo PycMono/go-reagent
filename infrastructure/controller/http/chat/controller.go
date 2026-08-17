@@ -22,8 +22,17 @@ func NewController(service *chatservice.Service) *Controller {
 }
 
 func (ctl *Controller) CreateConversation(c *gin.Context) {
-	data, err := ctl.service.CreateConversation(c.Request.Context(), userID(c))
+	var param dto.CreateConversationDTO
+	if err := c.ShouldBindJSON(&param); err != nil {
+		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		return
+	}
+	data, err := ctl.service.CreateConversation(c.Request.Context(), userID(c), param)
 	gingext.Send(c, data, err)
+}
+
+func (ctl *Controller) ListAgentProfiles(c *gin.Context) {
+	gingext.Send(c, ctl.service.ListAgentProfiles(), nil)
 }
 
 func (ctl *Controller) ListConversations(c *gin.Context) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/PycMono/go-reagent/common/dto"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
+	agentprofileentity "github.com/PycMono/go-reagent/domain/entity/agentprofile"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 )
@@ -20,6 +21,34 @@ func (f *idFake) NextID() string {
 	value := f.values[0]
 	f.values = f.values[1:]
 	return value
+}
+
+type catalogFake struct {
+	profiles    []agentprofileentity.Profile
+	defaultCode string
+}
+
+func (f catalogFake) List() []agentprofileentity.Profile {
+	return append([]agentprofileentity.Profile(nil), f.profiles...)
+}
+
+func (f catalogFake) Find(code string) (agentprofileentity.Profile, bool) {
+	for _, profile := range f.profiles {
+		if profile.Code == strings.TrimSpace(code) {
+			return profile, true
+		}
+	}
+	return agentprofileentity.Profile{}, false
+}
+
+func (f catalogFake) DefaultCode() string { return f.defaultCode }
+
+func testCatalog() catalogFake {
+	return catalogFake{defaultCode: "general", profiles: []agentprofileentity.Profile{
+		{Code: "general", Name: "通用助手", Description: "日常问答", Icon: "message-circle", Selectable: true, Welcome: "今天想一起完成什么？"},
+		{Code: "writing", Name: "写作助手", Description: "内容写作", Icon: "pen-line", Selectable: true, Welcome: "想写点什么？", Starters: []agentprofileentity.Starter{{Title: "写文案", Prompt: "帮我写："}}, Instructions: "internal", Skills: []agentprofileentity.Skill{{Name: "secret", Location: "secret"}}},
+		{Code: "retired", Name: "旧助手", Description: "旧会话使用", Icon: "message-circle", Selectable: false, Welcome: "继续旧会话"},
+	}}
 }
 
 type managementRepoFake struct {
@@ -66,15 +95,41 @@ func (f *managementRepoFake) Delete(_ context.Context, userID, conversationID st
 
 func TestServiceCreatesConversationWithDistinctIDs(t *testing.T) {
 	repo := &managementRepoFake{}
-	service := NewService(repo, &idFake{values: []string{"internal-1", "public-1"}}, nil)
-	got, err := service.CreateConversation(context.Background(), "visitor-1")
+	service := NewService(repo, &idFake{values: []string{"internal-1", "public-1"}}, nil, testCatalog())
+	got, err := service.CreateConversation(context.Background(), "visitor-1", dto.CreateConversationDTO{ProfileCode: "writing"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if repo.created.ID != "internal-1" || repo.created.ConversationID != "public-1" ||
-		repo.created.UserID != "visitor-1" || repo.created.Name != UntitledChat ||
-		got.ID != "public-1" || got.Name != UntitledChat {
+		repo.created.UserID != "visitor-1" || repo.created.Name != UntitledChat || repo.created.ProfileCode != "writing" ||
+		got.ID != "public-1" || got.Name != UntitledChat || got.ProfileCode != "writing" {
 		t.Fatalf("created = %#v, response = %#v", repo.created, got)
+	}
+}
+
+func TestServiceRejectsMissingUnknownAndUnselectableProfiles(t *testing.T) {
+	service := NewService(&managementRepoFake{}, &idFake{}, nil, testCatalog())
+	for _, code := range []string{"", "missing", "retired"} {
+		_, err := service.CreateConversation(context.Background(), "visitor-1", dto.CreateConversationDTO{ProfileCode: code})
+		if !errors.Is(err, commonerrors.ErrInvalidParam) {
+			t.Errorf("CreateConversation(profile=%q) error = %v", code, err)
+		}
+	}
+}
+
+func TestServiceListsPublicAgentProfilesWithoutRuntimeContent(t *testing.T) {
+	service := NewService(&managementRepoFake{}, &idFake{}, nil, testCatalog())
+	got := service.ListAgentProfiles()
+	if got.DefaultProfile != "general" || len(got.Items) != 3 || got.Items[1].Code != "writing" ||
+		len(got.Items[1].Starters) != 1 || got.Items[1].Starters[0].Prompt != "帮我写：" {
+		t.Fatalf("profiles = %#v", got)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "internal") || strings.Contains(string(encoded), "secret") {
+		t.Fatalf("public Profile response leaked runtime content: %s", encoded)
 	}
 }
 
@@ -82,17 +137,17 @@ func TestServiceListsConversationsAndBuildsNextCursor(t *testing.T) {
 	now := time.Date(2026, 8, 14, 10, 5, 20, 0, time.UTC)
 	repo := &managementRepoFake{listPage: conversationrepo.ListPage{
 		Items: []*conversationentity.ListItem{{Conversation: &conversationentity.Conversation{
-			ID: "internal-1", ConversationID: "chat-1", Name: "One", UpdatedAt: now,
+			ID: "internal-1", ConversationID: "chat-1", Name: "One", ProfileCode: "writing", UpdatedAt: now,
 		}, MessageTotal: 4}},
 		HasMore: true,
 	}}
-	service := NewService(repo, &idFake{}, nil)
-	got, err := service.ListConversations(context.Background(), "visitor-1", dto.ListConversationsQuery{Keyword: " chat "})
+	service := NewService(repo, &idFake{}, nil, testCatalog())
+	got, err := service.ListConversations(context.Background(), "visitor-1", dto.ListConversationsQuery{Keyword: " chat ", ProfileCode: "retired"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repo.listQuery.UserID != "visitor-1" || repo.listQuery.Keyword != "chat" || repo.listQuery.Limit != 20 ||
-		len(got.Items) != 1 || got.Items[0].MessageTotal != 4 || got.NextCursor == "" {
+	if repo.listQuery.UserID != "visitor-1" || repo.listQuery.Keyword != "chat" || repo.listQuery.ProfileCode != "retired" || repo.listQuery.Limit != 20 ||
+		len(got.Items) != 1 || got.Items[0].MessageTotal != 4 || got.Items[0].ProfileCode != "writing" || got.NextCursor == "" {
 		t.Fatalf("query = %#v, page = %#v", repo.listQuery, got)
 	}
 	cursor, err := decodeConversationCursor(got.NextCursor)
@@ -113,7 +168,7 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 			}, CreatedAt: now,
 		}}, HasMore: true,
 	}}
-	service := NewService(repo, &idFake{}, nil)
+	service := NewService(repo, &idFake{}, nil, testCatalog())
 	got, err := service.ListMessages(context.Background(), "visitor-1", "chat-1", dto.ListMessagesQuery{})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +186,7 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 
 func TestServiceReturnsNotFoundForUnownedMessageHistory(t *testing.T) {
 	repo := &managementRepoFake{}
-	service := NewService(repo, &idFake{}, nil)
+	service := NewService(repo, &idFake{}, nil, testCatalog())
 	_, err := service.ListMessages(context.Background(), "visitor-1", "chat-1", dto.ListMessagesQuery{})
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("ListMessages() error = %v, want ErrNotFound", err)
@@ -143,7 +198,7 @@ func TestServiceReturnsNotFoundForUnownedMessageHistory(t *testing.T) {
 
 func TestServiceValidatesAndForwardsRenameDelete(t *testing.T) {
 	repo := &managementRepoFake{}
-	service := NewService(repo, &idFake{}, nil)
+	service := NewService(repo, &idFake{}, nil, testCatalog())
 	if err := service.RenameConversation(context.Background(), "visitor-1", "chat-1", dto.RenameConversationDTO{Name: "  New name  "}); err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +219,8 @@ func TestServiceValidatesAndForwardsRenameDelete(t *testing.T) {
 }
 
 func TestServiceRejectsInvalidIdentityAndCursor(t *testing.T) {
-	service := NewService(&managementRepoFake{}, &idFake{}, nil)
-	if _, err := service.CreateConversation(context.Background(), " "); !errors.Is(err, commonerrors.ErrInvalidParam) {
+	service := NewService(&managementRepoFake{}, &idFake{}, nil, testCatalog())
+	if _, err := service.CreateConversation(context.Background(), " ", dto.CreateConversationDTO{ProfileCode: "general"}); !errors.Is(err, commonerrors.ErrInvalidParam) {
 		t.Fatalf("CreateConversation() error = %v", err)
 	}
 	if _, err := service.ListConversations(context.Background(), "visitor", dto.ListConversationsQuery{Cursor: "bad"}); !errors.Is(err, commonerrors.ErrInvalidParam) {
@@ -173,5 +228,8 @@ func TestServiceRejectsInvalidIdentityAndCursor(t *testing.T) {
 	}
 	if _, err := service.ListMessages(context.Background(), "visitor", " ", dto.ListMessagesQuery{}); !errors.Is(err, commonerrors.ErrInvalidParam) {
 		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if _, err := service.ListConversations(context.Background(), "visitor", dto.ListConversationsQuery{ProfileCode: "missing"}); !errors.Is(err, commonerrors.ErrInvalidParam) {
+		t.Fatalf("ListConversations(unknown Profile) error = %v", err)
 	}
 }
