@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
+	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
@@ -123,6 +124,32 @@ func TestDefaultChatWorkspaceDiscoversOnlyGeneralChatSkills(t *testing.T) {
 	for _, summary := range summaries {
 		if summary.Location != "skills/"+summary.Name+"/SKILL.md" || summary.Source != skills.SourceWorkspace {
 			t.Fatalf("summary = %#v", summary)
+		}
+	}
+}
+
+func TestDefaultChatWorkspaceLoadsAllAgentProfiles(t *testing.T) {
+	workspace := filepath.Join("..", "..", "workspaces", "chat")
+	catalog, err := agentprofiledriver.NewCatalog(pi.WorkDir(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := catalog.List()
+	codes := make([]string, len(profiles))
+	for index, profile := range profiles {
+		codes[index] = profile.Code
+		if strings.TrimSpace(profile.Instructions) == "" {
+			t.Fatalf("profile %q has empty instructions", profile.Code)
+		}
+	}
+	want := []string{"general", "writing", "learning", "health", "legal", "automotive", "workplace", "parenting"}
+	if !slices.Equal(codes, want) || catalog.DefaultCode() != "general" {
+		t.Fatalf("profiles/default = %v / %q, want %v / general", codes, catalog.DefaultCode(), want)
+	}
+	for _, code := range want[1:] {
+		profile, found := catalog.Find(code)
+		if !found || len(profile.Skills) != 1 || !strings.HasPrefix(profile.Skills[0].Location, "profiles/"+code+"/skills/") {
+			t.Fatalf("profile %q = %#v, found=%v", code, profile, found)
 		}
 	}
 }
