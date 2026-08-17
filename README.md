@@ -117,6 +117,8 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 
 仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；部署方可以把行业身份写入该目录的 `AGENTS.md`，把售后流程、课程咨询或合同审查等条件性流程做成 Skill，而无需修改 Runtime 核心或训练模型权重。
 
+默认 Chat Workspace 提供天气、写作、决策和学习讲解四个条件性 Skill。Web 默认工具为 `calculate`、`get_current_time`、`get_weather`、`read`；天气数据来自 Open-Meteo，无需 API Key，重名地点会先要求消歧。Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具。
+
 ## 项目布局
 
 ```text
@@ -272,7 +274,7 @@ pi.CoreRegister + 业务 Tool Providers      -> 行业 Agent
 pi.Register                               -> 完整 Coding 工具兼容图
 ```
 
-浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister`，传入 `ThinkingEnabled(false)`，只暴露 `read` 与业务显式注册的工具。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
+浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister + Chat Tool Providers`，传入 `ThinkingEnabled(false)`，当前准确暴露 `calculate`、`get_current_time`、`get_weather`、`read`。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
 
 ### 日志输出
 
@@ -293,7 +295,8 @@ pi.Register                               -> 完整 Coding 工具兼容图
 ### 工具并发调度
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
-- 当前只有只读的 `read` 标记为并发安全；其余五个工具保持独占执行。
+- 完整 SDK Coding 图中只有 `read` 标记为并发安全，其余五个 Coding 工具保持独占执行。
+- Web Chat 图中的 `calculate`、`get_current_time`、`get_weather` 和 `read` 都标记为并发安全。
 - 连续的安全工具组成一个波次，默认最多同时执行 4 个；`MaxParallelTools <= 0` 时退化为串行。
 - 独占工具会等待前一安全波完成，并阻止后一波提前启动。
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
@@ -301,7 +304,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 ### 完整 SDK 工具协议
 
-兼容聚合 `pi.Register` 注册下列六个名称；Web 产品默认只注册其中的 `read`：
+兼容聚合 `pi.Register` 注册下列六个 Coding 工具名称。Web 产品只复用其中的 `read`，另外显式注册三个 Chat 业务 Tool：
 
 | 工具 | 参数字段 |
 | --- | --- |
