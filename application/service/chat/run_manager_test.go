@@ -92,7 +92,7 @@ func receiveUntilTerminal(t *testing.T, events <-chan vo.RunEventVO) []vo.RunEve
 }
 
 func TestRunLifecycleUsesOwnedConversationAndRenamesOnSuccess(t *testing.T) {
-	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1"}}
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1", ProfileCode: "general"}}
 	runner := &controllableRunner{started: make(chan struct{}, 1), release: make(chan error, 1)}
 	service := newRunService(repo, runner, "run-1")
 	run, err := service.StartRun(context.Background(), "visitor-1", "chat-1", dto.StartRunDTO{Content: "  A title for this chat  "})
@@ -122,6 +122,60 @@ func TestRunLifecycleUsesOwnedConversationAndRenamesOnSuccess(t *testing.T) {
 	}
 }
 
+func TestRunUsesPersistedProfileContextAndSkills(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1", ProfileCode: "writing"}}
+	runner := &controllableRunner{started: make(chan struct{}, 1), release: make(chan error, 1)}
+	service := newRunService(repo, runner, "run-profile")
+	run, err := service.StartRun(context.Background(), "visitor", "chat-1", dto.StartRunDTO{Content: "写一篇文章"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-run.Events
+	<-runner.started
+	runner.release <- nil
+	receiveUntilTerminal(t, run.Events)
+
+	runner.mu.Lock()
+	request := runner.requests[0]
+	runner.mu.Unlock()
+	if len(request.Context) != 2 || request.Context[0].Name != "agent-profile" || request.Context[0].Priority != 900 ||
+		!strings.Contains(request.Context[0].Content, "擅长写作") || request.Context[1].Name != "agent-profile-skills" ||
+		request.Context[1].Priority != 800 || !strings.Contains(request.Context[1].Content, "profiles/writing/skills/content-writing/SKILL.md") ||
+		!strings.Contains(request.Context[1].Content, "Write content &lt;carefully&gt;.") || strings.Contains(request.Context[1].Content, "guided-learning") {
+		t.Fatalf("Profile Context = %#v", request.Context)
+	}
+}
+
+func TestRunAllowsUnselectablePersistedProfile(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "retired"}}
+	runner := &controllableRunner{release: make(chan error, 1)}
+	service := newRunService(repo, runner, "run-retired")
+	run, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "继续"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-run.Events
+	runner.release <- nil
+	receiveUntilTerminal(t, run.Events)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.requests[0].Context) != 2 || !strings.Contains(runner.requests[0].Context[0].Content, "旧助手规则") {
+		t.Fatalf("Context = %#v", runner.requests[0].Context)
+	}
+}
+
+func TestRunRejectsPersistedProfileMissingFromCatalog(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "removed"}}
+	service := newRunService(repo, &controllableRunner{}, "unused-run")
+	_, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "hello"})
+	if !errors.Is(err, commonerrors.ErrInternal) {
+		t.Fatalf("StartRun() error = %v, want ErrInternal", err)
+	}
+	if len(service.active) != 0 {
+		t.Fatalf("missing Profile created active run: %#v", service.active)
+	}
+}
+
 func TestRunRejectsUnownedAndDuplicateConversation(t *testing.T) {
 	repo := &runRepoFake{}
 	service := newRunService(repo, &controllableRunner{}, "run-1")
@@ -129,7 +183,7 @@ func TestRunRejectsUnownedAndDuplicateConversation(t *testing.T) {
 		t.Fatalf("unowned error = %v", err)
 	}
 	repo.found = true
-	repo.foundValue = &conversationentity.Conversation{ConversationID: "chat"}
+	repo.foundValue = &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "general"}
 	runner := &controllableRunner{release: make(chan error)}
 	service = newRunService(repo, runner, "run-2", "run-3")
 	first, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "one"})
@@ -147,7 +201,7 @@ func TestRunRejectsUnownedAndDuplicateConversation(t *testing.T) {
 }
 
 func TestCancelRunChecksRunIdentityAndCancelsRunner(t *testing.T) {
-	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat"}}
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "general"}}
 	runner := &controllableRunner{started: make(chan struct{}, 1), release: make(chan error), canceled: make(chan struct{})}
 	service := newRunService(repo, runner, "run-1")
 	run, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "hello"})
@@ -177,7 +231,7 @@ func TestCancelRunChecksRunIdentityAndCancelsRunner(t *testing.T) {
 }
 
 func TestRunFailureEmitsOnceAndReleasesSlot(t *testing.T) {
-	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat"}}
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "general"}}
 	runner := &controllableRunner{release: make(chan error, 2)}
 	service := newRunService(repo, runner, "run-1", "run-2")
 	run, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "hello"})
