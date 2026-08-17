@@ -46,8 +46,8 @@ func (f catalogFake) DefaultCode() string { return f.defaultCode }
 func testCatalog() catalogFake {
 	return catalogFake{defaultCode: "general", profiles: []agentprofileentity.Profile{
 		{Code: "general", Name: "通用助手", Description: "日常问答", Icon: "message-circle", Selectable: true, Welcome: "今天想一起完成什么？"},
-		{Code: "writing", Name: "写作助手", Description: "内容写作", Icon: "pen-line", Selectable: true, Welcome: "想写点什么？", Starters: []agentprofileentity.Starter{{Title: "写文案", Prompt: "帮我写："}}, Instructions: "internal", Skills: []agentprofileentity.Skill{{Name: "secret", Location: "secret"}}},
-		{Code: "retired", Name: "旧助手", Description: "旧会话使用", Icon: "message-circle", Selectable: false, Welcome: "继续旧会话"},
+		{Code: "writing", Name: "写作助手", Description: "内容写作", Icon: "pen-line", Selectable: true, Welcome: "想写点什么？", Starters: []agentprofileentity.Starter{{Title: "写文案", Prompt: "帮我写："}}, Instructions: "你擅长写作。", Skills: []agentprofileentity.Skill{{Name: "content-writing", Description: "Write content <carefully>.", Location: "profiles/writing/skills/content-writing/SKILL.md"}}},
+		{Code: "retired", Name: "旧助手", Description: "旧会话使用", Icon: "message-circle", Selectable: false, Welcome: "继续旧会话", Instructions: "旧助手规则。"},
 	}}
 }
 
@@ -128,7 +128,7 @@ func TestServiceListsPublicAgentProfilesWithoutRuntimeContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "internal") || strings.Contains(string(encoded), "secret") {
+	if strings.Contains(string(encoded), "你擅长写作") || strings.Contains(string(encoded), "content-writing") {
 		t.Fatalf("public Profile response leaked runtime content: %s", encoded)
 	}
 }

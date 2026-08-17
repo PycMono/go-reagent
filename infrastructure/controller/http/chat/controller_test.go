@@ -72,7 +72,7 @@ func (f *controllerRepo) Create(_ context.Context, value *conversationentity.Con
 	return nil
 }
 func (f *controllerRepo) FindByUserIDAndConversationID(_ context.Context, _, _ string) (*conversationentity.Conversation, bool, error) {
-	return &conversationentity.Conversation{ConversationID: "chat-1"}, f.found, nil
+	return &conversationentity.Conversation{ConversationID: "chat-1", ProfileCode: "general"}, f.found, nil
 }
 func (f *controllerRepo) ListByUserID(_ context.Context, query conversationrepo.ListQuery) (conversationrepo.ListPage, error) {
 	f.listQuery = query
