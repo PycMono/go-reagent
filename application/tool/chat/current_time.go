@@ -3,68 +3,65 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 	_ "time/tzdata"
 
-	"github.com/PycMono/go-reagent/domain/service"
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 type currentTimeTool struct {
-	resolver service.LocationResolver
-	clock    Clock
+	clock Clock
+}
+
+type currentTimeArgs struct {
+	Timezone string `json:"timezone"`
 }
 
 type currentTimeResult struct {
-	Status    string       `json:"status"`
-	Location  locationView `json:"location"`
-	LocalTime string       `json:"local_time"`
-	Date      string       `json:"date"`
-	Weekday   string       `json:"weekday"`
+	Timezone  string `json:"timezone"`
+	LocalTime string `json:"local_time"`
+	Date      string `json:"date"`
+	Weekday   string `json:"weekday"`
 }
 
-func newCurrentTimeTool(resolver service.LocationResolver, clock Clock) *currentTimeTool {
-	return &currentTimeTool{resolver: resolver, clock: clock}
+func newCurrentTimeTool(clock Clock) *currentTimeTool {
+	return &currentTimeTool{clock: clock}
 }
 
 func (t *currentTimeTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:         "get_current_time",
-		Description:  "按地点获取准确的当地日期、时间和星期；重名地点会返回候选供用户确认。",
+		Description:  "根据 IANA 时区获取准确的当地日期、时间和星期，不进行网络查询。",
 		ParallelSafe: true,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"location":     map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
-				"country_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
-				"admin1":       map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+				"timezone": map[string]any{
+					"type": "string", "minLength": 1, "maxLength": 120,
+					"description": "IANA 时区，例如 Asia/Shanghai 或 America/New_York",
+				},
 			},
-			"required":             []string{"location"},
+			"required":             []string{"timezone"},
 			"additionalProperties": false,
 		},
 	}
 }
 
 func (t *currentTimeTool) Execute(ctx context.Context, raw json.RawMessage, _ ai.UpdateEmitter) (ai.ToolOutput, error) {
-	arguments, err := decodeArguments[locationInput](raw)
+	if err := ctx.Err(); err != nil {
+		return ai.ToolOutput{}, err
+	}
+	arguments, err := decodeArguments[currentTimeArgs](raw)
 	if err != nil {
 		return ai.ToolOutput{}, err
 	}
-	location, failure, err := resolveLocation(ctx, t.resolver, arguments)
+	zone, err := time.LoadLocation(arguments.Timezone)
 	if err != nil {
-		return ai.ToolOutput{}, fmt.Errorf("resolve time location: %w", err)
-	}
-	if failure != nil {
-		return jsonOutput(failure)
-	}
-	zone, err := time.LoadLocation(location.Timezone)
-	if err != nil {
-		return ai.ToolOutput{}, invalidArguments("invalid location timezone", err)
+		return ai.ToolOutput{}, invalidArguments("invalid IANA timezone", err)
 	}
 	now := t.clock().In(zone)
 	return jsonOutput(currentTimeResult{
-		Status: "ok", Location: locationToView(location), LocalTime: now.Format(time.RFC3339),
+		Timezone: arguments.Timezone, LocalTime: now.Format(time.RFC3339),
 		Date: now.Format("2006-01-02"), Weekday: now.Weekday().String(),
 	})
 }
