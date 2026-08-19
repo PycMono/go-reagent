@@ -3,15 +3,25 @@ package config
 import (
 	"errors"
 	"net"
+	"net/http"
+	"net/textproto"
 	"net/url"
+	"regexp"
 	"strings"
 )
+
+const defaultMCPTimeoutSeconds = 60
+
+var mcpNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func (config *Config) normalizeAndValidate() error {
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
 		return err
 	}
 	config.Agent.normalize()
+	if err := config.MCP.normalizeAndValidate(); err != nil {
+		return err
+	}
 	if err := config.HTTP.normalizeAndValidate(); err != nil {
 		return err
 	}
@@ -25,6 +35,120 @@ func (config *Config) normalizeAndValidate() error {
 		return err
 	}
 	return config.Redis.normalizeAndValidate()
+}
+
+func (config *MCPConfig) normalizeAndValidate() error {
+	seenNames := make(map[string]struct{})
+	for index := range config.Servers {
+		server := &config.Servers[index]
+		if !server.Enabled {
+			continue
+		}
+		server.Name = strings.TrimSpace(server.Name)
+		if server.Name == "" || !mcpNamePattern.MatchString(server.Name) {
+			return errors.New("mcp.servers.name 必须是有效名称")
+		}
+		if _, exists := seenNames[server.Name]; exists {
+			return errors.New("mcp.servers.name 不能重复")
+		}
+		seenNames[server.Name] = struct{}{}
+		if !server.Required {
+			return errors.New("mcp.servers.required 一期必须为 true")
+		}
+		if err := server.normalizeAndValidate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (server *MCPServerConfig) normalizeAndValidate() error {
+	server.URL = strings.TrimSpace(server.URL)
+	parsed, err := url.Parse(server.URL)
+	if err != nil || parsed.Host == "" {
+		return errors.New("mcp.servers.url 必须是绝对 URL")
+	}
+	if parsed.User != nil {
+		return errors.New("mcp.servers.url 不能包含 userinfo")
+	}
+	if parsed.RawQuery != "" {
+		return errors.New("mcp.servers.url 不能包含 query")
+	}
+	if parsed.Fragment != "" {
+		return errors.New("mcp.servers.url 不能包含 fragment")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+	case "http":
+		host := parsed.Hostname()
+		ip := net.ParseIP(host)
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			return errors.New("mcp.servers.url 非 loopback 地址必须使用 https")
+		}
+	default:
+		return errors.New("mcp.servers.url 必须使用 http 或 https")
+	}
+	if server.Timeout < 0 {
+		return errors.New("mcp.servers.timeout 不能小于 0")
+	}
+	if server.Timeout == 0 {
+		server.Timeout = defaultMCPTimeoutSeconds
+	}
+	if err := server.normalizeHeaders(); err != nil {
+		return err
+	}
+	if err := server.normalizeAllowedTools(); err != nil {
+		return err
+	}
+	server.ToolPrefix = strings.TrimSpace(server.ToolPrefix)
+	if server.ToolPrefix != "" && !mcpNamePattern.MatchString(server.ToolPrefix) {
+		return errors.New("mcp.servers.tool_prefix 必须是有效工具名前缀")
+	}
+	return nil
+}
+
+func (server *MCPServerConfig) normalizeHeaders() error {
+	blocked := map[string]struct{}{
+		"Host": {}, "Content-Length": {}, "Mcp-Session-Id": {}, "Content-Type": {}, "Accept": {},
+	}
+	normalized := make(map[string]string, len(server.HeaderEnv))
+	for rawName, rawEnv := range server.HeaderEnv {
+		name := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(rawName))
+		envName := strings.TrimSpace(rawEnv)
+		if name == "" || envName == "" {
+			return errors.New("mcp.servers.header_env 名称和值不能为空")
+		}
+		if _, denied := blocked[http.CanonicalHeaderKey(name)]; denied {
+			return errors.New("mcp.servers.header_env 不能覆盖协议控制 Header")
+		}
+		if _, exists := normalized[name]; exists {
+			return errors.New("mcp.servers.header_env 不能包含重复 Header")
+		}
+		normalized[name] = envName
+	}
+	server.HeaderEnv = normalized
+	return nil
+}
+
+func (server *MCPServerConfig) normalizeAllowedTools() error {
+	if len(server.AllowTools) == 0 {
+		return errors.New("mcp.servers.allow_tools 不能为空")
+	}
+	seen := make(map[string]struct{}, len(server.AllowTools))
+	normalized := make([]string, 0, len(server.AllowTools))
+	for _, rawName := range server.AllowTools {
+		name := strings.TrimSpace(rawName)
+		if name == "" || !mcpNamePattern.MatchString(name) {
+			return errors.New("mcp.servers.allow_tools 包含无效工具名")
+		}
+		if _, exists := seen[name]; exists {
+			return errors.New("mcp.servers.allow_tools 不能重复")
+		}
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+	server.AllowTools = normalized
+	return nil
 }
 
 func (config *AgentConfig) normalize() {

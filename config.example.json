@@ -10,6 +10,25 @@
   "agent": {
     "workspace_dir": "./workspaces/chat"
   },
+  "mcp": {
+    "servers": [
+      {
+        "name": "exa",
+        "enabled": true,
+        "required": true,
+        "url": "https://mcp.exa.ai/mcp",
+        "timeout": 60,
+        "header_env": {
+          "x-api-key": "EXA_API_KEY"
+        },
+        "allow_tools": [
+          "web_search_exa",
+          "web_fetch_exa"
+        ],
+        "tool_prefix": ""
+      }
+    ]
+  },
   "currentPlatform": "deepseek",
   "platforms": [
     {
