@@ -36,6 +36,7 @@ var Register = fx.Options(
 		config.NewPlatform,
 		NewChatWorkDir,
 		agentprofiledriver.NewCatalog,
+		newMCPExtensions,
 	),
 	fx.Invoke(validateConfig),
 )
