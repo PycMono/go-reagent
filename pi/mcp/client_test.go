@@ -140,6 +140,17 @@ func TestClientPropagatesTransportCancellation(t *testing.T) {
 	}
 }
 
+func TestClientRejectsJSONRPCErrorWithoutLeakingRemoteData(t *testing.T) {
+	const secret = "never-print-rpc-error-data"
+	client, _ := initializedClientFake(t, Response{JSONRPC: "2.0", Error: &RPCError{
+		Code: -32000, Message: secret, Data: json.RawMessage(`{"secret":"` + secret + `"}`),
+	}})
+	_, err := client.ListTools(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "-32000") || strings.Contains(err.Error(), secret) {
+		t.Fatalf("ListTools error = %v", err)
+	}
+}
+
 func TestClientRejectsProtocolMismatch(t *testing.T) {
 	transport := &clientTransportFake{responses: []Response{rpcResult(t, map[string]any{
 		"protocolVersion": "2024-11-05", "capabilities": map[string]any{},

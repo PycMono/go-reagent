@@ -158,6 +158,9 @@ func (client *Client) send(ctx context.Context, method string, params any) (Resp
 	if err != nil {
 		return Response{}, fmt.Errorf("mcp %s: %w", method, err)
 	}
+	if response.Error != nil {
+		return Response{}, fmt.Errorf("mcp %s: remote JSON-RPC error code %d", method, response.Error.Code)
+	}
 	return response, nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"regexp"
 	"strings"
@@ -113,11 +112,12 @@ func (server *MCPServerConfig) normalizeHeaders() error {
 	}
 	normalized := make(map[string]string, len(server.HeaderEnv))
 	for rawName, rawEnv := range server.HeaderEnv {
-		name := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(rawName))
+		trimmedName := strings.TrimSpace(rawName)
 		envName := strings.TrimSpace(rawEnv)
-		if name == "" || envName == "" {
+		if !validMCPHeaderName(trimmedName) || envName == "" {
 			return errors.New("mcp.servers.header_env 名称和值不能为空")
 		}
+		name := http.CanonicalHeaderKey(trimmedName)
 		if _, denied := blocked[http.CanonicalHeaderKey(name)]; denied {
 			return errors.New("mcp.servers.header_env 不能覆盖协议控制 Header")
 		}
@@ -128,6 +128,20 @@ func (server *MCPServerConfig) normalizeHeaders() error {
 	}
 	server.HeaderEnv = normalized
 	return nil
+}
+
+func validMCPHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character))) {
+			return false
+		}
+	}
+	return true
 }
 
 func (server *MCPServerConfig) normalizeAllowedTools() error {

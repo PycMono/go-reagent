@@ -626,6 +626,7 @@ func TestLoadConfigRejectsInvalidMCPServersWithoutLeakingSecrets(t *testing.T) {
 		{name: "duplicate allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[" a ","a"]}]`, want: "allow_tools"},
 		{name: "invalid prefix", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"tool_prefix":"bad prefix"}]`, want: "tool_prefix"},
 		{name: "blank env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":" "}}]`, want: "header_env"},
+		{name: "invalid header name", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Bad Header":"A"}}]`, want: "header_env"},
 		{name: "duplicate header", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"A","X-Api-Key":"B"}}]`, want: "header_env"},
 		{name: "blocked host", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Host":"A"}}]`, want: "header_env"},
 		{name: "blocked length", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Content-Length":"A"}}]`, want: "header_env"},
