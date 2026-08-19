@@ -25,7 +25,9 @@ var CoreRegister = fx.Options(
 		newPromptComposer,
 		newContextBuilder,
 		newProvider,
-		newToolRuntime,
+		newFXToolRegistry,
+		newExtensionRuntime,
+		newFXToolRuntime,
 		newScheduler,
 		newLoop,
 		fx.Annotate(New, fx.As(fx.Self()), fx.As(new(Runner))),
@@ -61,7 +63,7 @@ var Register = fx.Options(
 	fx.Supply(ThinkingEnabled(true)),
 )
 
-type toolRuntimeParams struct {
+type toolRegistryParams struct {
 	fx.In
 	Tools []ai.Tool `group:"agent_tools"`
 }
@@ -88,11 +90,12 @@ func newContextBuilder(composer *harness.PromptComposer, workDir WorkDir) *harne
 	return harness.NewContextBuilder(composer, string(workDir))
 }
 
-func newToolRuntime(params toolRuntimeParams) (ToolRuntime, error) {
-	return NewToolRuntime(ToolRuntimeOptions{
-		Tools:       params.Tools,
-		Middlewares: DefaultMiddlewareRegistrations(),
-	})
+func newFXToolRegistry(params toolRegistryParams) (*toolRegistry, error) {
+	return newToolRegistry(params.Tools)
+}
+
+func newFXToolRuntime(registry *toolRegistry, _ *extensionRuntime) ToolRuntime {
+	return newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
 }
 
 func newScheduler(toolRuntime ToolRuntime) *Scheduler {
