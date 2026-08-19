@@ -68,7 +68,7 @@ func TestNewMCPExtensionsIgnoresDisabledServers(t *testing.T) {
 }
 
 func TestWebMCPDiscoveryFinishesBeforeConsumerLifecycle(t *testing.T) {
-	server := newWebMCPTestServer(t, true)
+	server, _ := newWebMCPTestServer(t, true)
 	var consumerStarted atomic.Bool
 	app, runtime := newWebMCPTestApp(t, server.URL, &consumerStarted)
 	app.RequireStart()
@@ -83,7 +83,7 @@ func TestWebMCPDiscoveryFinishesBeforeConsumerLifecycle(t *testing.T) {
 }
 
 func TestWebMCPMissingRequiredToolPreventsConsumerStart(t *testing.T) {
-	server := newWebMCPTestServer(t, false)
+	server, _ := newWebMCPTestServer(t, false)
 	var consumerStarted atomic.Bool
 	app, _ := newWebMCPTestApp(t, server.URL, &consumerStarted)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -94,6 +94,54 @@ func TestWebMCPMissingRequiredToolPreventsConsumerStart(t *testing.T) {
 	}
 	if consumerStarted.Load() {
 		t.Fatal("consumer started after MCP discovery failure")
+	}
+}
+
+func TestWebMCPExecutesWeatherSearchThroughExa(t *testing.T) {
+	server, recorder := newWebMCPTestServer(t, true)
+	var consumerStarted atomic.Bool
+	app, runtime := newWebMCPTestApp(t, server.URL, &consumerStarted)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+
+	result, err := runtime.Execute(context.Background(), ai.ToolCall{
+		ID:        "weather-search-1",
+		Name:      "web_search_exa",
+		Arguments: json.RawMessage(`{"query":"Shanghai weather 2026-08-19"}`),
+	}, nil)
+	if err != nil || result.IsError {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	text, err := ai.TextContent(result.Content)
+	if err != nil || text != "Shanghai weather source: example.test/weather" {
+		t.Fatalf("content = %q, error = %v", text, err)
+	}
+	if recorder.toolCalls.Load() != 1 || recorder.lastTool.Load() != "web_search_exa" {
+		t.Fatalf("tool calls = %d, last = %#v", recorder.toolCalls.Load(), recorder.lastTool.Load())
+	}
+}
+
+func TestWebMCPFailureHasNoPublicInformationFallback(t *testing.T) {
+	server, recorder := newWebMCPTestServer(t, true)
+	recorder.failCalls.Store(true)
+	var consumerStarted atomic.Bool
+	app, runtime := newWebMCPTestApp(t, server.URL, &consumerStarted)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+
+	result, err := runtime.Execute(context.Background(), ai.ToolCall{
+		ID:        "failed-search-1",
+		Name:      "web_search_exa",
+		Arguments: json.RawMessage(`{"query":"Shanghai weather"}`),
+	}, nil)
+	if err != nil || !result.IsError {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	if slices.Contains(webMCPDefinitionNames(runtime.Definitions()), "get_weather") {
+		t.Fatal("runtime exposed forbidden get_weather fallback")
+	}
+	if recorder.toolCalls.Load() != 1 {
+		t.Fatalf("tool calls = %d", recorder.toolCalls.Load())
 	}
 }
 
@@ -147,8 +195,15 @@ func webMCPDefinitionNames(definitions []ai.ToolDefinition) []string {
 	return names
 }
 
-func newWebMCPTestServer(t *testing.T, includeFetch bool) *httptest.Server {
+type webMCPRecorder struct {
+	toolCalls atomic.Int32
+	lastTool  atomic.Value
+	failCalls atomic.Bool
+}
+
+func newWebMCPTestServer(t *testing.T, includeFetch bool) (*httptest.Server, *webMCPRecorder) {
 	t.Helper()
+	recorder := &webMCPRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Api-Key"); got != "test-mcp-key" {
 			t.Errorf("X-Api-Key = %q", got)
@@ -164,6 +219,9 @@ func newWebMCPTestServer(t *testing.T, includeFetch bool) *httptest.Server {
 		var request struct {
 			ID     *int64 `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
 		}
 		if err := json.Unmarshal(data, &request); err != nil {
 			t.Errorf("decode request: %v", err)
@@ -192,11 +250,24 @@ func newWebMCPTestServer(t *testing.T, includeFetch bool) *httptest.Server {
 				})
 			}
 			response["result"] = map[string]any{"tools": tools}
+		case "tools/call":
+			recorder.toolCalls.Add(1)
+			recorder.lastTool.Store(request.Params.Name)
+			if recorder.failCalls.Load() {
+				response["error"] = map[string]any{"code": -32000, "message": "search unavailable"}
+				break
+			}
+			response["result"] = map[string]any{
+				"content": []any{map[string]any{
+					"type": "text",
+					"text": "Shanghai weather source: example.test/weather",
+				}},
+			}
 		default:
 			response["error"] = map[string]any{"code": -32601, "message": "not found"}
 		}
 		_ = json.NewEncoder(w).Encode(response)
 	}))
 	t.Cleanup(server.Close)
-	return server
+	return server, recorder
 }
