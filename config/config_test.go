@@ -580,6 +580,94 @@ func TestLoadConfigErrorContainsConfigurationPath(t *testing.T) {
 	}
 }
 
+func TestLoadConfigNormalizesMCPServers(t *testing.T) {
+	document := validMCPBaseConfig(`"mcp":{"servers":[{
+		"name":" exa ","enabled":true,"required":true,
+		"url":" https://mcp.exa.ai/mcp ","timeout":0,
+		"header_env":{"x-api-key":" EXA_API_KEY "},
+		"allow_tools":[" web_search_exa ","web_fetch_exa"],
+		"tool_prefix":""
+	}]}`)
+	cfg, err := Load(writeConfig(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("MCP servers = %#v", cfg.MCP.Servers)
+	}
+	server := cfg.MCP.Servers[0]
+	if server.Name != "exa" || server.URL != "https://mcp.exa.ai/mcp" || server.Timeout != 60 ||
+		server.HeaderEnv["X-Api-Key"] != "EXA_API_KEY" || server.ToolPrefix != "" ||
+		!slices.Equal(server.AllowTools, []string{"web_search_exa", "web_fetch_exa"}) {
+		t.Fatalf("MCP server = %#v", server)
+	}
+}
+
+func TestLoadConfigRejectsInvalidMCPServersWithoutLeakingSecrets(t *testing.T) {
+	const secret = "never-print-mcp-config-secret"
+	tests := []struct {
+		name    string
+		servers string
+		want    string
+	}{
+		{name: "duplicate names", servers: `[
+			{"name":"exa","enabled":true,"required":true,"url":"https://one.test/mcp","allow_tools":["a"]},
+			{"name":"exa","enabled":true,"required":true,"url":"https://two.test/mcp","allow_tools":["b"]}
+		]`, want: "name"},
+		{name: "blank name", servers: `[{"name":" ","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "name"},
+		{name: "blank URL", servers: `[{"name":"x","enabled":true,"required":true,"url":" ","allow_tools":["a"]}]`, want: "url"},
+		{name: "optional unsupported", servers: `[{"name":"x","enabled":true,"required":false,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "required"},
+		{name: "negative timeout", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","timeout":-1,"allow_tools":["a"]}]`, want: "timeout"},
+		{name: "public HTTP", servers: `[{"name":"x","enabled":true,"required":true,"url":"http://example.com/mcp","allow_tools":["a"]}]`, want: "https"},
+		{name: "userinfo", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://user:` + secret + `@x.test/mcp","allow_tools":["a"]}]`, want: "userinfo"},
+		{name: "query", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp?key=` + secret + `","allow_tools":["a"]}]`, want: "query"},
+		{name: "fragment", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp#fragment","allow_tools":["a"]}]`, want: "fragment"},
+		{name: "blank allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[]}]`, want: "allow_tools"},
+		{name: "duplicate allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[" a ","a"]}]`, want: "allow_tools"},
+		{name: "invalid prefix", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"tool_prefix":"bad prefix"}]`, want: "tool_prefix"},
+		{name: "blank env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":" "}}]`, want: "header_env"},
+		{name: "duplicate header", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"A","X-Api-Key":"B"}}]`, want: "header_env"},
+		{name: "blocked host", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Host":"A"}}]`, want: "header_env"},
+		{name: "blocked length", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Content-Length":"A"}}]`, want: "header_env"},
+		{name: "blocked session", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Mcp-Session-Id":"A"}}]`, want: "header_env"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, validMCPBaseConfig(`"mcp":{"servers":`+test.servers+`}`)))
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) || strings.Contains(err.Error(), secret) {
+				t.Fatalf("Load error = %v, want %q without secret", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigAllowsAbsentAndDisabledMCP(t *testing.T) {
+	for _, extra := range []string{
+		``,
+		`"mcp":{"servers":[{"enabled":false,"name":" ","url":"not a URL"}]}`,
+	} {
+		cfg, err := Load(writeConfig(t, validMCPBaseConfig(extra)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.MCP.Servers) > 0 && cfg.MCP.Servers[0].Enabled {
+			t.Fatalf("MCP config = %#v", cfg.MCP)
+		}
+	}
+}
+
+func validMCPBaseConfig(extra string) string {
+	separator := ""
+	if extra != "" {
+		separator = ","
+	}
+	return `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}` + separator + extra + `
+	}`
+}
+
 func writeConfig(t *testing.T, document string) string {
 	t.Helper()
 	return writeConfigFile(t, "config.json", document)
