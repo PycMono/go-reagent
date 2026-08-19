@@ -95,16 +95,46 @@ func validateHeaders(input http.Header) (http.Header, error) {
 		"Host": {}, "Content-Length": {}, "Mcp-Session-Id": {}, "Content-Type": {}, "Accept": {},
 	}
 	for key, values := range input {
-		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
-		if canonical == "" {
-			return nil, errors.New("mcp header name must not be empty")
+		trimmed := strings.TrimSpace(key)
+		if !validHTTPHeaderName(trimmed) {
+			return nil, errors.New("mcp header name is invalid")
 		}
+		canonical := http.CanonicalHeaderKey(trimmed)
 		if _, denied := blocked[canonical]; denied {
 			return nil, fmt.Errorf("mcp header %q is controlled by the transport", canonical)
+		}
+		for _, value := range values {
+			if !validHTTPHeaderValue(value) {
+				return nil, fmt.Errorf("mcp header %q contains an invalid value", canonical)
+			}
 		}
 		result[canonical] = append([]string(nil), values...)
 	}
 	return result, nil
+}
+
+func validHTTPHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character))) {
+			return false
+		}
+	}
+	return true
+}
+
+func validHTTPHeaderValue(value string) bool {
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character < 0x20 && character != '\t') || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (transport *HTTPTransport) Send(ctx context.Context, request Request) (Response, error) {
@@ -301,7 +331,5 @@ func (transport *HTTPTransport) Close(ctx context.Context) error {
 }
 
 func (transport *HTTPTransport) closeIdleConnections() {
-	if closer, ok := transport.client.Transport.(interface{ CloseIdleConnections() }); ok {
-		closer.CloseIdleConnections()
-	}
+	transport.client.CloseIdleConnections()
 }

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -190,6 +191,8 @@ func TestHTTPTransportValidatesEndpointHeadersAndRedirects(t *testing.T) {
 		{Endpoint: "https://example.com/mcp", Timeout: time.Second, Headers: http.Header{"Host": {"bad"}}},
 		{Endpoint: "https://example.com/mcp", Timeout: time.Second, Headers: http.Header{"Content-Length": {"4"}}},
 		{Endpoint: "https://example.com/mcp", Timeout: time.Second, Headers: http.Header{"Mcp-Session-Id": {secret}}},
+		{Endpoint: "https://example.com/mcp", Timeout: time.Second, Headers: http.Header{"X-Api-Key": {secret + "\r\nInjected: yes"}}},
+		{Endpoint: "https://example.com/mcp", Timeout: time.Second, Headers: http.Header{"Bad Header": {secret}}},
 	}
 	for index, options := range invalidOptions {
 		t.Run(fmt.Sprint(index), func(t *testing.T) {
@@ -249,5 +252,38 @@ func TestHTTPTransportCloseDeletesSession(t *testing.T) {
 	}
 	if !deleted.Load() {
 		t.Fatal("session was not deleted")
+	}
+}
+
+type closeIdleTransportFake struct {
+	closed atomic.Bool
+}
+
+func (*closeIdleTransportFake) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unexpected request")
+}
+
+func (transport *closeIdleTransportFake) CloseIdleConnections() {
+	transport.closed.Store(true)
+}
+
+func TestHTTPTransportCloseClosesDefaultIdleConnections(t *testing.T) {
+	original := http.DefaultTransport
+	recorder := &closeIdleTransportFake{}
+	http.DefaultTransport = recorder
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	transport, err := NewHTTPTransport(HTTPTransportOptions{
+		Endpoint: "http://127.0.0.1:1/mcp",
+		Timeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transport.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !recorder.closed.Load() {
+		t.Fatal("default HTTP transport idle connections were not closed")
 	}
 }

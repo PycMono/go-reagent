@@ -2,6 +2,7 @@ package test
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,20 @@ func TestHarnessPackagesDoNotDependOnAgentCore(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMCPDependencyDirection(t *testing.T) {
+	for _, pkg := range []string{modulePath + "/pi", modulePath + "/pi/ai", modulePath + "/pi/harness"} {
+		for _, dependency := range goListDependencies(t, pkg) {
+			if dependency == modulePath+"/pi/mcp" {
+				t.Fatalf("%s must not depend on pi/mcp", pkg)
+			}
+		}
+	}
+	dependencies := goListDependencies(t, modulePath+"/pi/mcp")
+	if !slices.Contains(dependencies, modulePath+"/pi") || !slices.Contains(dependencies, modulePath+"/pi/ai") {
+		t.Fatalf("pi/mcp dependencies do not include Pi contracts: %v", dependencies)
 	}
 }
 
