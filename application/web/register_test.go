@@ -71,7 +71,7 @@ func TestAgentRegisterIncludesExplicitBusinessTool(t *testing.T) {
 	for index, definition := range definitions {
 		names[index] = definition.Name
 	}
-	want := []string{"calculate", "course_query", "get_current_time", "get_weather", "read"}
+	want := []string{"calculate", "course_query", "get_current_time", "read"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("Web Agent tools = %v, want %v", names, want)
 	}
@@ -150,7 +150,7 @@ func TestAgentRegisterUsesDirectGeneralChatRuntime(t *testing.T) {
 	for index, definition := range definitions {
 		names[index] = definition.Name
 	}
-	want := []string{"calculate", "get_current_time", "get_weather", "read"}
+	want := []string{"calculate", "get_current_time", "read"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("Web Agent tools = %v, want %v", names, want)
 	}
