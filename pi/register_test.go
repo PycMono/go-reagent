@@ -120,13 +120,47 @@ func TestCoreRegisterAllowsEmptyToolGroup(t *testing.T) {
 	}
 }
 
+func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	var runtime ToolRuntime
+	app := fxtest.New(
+		t,
+		CoreRegister,
+		fx.Provide(fx.Annotate(
+			func() Extension {
+				return &extensionFake{name: "mcp:test", events: &events, tool: "remote_tool"}
+			},
+			fx.ResultTags(`group:"agent_extensions"`),
+		)),
+		fx.Supply(
+			WorkDir(root),
+			ThinkingEnabled(false),
+			providers.Options{
+				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
+				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
+			},
+		),
+		fx.Populate(&runtime),
+	)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+	definitions := runtime.Definitions()
+	if len(definitions) != 1 || definitions[0].Name != "remote_tool" {
+		t.Fatalf("CoreRegister extension tools = %#v", definitions)
+	}
+}
+
 func resolveRegisteredToolNames(t *testing.T, register fx.Option) []string {
 	t.Helper()
 	var runtime ToolRuntime
 	app := fxtest.New(
 		t,
 		register,
-		fx.Provide(newToolRuntime),
+		fx.Provide(newFXToolRegistry, newExtensionRuntime, newFXToolRuntime),
 		fx.Supply(WorkDir(t.TempDir())),
 		fx.Populate(&runtime),
 	)
