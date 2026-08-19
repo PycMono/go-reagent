@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
-	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
@@ -28,55 +26,26 @@ type ToolRuntimeOptions struct {
 	Middlewares []MiddlewareRegistration
 }
 
-type toolEntry struct {
-	definition   ai.ToolDefinition
-	tool         ai.Tool
-	validateArgs func(json.RawMessage) error
-	handler      Handler
-}
-
 type toolRuntime struct {
-	tools map[string]toolEntry
+	registry *toolRegistry
+	handler  Handler
 }
 
 func NewToolRuntime(options ToolRuntimeOptions) (ToolRuntime, error) {
-	runtime := &toolRuntime{tools: make(map[string]toolEntry, len(options.Tools))}
-	handler := composeHandler(options.Middlewares)
-	for _, tool := range options.Tools {
-		definition := tool.Definition()
-		name := strings.TrimSpace(definition.Name)
-		if name == "" {
-			return nil, errors.New("tool definition name must not be empty")
-		}
-		if definition.Name != name {
-			return nil, fmt.Errorf("tool definition name %q must not contain surrounding whitespace", definition.Name)
-		}
-		if _, exists := runtime.tools[name]; exists {
-			return nil, fmt.Errorf("tool %q is already registered", name)
-		}
-		validateArgs, err := compileSchemaValidator(definition)
-		if err != nil {
-			return nil, err
-		}
-		runtime.tools[name] = toolEntry{
-			definition:   definition,
-			tool:         tool,
-			validateArgs: validateArgs,
-			handler:      handler,
-		}
+	registry, err := newToolRegistry(options.Tools)
+	if err != nil {
+		return nil, err
 	}
-	return runtime, nil
+	registry.freeze()
+	return newToolRuntimeFromRegistry(registry, options.Middlewares), nil
+}
+
+func newToolRuntimeFromRegistry(registry *toolRegistry, middlewares []MiddlewareRegistration) ToolRuntime {
+	return &toolRuntime{registry: registry, handler: composeHandler(middlewares)}
 }
 
 func (r *toolRuntime) Definitions() []ai.ToolDefinition {
-	definitions := make([]ai.ToolDefinition, 0, len(r.tools))
-	for _, entry := range r.tools {
-		definitions = append(definitions, entry.definition)
-	}
-	sort.Slice(definitions, func(i, j int) bool {
-		return definitions[i].Name < definitions[j].Name
-	})
-	return definitions
+	return r.registry.definitions()
 }
 
 func (r *toolRuntime) Execute(
@@ -87,7 +56,7 @@ func (r *toolRuntime) Execute(
 	if err := ctx.Err(); err != nil {
 		return ToolResult{}, err
 	}
-	entry, ok := r.tools[call.Name]
+	entry, ok := r.registry.lookup(call.Name)
 	if !ok {
 		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
@@ -99,7 +68,7 @@ func (r *toolRuntime) Execute(
 		Observer:     observer,
 		ValidateArgs: entry.validateArgs,
 	}
-	output, err := entry.handler(ctx, execution, nil)
+	output, err := r.handler(ctx, execution, nil)
 	if contextErr := ctx.Err(); contextErr != nil {
 		err = contextErr
 	}
