@@ -114,10 +114,55 @@ func TestValidateConfigRequiresPersistenceAndLoopback(t *testing.T) {
 			}
 		})
 	}
-	if err := validateConfig(&config.Config{
-		Conversation: config.ConversationConfig{Enabled: true}, HTTP: config.HTTPConfig{Host: "::1"},
-	}); err != nil {
+	valid := validWebConfig()
+	valid.HTTP.Host = "::1"
+	if err := validateConfig(valid); err != nil {
 		t.Fatalf("loopback config rejected: %v", err)
+	}
+}
+
+func TestValidateConfigRequiresExactExaMCPContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*config.Config)
+	}{
+		{name: "missing Exa", want: "required Exa MCP", mutate: func(cfg *config.Config) { cfg.MCP.Servers = nil }},
+		{name: "disabled Exa", want: "enabled", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].Enabled = false }},
+		{name: "optional Exa", want: "enabled", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].Required = false }},
+		{name: "wrong URL", want: "https://mcp.exa.ai/mcp", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].URL = "https://example.test/mcp" }},
+		{name: "missing search", want: "web_search_exa", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].AllowTools = []string{"web_fetch_exa"} }},
+		{name: "missing fetch", want: "web_fetch_exa", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].AllowTools = []string{"web_search_exa"} }},
+		{name: "extra tool", want: "exactly", mutate: func(cfg *config.Config) {
+			cfg.MCP.Servers[0].AllowTools = []string{"web_search_exa", "web_fetch_exa", "other"}
+		}},
+		{name: "prefixed tools", want: "tool_prefix", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].ToolPrefix = "exa" }},
+		{name: "wrong key env", want: "EXA_API_KEY", mutate: func(cfg *config.Config) { cfg.MCP.Servers[0].HeaderEnv = map[string]string{"X-Api-Key": "OTHER_KEY"} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validWebConfig()
+			test.mutate(cfg)
+			if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateConfig() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func validWebConfig() *config.Config {
+	return &config.Config{
+		Conversation: config.ConversationConfig{Enabled: true},
+		HTTP:         config.HTTPConfig{Host: "127.0.0.1"},
+		MCP: config.MCPConfig{Servers: []config.MCPServerConfig{{
+			Name:       "exa",
+			Enabled:    true,
+			Required:   true,
+			URL:        "https://mcp.exa.ai/mcp",
+			Timeout:    60,
+			HeaderEnv:  map[string]string{"X-Api-Key": "EXA_API_KEY"},
+			AllowTools: []string{"web_search_exa", "web_fetch_exa"},
+		}}},
 	}
 }
 
