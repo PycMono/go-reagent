@@ -3,7 +3,32 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/PycMono/go-reagent/pi/ai"
 )
+
+type normalizedToolDefinition struct {
+	name        string
+	description string
+	inputSchema map[string]any
+}
+
+func normalizeToolDefinitions(definitions []ai.ToolDefinition) ([]normalizedToolDefinition, error) {
+	result := make([]normalizedToolDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		object, err := schemaObject(definition.InputSchema)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q input schema: %w", definition.Name, err)
+		}
+		if schemaType, exists := object["type"]; exists && schemaType != "object" {
+			return nil, fmt.Errorf("tool %q input schema type must be object", definition.Name)
+		}
+		result = append(result, normalizedToolDefinition{
+			name: definition.Name, description: definition.Description, inputSchema: object,
+		})
+	}
+	return result, nil
+}
 
 func schemaObject(value any) (map[string]any, error) {
 	if value == nil {
@@ -63,5 +88,26 @@ func normalizeSchemaNumbers(value any) (any, error) {
 		return result, nil
 	default:
 		return value, nil
+	}
+}
+
+func stringValues(value any) ([]string, error) {
+	switch values := value.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return values, nil
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("must contain only strings")
+			}
+			result = append(result, text)
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("must be an array of strings")
 	}
 }

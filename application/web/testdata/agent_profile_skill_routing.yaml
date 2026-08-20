@@ -1,0 +1,132 @@
+version: 1
+cases:
+  - name: general-greeting
+    profile: general
+    prompt: 你好，今天心情怎么样？
+    expected_skills: []
+    excluded_skills: [decision-support, learning-explanation, weather-assistance, writing-assistance]
+  - name: general-weather
+    profile: general
+    prompt: 上海明天会下雨吗？出门要带伞吗？
+    expected_skills: [weather-assistance]
+    excluded_skills: [decision-support, learning-explanation, writing-assistance]
+  - name: writing-social-content
+    profile: writing
+    prompt: 帮我写一篇分享儿童春季穿搭的小红书文案。
+    expected_skills: [social-content]
+    excluded_skills: [long-form-structure, rewrite-and-polish]
+  - name: writing-rewrite
+    profile: writing
+    prompt: 把这段通知改得更温和、更精简，事实不要变。
+    expected_skills: [rewrite-and-polish]
+    excluded_skills: [long-form-structure, social-content]
+  - name: writing-long-form
+    profile: writing
+    prompt: 帮我设计一篇三千字行业分析文章的论点和大纲。
+    expected_skills: [long-form-structure]
+    excluded_skills: [rewrite-and-polish, social-content]
+  - name: learning-concept
+    profile: learning
+    prompt: 用初中生能理解的方式解释什么是机会成本。
+    expected_skills: [concept-explanation]
+    excluded_skills: [practice-design, study-planning]
+  - name: learning-practice
+    profile: learning
+    prompt: 围绕一元二次方程给我出五道由易到难的练习并附答案。
+    expected_skills: [practice-design]
+    excluded_skills: [concept-explanation, study-planning]
+  - name: learning-plan
+    profile: learning
+    prompt: 我六周后考英语四级，每天一小时，帮我安排学习计划。
+    expected_skills: [study-planning]
+    excluded_skills: [concept-explanation, practice-design]
+  - name: health-symptoms
+    profile: health
+    prompt: 最近三天反复头晕，我应该记录哪些情况方便判断变化？
+    expected_skills: [symptom-organizing]
+    excluded_skills: [care-visit-preparation, health-report-explanation]
+  - name: health-report
+    profile: health
+    prompt: 体检报告里的谷丙转氨酶偏高是什么意思？
+    expected_skills: [health-report-explanation]
+    excluded_skills: [care-visit-preparation, symptom-organizing]
+  - name: health-visit
+    profile: health
+    prompt: 明天第一次去心内科，我需要带什么资料、问医生什么？
+    expected_skills: [care-visit-preparation]
+    excluded_skills: [health-report-explanation, symptom-organizing]
+  - name: health-combined
+    profile: health
+    prompt: 我胸闷两天且心电图提示异常，下午去医院，帮我整理症状和就医问题。
+    expected_skills: [symptom-organizing, health-report-explanation, care-visit-preparation]
+    excluded_skills: []
+  - name: legal-facts
+    profile: legal
+    prompt: 帮我把这次租房押金纠纷按时间线整理事实和证据缺口。
+    expected_skills: [facts-and-evidence-organizing]
+    excluded_skills: [contract-clause-analysis, legal-consultation-preparation]
+  - name: legal-contract
+    profile: legal
+    prompt: 帮我分析合同里自动续约和提前解约条款分别有什么风险。
+    expected_skills: [contract-clause-analysis]
+    excluded_skills: [facts-and-evidence-organizing, legal-consultation-preparation]
+  - name: legal-consultation
+    profile: legal
+    prompt: 我准备咨询律师劳动争议，应该带哪些材料、重点问什么？
+    expected_skills: [legal-consultation-preparation]
+    excluded_skills: [contract-clause-analysis, facts-and-evidence-organizing]
+  - name: legal-combined
+    profile: legal
+    prompt: 明天咨询律师，帮我整理合同争议的时间线、争议条款和问题清单。
+    expected_skills: [facts-and-evidence-organizing, contract-clause-analysis, legal-consultation-preparation]
+    excluded_skills: []
+  - name: automotive-comparison
+    profile: automotive
+    prompt: 一家四口市区通勤兼周末露营，帮我比较这两款车怎么选。
+    expected_skills: [vehicle-comparison]
+    excluded_skills: [maintenance-planning, vehicle-symptom-triage]
+  - name: automotive-symptom
+    profile: automotive
+    prompt: 车辆高速刹车时方向盘抖动，送修前需要记录哪些现象？
+    expected_skills: [vehicle-symptom-triage]
+    excluded_skills: [maintenance-planning, vehicle-comparison]
+  - name: automotive-maintenance
+    profile: automotive
+    prompt: 我的车每年只开五千公里，怎么根据手册规划保养？
+    expected_skills: [maintenance-planning]
+    excluded_skills: [vehicle-comparison, vehicle-symptom-triage]
+  - name: automotive-combined
+    profile: automotive
+    prompt: 二手车试驾发现异响，帮我比较候选车辆并整理检测和后续保养清单。
+    expected_skills: [vehicle-comparison, vehicle-symptom-triage, maintenance-planning]
+    excluded_skills: []
+  - name: workplace-message
+    profile: workplace
+    prompt: 帮我写一条向同事确认交付时间的企业微信消息，语气礼貌但明确。
+    expected_skills: [work-message-writing]
+    excluded_skills: [difficult-workplace-conversation, status-reporting]
+  - name: workplace-report
+    profile: workplace
+    prompt: 根据这些进展和风险帮我整理本周项目周报。
+    expected_skills: [status-reporting]
+    excluded_skills: [difficult-workplace-conversation, work-message-writing]
+  - name: workplace-difficult-conversation
+    profile: workplace
+    prompt: 同事连续越过我承诺排期，我想当面说明边界但不激化冲突。
+    expected_skills: [difficult-workplace-conversation]
+    excluded_skills: [status-reporting, work-message-writing]
+  - name: parenting-development
+    profile: parenting
+    prompt: 两岁孩子通常有哪些语言发展表现，我应该观察什么？
+    expected_skills: [child-development-guidance]
+    excluded_skills: [parent-child-communication, routine-building]
+  - name: parenting-routine
+    profile: parenting
+    prompt: 想帮助五岁孩子养成睡前阅读习惯，给我一个渐进方案。
+    expected_skills: [routine-building]
+    excluded_skills: [child-development-guidance, parent-child-communication]
+  - name: parenting-communication
+    profile: parenting
+    prompt: 孩子输掉游戏后大哭，我应该怎么回应和沟通规则？
+    expected_skills: [parent-child-communication]
+    excluded_skills: [child-development-guidance, routine-building]

@@ -53,15 +53,13 @@ func TestLoopRejectsUnmeteredOrIncorrectlyCostedResponse(t *testing.T) {
 					Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("response")}, Usage: tt.usage,
 				}, nil
 			})
-			loop := pi.NewLoop(provider, pi.NewScheduler(&fakeToolRuntime{}, 1), false)
-			messages, err := loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
-				Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")},
-			}}}, nil)
+			runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
+			result, err := runtime.Run(context.Background(), validAgentRequest("input"), nil)
 			if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
 				t.Fatalf("Run() error = %v, want generation error", err)
 			}
-			if len(messages) != 0 {
-				t.Fatalf("uncosted response accepted: %#v", messages)
+			if len(result.NewMessages) != 0 {
+				t.Fatalf("uncosted response accepted: %#v", result.NewMessages)
 			}
 		})
 	}
@@ -243,19 +241,9 @@ func writeValidAgentWorkspace(workDir string) {
 }
 
 func (r *loopTestRuntime) Run(ctx context.Context, prompt string, reporter pi.Reporter) error {
-	prepared, err := r.factory.Build(ctx, harness.ContextRequest{Input: ai.Message{
-		Role:    ai.RoleUser,
-		Content: blocks(prompt),
-	}}, r.toolRuntime.Definitions())
-	if err != nil {
-		return err
-	}
-	runContext := harness.Context{
-		Messages: prepared.Messages,
-		Tools:    prepared.Tools,
-	}
 	loop := pi.NewLoop(r.provider, pi.NewScheduler(r.toolRuntime, r.MaxParallelTools), r.enableThinking)
-	_, err = loop.Run(ctx, runContext, reporter)
+	agent := pi.New(r.factory, loop, r.toolRuntime)
+	_, err := agent.Run(ctx, validAgentRequest(prompt), reporter)
 	return err
 }
 
@@ -379,16 +367,13 @@ func TestAgentLoopUsesNoThinkingToolsSortedActionToolsAndFinalOnlyMessages(t *te
 		},
 	}
 	reporter := &recordingReporter{}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 2), true)
-	runContext := harness.Context{
-		Messages: []ai.Message{
-			{Role: ai.RoleSystem, Content: blocks("system")},
-			{Role: ai.RoleUser, Content: blocks("do work")},
-		},
-		Tools: toolRuntime.definitions,
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
+		t.Fatal(err)
 	}
+	runtime := newAgentLoopRuntimeForTest(provider, toolRuntime, workDir, true)
 
-	if _, err := loop.Run(context.Background(), runContext, reporter); err != nil {
+	if err := runtime.Run(context.Background(), "do work", reporter); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, index := range []int{0, 2} {

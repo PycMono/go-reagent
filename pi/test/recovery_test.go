@@ -11,7 +11,6 @@ import (
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
@@ -72,16 +71,14 @@ func TestLoopRetriesTransientGenerationTwice(t *testing.T) {
 		{err: pierrors.Wrap(pierrors.ErrorCodeAIRateLimited, "test", errors.New("second"))},
 		{response: &ai.Message{Role: ai.RoleAssistant, Content: blocks("done")}},
 	}}
-	loop := pi.NewLoop(provider, pi.NewScheduler(&fakeToolRuntime{}, 1), false)
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
 	started := time.Now()
-	messages, err := loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
-		Role: ai.RoleUser, Content: blocks("run"),
-	}}}, nil)
+	result, err := runtime.Run(context.Background(), validAgentRequest("run"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.callCount() != 3 || len(messages) != 1 {
-		t.Fatalf("calls/messages = %d/%#v, want 3/one", provider.callCount(), messages)
+	if provider.callCount() != 3 || len(result.NewMessages) != 1 {
+		t.Fatalf("calls/messages = %d/%#v, want 3/one", provider.callCount(), result.NewMessages)
 	}
 	if elapsed := time.Since(started); elapsed < 1400*time.Millisecond {
 		t.Fatalf("elapsed = %s, want both retry delays", elapsed)
@@ -92,10 +89,8 @@ func TestLoopDoesNotRetryTerminalAICode(t *testing.T) {
 	provider := &scriptedProvider{steps: []providerStep{{
 		err: pierrors.Wrap(pierrors.ErrorCodeAIUnauthorized, "test", errors.New("unauthorized")),
 	}}}
-	loop := pi.NewLoop(provider, pi.NewScheduler(&fakeToolRuntime{}, 1), false)
-	_, err := loop.Run(context.Background(), harness.Context{Messages: []ai.Message{{
-		Role: ai.RoleUser, Content: blocks("run"),
-	}}}, nil)
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
+	_, err := runtime.Run(context.Background(), validAgentRequest("run"), nil)
 	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIUnauthorized || provider.callCount() != 1 {
 		t.Fatalf("error/calls = %v/%d", err, provider.callCount())
 	}
@@ -113,11 +108,9 @@ func TestLoopCancelsDuringRetryBackoff(t *testing.T) {
 			}
 		},
 	}
-	loop := pi.NewLoop(provider, pi.NewScheduler(&fakeToolRuntime{}, 1), false)
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
 	started := time.Now()
-	_, err := loop.Run(ctx, harness.Context{Messages: []ai.Message{{
-		Role: ai.RoleUser, Content: blocks("run"),
-	}}}, nil)
+	_, err := runtime.Run(ctx, validAgentRequest("run"), nil)
 	if !errors.Is(err, context.Canceled) || provider.callCount() != 1 {
 		t.Fatalf("error/calls = %v/%d", err, provider.callCount())
 	}
@@ -240,14 +233,12 @@ func TestLoopInjectsToolRecoveryHintOnlyIntoProviderContext(t *testing.T) {
 		}},
 	}
 	reporter := &recordingReporter{}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	newMessages, err := loop.Run(context.Background(), harness.Context{
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("edit file")}},
-		Tools:    toolRuntime.Definitions(),
-	}, reporter)
+	runtime := newPublicAgent(t, provider, toolRuntime)
+	result, err := runtime.Run(context.Background(), validAgentRequest("edit file"), reporter)
 	if err != nil {
 		t.Fatal(err)
 	}
+	newMessages := result.NewMessages
 	if len(newMessages) != 3 || messageText(t, newMessages[1]) != "在文件中未找到 oldText" ||
 		strings.Contains(messageText(t, newMessages[1]), "Recovery Hint") {
 		t.Fatalf("NewMessages = %#v", newMessages)
@@ -288,11 +279,8 @@ func TestLoopInjectsToolRecoveryHintSkipsUnknownCode(t *testing.T) {
 			ErrorCode:  pierrors.ErrorCodeToolRuntime,
 		}},
 	}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	_, err := loop.Run(context.Background(), harness.Context{
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run")}},
-		Tools:    toolRuntime.Definitions(),
-	}, nil)
+	runtime := newPublicAgent(t, provider, toolRuntime)
+	_, err := runtime.Run(context.Background(), validAgentRequest("run"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

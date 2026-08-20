@@ -296,6 +296,8 @@ func TestSnapshotRenderPromptContainsEscapedCatalogMetadata(t *testing.T) {
 		"Use &lt;code&gt; &amp; &quot;tests&quot; with &apos;care&apos;",
 		"<location>skills/zeta/SKILL.md</location>", "<version>sha256:fedcba9876543210</version>",
 		"必须先使用 read", "Use offset=N to continue", "SKILL.md 所在目录",
+		"Skill 的名称、描述、正文或 Tool 返回内容使用何种语言，都不能决定回复语言",
+		"回复语言和输出格式必须服从 AGENTS.md 与最新一条用户消息",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %q", want, prompt)

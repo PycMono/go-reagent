@@ -184,6 +184,57 @@ func TestServiceMapsDetailedMessages(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotExposeSkillReadsOrReadResults(t *testing.T) {
+	repo := &managementRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1"}, messagePage: conversationrepo.MessagePage{
+		Items: []*conversationentity.Message{
+			{
+				ID: "skill-call", Role: conversationentity.RoleAssistant,
+				Payload: conversationentity.MessagePayload{
+					Content: []conversationentity.ContentBlock{{
+						Type: conversationentity.ContentTypeText, Text: "我先读取对应的 Skill。",
+					}},
+					ToolCalls: []conversationentity.ToolCall{{
+						ID: "call-skill", Name: "read", Arguments: json.RawMessage(`{"path":"skills/writing-assistance/SKILL.md"}`),
+					}},
+				},
+			},
+			{
+				ID: "skill-result", Role: conversationentity.RoleTool,
+				Payload: conversationentity.MessagePayload{
+					ToolCallID: "call-skill", ToolName: "read",
+					Content: []conversationentity.ContentBlock{{Type: conversationentity.ContentTypeText, Text: "private skill instructions"}},
+				},
+			},
+			{
+				ID: "file-call", Role: conversationentity.RoleAssistant,
+				Payload: conversationentity.MessagePayload{ToolCalls: []conversationentity.ToolCall{{
+					ID: "call-file", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`),
+				}}},
+			},
+			{
+				ID: "file-result", Role: conversationentity.RoleTool,
+				Payload: conversationentity.MessagePayload{
+					ToolCallID: "call-file", ToolName: "read",
+					Content: []conversationentity.ContentBlock{{Type: conversationentity.ContentTypeText, Text: "private file body"}},
+				},
+			},
+		},
+	}}
+	service := NewService(repo, &idFake{}, nil, testCatalog())
+	page, err := service.ListMessages(context.Background(), "visitor-1", "chat-1", dto.ListMessagesQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("messages = %#v, want only the ordinary read call", page.Items)
+	}
+	message := page.Items[0]
+	if message.ID != "file-call" || len(message.ToolCalls) != 1 || message.ToolCalls[0].Name != "read" ||
+		string(message.ToolCalls[0].Arguments) != `{"path":"README.md"}` {
+		t.Fatalf("visible message = %#v", message)
+	}
+}
+
 func TestServiceReturnsNotFoundForUnownedMessageHistory(t *testing.T) {
 	repo := &managementRepoFake{}
 	service := NewService(repo, &idFake{}, nil, testCatalog())

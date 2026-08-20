@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +19,9 @@ func (config *Config) normalizeAndValidate() error {
 		return err
 	}
 	config.Agent.normalize()
+	if err := config.Agent.validate(); err != nil {
+		return err
+	}
 	if err := config.MCP.normalizeAndValidate(); err != nil {
 		return err
 	}
@@ -170,6 +174,23 @@ func (config *AgentConfig) normalize() {
 	if config.WorkspaceDir == "" {
 		config.WorkspaceDir = DefaultAgentWorkspaceDir
 	}
+}
+
+// validate 拒绝非法额度和全零安全策略。bundled service 不允许裸奔；
+// SDK 调用方自行决定 Limits，config 只约束本服务。
+func (config *AgentConfig) validate() error {
+	limits := config.Limits
+	switch {
+	case limits.MaxTurns < 0:
+		return errors.New("agent.limits.max_turns 不能小于 0")
+	case limits.MaxTotalTokens < 0:
+		return errors.New("agent.limits.max_total_tokens 不能小于 0")
+	case limits.MaxCostUSD < 0 || math.IsNaN(limits.MaxCostUSD) || math.IsInf(limits.MaxCostUSD, 0):
+		return errors.New("agent.limits.max_cost_usd 必须是有限非负数")
+	case limits.MaxTurns == 0 && limits.MaxCostUSD == 0 && limits.MaxTotalTokens == 0:
+		return errors.New("agent.limits 不允许全零：必须配置非零运行预算")
+	}
+	return nil
 }
 
 func (config *HTTPConfig) normalizeAndValidate() error {

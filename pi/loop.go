@@ -3,12 +3,9 @@ package pi
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
-	"strings"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
@@ -16,7 +13,9 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
-// Loop owns provider phases, message history, validation, and tool scheduling for one run.
+// Loop owns provider phases, message history, validation, and tool scheduling.
+// Loop 实例可并发复用：消息、计数、预算等全部 Run 状态只保存在方法局部和
+// 每次运行传入的 request-local Governor 中。
 type Loop struct {
 	provider       ai.Provider
 	scheduler      *Scheduler
@@ -33,18 +32,16 @@ func NewLoop(provider ai.Provider, scheduler *Scheduler, enableThinking bool) *L
 	return &Loop{provider: provider, scheduler: scheduler, enableThinking: enableThinking}
 }
 
-// Run executes provider turns until an Action response has no tool calls.
-func (l *Loop) Run(ctx context.Context, runContext harness.Context, reporter Reporter) ([]ai.Message, error) {
-	result, err := l.runDetailed(ctx, runContext, reporter)
-	return result.newMessages, err
-}
-
-func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, reporter Reporter) (loopResult, error) {
+func (l *Loop) runDetailed(
+	ctx context.Context,
+	runContext harness.Context,
+	reporter Reporter,
+	governor *runGovernor,
+) (loopResult, error) {
 	if err := ctx.Err(); err != nil {
 		return loopResult{}, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
 
-	contextHistory := append([]ai.Message(nil), runContext.Messages...)
 	newMessages := make([]ai.Message, 0)
 	invocations := make([]ModelInvocation, 0)
 	finish := func(err error) (loopResult, error) {
@@ -53,51 +50,57 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			invocations: append([]ModelInvocation(nil), invocations...),
 		}, err
 	}
+
 	availableTools := append([]ai.ToolDefinition(nil), runContext.Tools...)
 	slices.SortFunc(availableTools, func(a, b ai.ToolDefinition) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
+
+	contextHistory := append([]ai.Message(nil), runContext.Messages...)
 	turnCount := 0
 	var callSequence uint32
-	recordInvocation := func(phase ModelInvocationPhase, usage ai.Usage) {
+	recordInvocation := func(phase ModelInvocationPhase, usage ai.Usage) ModelInvocation {
 		callSequence++
-		invocations = append(invocations, ModelInvocation{
+		invocation := ModelInvocation{
 			Sequence: callSequence,
 			Phase:    phase,
 			Usage:    usage,
-		})
+		}
+		invocations = append(invocations, invocation)
+		return invocation
+	}
+	observeCompaction := func(usage ai.Usage) error {
+		return governor.observe(recordInvocation(ModelInvocationPhaseCompaction, usage))
 	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
-		turnCount++
+
+		// 防止死循环，退出机制
+		if err := governor.beforeTurn(); err != nil {
+			return finish(err)
+		}
+
+		governor.startTurn()
+		turnCount = governor.getTurns()
 		logsdk.Info(ctx, fmt.Sprintf("========== [Turn %d] 开始 ==========", turnCount),
 			logsdk.Any("component", "engine"), logsdk.Any("turn", turnCount))
 
 		if l.enableThinking {
-			if reporter != nil {
-				reporter.Report(ctx, NewThinkingEvent())
-			}
-			generated, err := l.generate(ctx, contextHistory, nil, nil)
+			emit(ctx, reporter, NewThinkingEvent())
+			generated, err := l.generate(ctx, contextHistory, nil, nil, observeCompaction)
 			contextHistory = generated.context
-			if generated.compactionUsage != nil {
-				recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
-			}
 			if err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
 			thinkResp := generated.message
-			if thinkResp == nil {
-				return finish(errors.New("Thinking 阶段生成失败: provider returned an empty response"))
+			if err := thinkResp.ValidateThinking(); err != nil {
+				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
-			if err := validateThinkingResponse(thinkResp); err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", err))
+			if err := governor.observe(recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)); err != nil {
+				return finish(err)
 			}
-			if err := validateMeteredUsage(thinkResp.Usage); err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
-			}
-			recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)
 			contextHistory = append(contextHistory, *thinkResp, ai.Message{
 				Role:    ai.RoleUser,
 				Content: []ai.ContentBlock{ai.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
@@ -107,41 +110,40 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
-		if reporter != nil {
-			reporter.Report(ctx, NewMessageStartEvent())
-		}
+		emit(ctx, reporter, NewMessageStartEvent())
+
 		generated, err := l.generate(ctx, contextHistory, availableTools, func(block ai.ContentBlock) {
-			if reporter != nil {
-				reporter.Report(ctx, NewMessageUpdateEvent(block))
-			}
-		})
-		contextHistory = generated.context
-		if generated.compactionUsage != nil {
-			recordInvocation(ModelInvocationPhaseCompaction, *generated.compactionUsage)
-		}
+			emit(ctx, reporter, NewMessageUpdateEvent(block))
+		}, observeCompaction)
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
+		contextHistory = generated.context
 		actionResp := generated.message
-		if actionResp == nil {
-			return finish(errors.New("Action 阶段生成失败: provider returned an empty response"))
+		if err = actionResp.ValidateAction(); err != nil {
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
-		if err := validateActionResponse(actionResp); err != nil {
-			return finish(fmt.Errorf("Action 阶段生成失败: %w", err))
+
+		actionInvocation := recordInvocation(ModelInvocationPhaseAction, *actionResp.Usage)
+		if observeErr := governor.observe(actionInvocation); observeErr != nil {
+			// 预算已达到：无工具的完整 Action 仍是可持久化的业务消息；
+			// 带工具的 Action 不能写入 NewMessages，也得不到 message_end。
+			if len(actionResp.ToolCalls) == 0 {
+				contextHistory = append(contextHistory, *actionResp)
+				newMessages = append(newMessages, *actionResp)
+				emit(ctx, reporter, NewMessageEndEvent(*actionResp))
+			}
+			return finish(observeErr)
 		}
-		if err := validateMeteredUsage(actionResp.Usage); err != nil {
-			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "model usage", err)))
-		}
-		recordInvocation(ModelInvocationPhaseAction, *actionResp.Usage)
+
 		contextHistory = append(contextHistory, *actionResp)
 		newMessages = append(newMessages, *actionResp)
-		if reporter != nil {
-			reporter.Report(ctx, NewMessageEndEvent(*actionResp))
-		}
+		emit(ctx, reporter, NewMessageEndEvent(*actionResp))
+
 		if len(actionResp.ToolCalls) == 0 {
 			return finish(nil)
 		}
-		if err := validateToolCalls(actionResp.ToolCalls); err != nil {
+		if err := actionResp.ToolCalls.Validate(); err != nil {
 			return finish(fmt.Errorf("Action 阶段返回了无效的工具调用: %w", err))
 		}
 
@@ -153,10 +155,9 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			logsdk.Any("execution_mode", mode),
 		)
 		observer := func(ctx context.Context, event ToolEvent) {
-			if reporter != nil {
-				reporter.Report(ctx, NewAgentToolEvent(event))
-			}
+			emit(ctx, reporter, NewAgentToolEvent(event))
 		}
+
 		results, err := l.scheduler.Schedule(ctx, actionResp.ToolCalls, availableTools, observer)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -164,6 +165,7 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 			}
 			return finish(fmt.Errorf("%w: schedule tools: %w", pierrors.ErrToolRuntime, err))
 		}
+
 		for _, result := range results {
 			rawMessage := ai.Message{
 				Role:       ai.RoleTool,
@@ -179,97 +181,12 @@ func (l *Loop) runDetailed(ctx context.Context, runContext harness.Context, repo
 	}
 }
 
-func validateThinkingResponse(response *ai.Message) error {
-	if response.Role != ai.RoleAssistant {
-		return fmt.Errorf("response must use assistant role, got %q", response.Role)
-	}
-	if response.ToolCallID != "" {
-		return errors.New("response must not contain tool_call_id")
-	}
-	if len(response.ToolCalls) != 0 {
-		return errors.New("provider returned tool calls while tools were disabled")
-	}
-	content, err := ai.TextContent(response.Content)
-	if err != nil {
-		return fmt.Errorf("response content: %w", err)
-	}
-	if strings.TrimSpace(content) == "" {
-		return errors.New("response must contain a non-empty textual plan")
-	}
-	return nil
-}
-
-func validateActionResponse(response *ai.Message) error {
-	if response.Role != ai.RoleAssistant {
-		return fmt.Errorf("response must use assistant role, got %q", response.Role)
-	}
-	if response.ToolCallID != "" {
-		return errors.New("response must not contain tool_call_id")
-	}
-	content, err := ai.TextContent(response.Content)
-	if err != nil {
-		return fmt.Errorf("response content: %w", err)
-	}
-	if content == "" && len(response.ToolCalls) == 0 {
-		return errors.New("assistant message contains no content or tool calls")
-	}
-	if response.FinishReason == ai.FinishReasonLength && len(response.ToolCalls) != 0 {
-		return errors.New("truncated response must not execute tool calls")
+// emit 向可选 Reporter 发布事件；nil Reporter 表示调用方不订阅事件，
+// 这是本文件唯一的 nil 判断点。
+func emit(ctx context.Context, reporter Reporter, event AgentEvent) {
+	if reporter == nil {
+		return
 	}
 
-	return nil
-}
-
-func validateToolCalls(calls []ai.ToolCall) error {
-	seen := make(map[string]struct{}, len(calls))
-	for index, call := range calls {
-		if call.ID == "" {
-			return fmt.Errorf("tool call at index %d has empty ID", index)
-		}
-		if _, exists := seen[call.ID]; exists {
-			return fmt.Errorf("duplicate tool call ID %q", call.ID)
-		}
-		seen[call.ID] = struct{}{}
-		if !json.Valid(call.Arguments) {
-			return fmt.Errorf("tool call %q arguments are invalid JSON", call.ID)
-		}
-	}
-
-	return nil
-}
-
-func validateMeteredUsage(usage *ai.Usage) error {
-	if usage == nil {
-		return errors.New("usage is required")
-	}
-	if strings.TrimSpace(usage.PlatformID) == "" {
-		return errors.New("usage platform ID is required")
-	}
-	if strings.TrimSpace(usage.Model) == "" {
-		return errors.New("usage model is required")
-	}
-	if usage.InputTokens < 0 || usage.OutputTokens < 0 {
-		return errors.New("usage tokens must be non-negative")
-	}
-	if usage.LatencyMS < 0 {
-		return errors.New("usage latency must be non-negative")
-	}
-
-	if invalidUsageDecimal(usage.InputPriceUSDPerMillionTokens) ||
-		invalidUsageDecimal(usage.OutputPriceUSDPerMillionTokens) ||
-		invalidUsageDecimal(usage.CostUSD) {
-		return errors.New("usage prices and cost are outside the supported range")
-	}
-
-	expectedCost := (float64(usage.InputTokens)*usage.InputPriceUSDPerMillionTokens +
-		float64(usage.OutputTokens)*usage.OutputPriceUSDPerMillionTokens) / 1_000_000
-	if math.Abs(usage.CostUSD-expectedCost) > 1e-12 {
-		return errors.New("usage cost does not match token prices")
-	}
-
-	return nil
-}
-
-func invalidUsageDecimal(value float64) bool {
-	return value < 0 || value >= ai.MaxUsageDecimalExclusive || math.IsNaN(value) || math.IsInf(value, 0)
+	reporter.Report(ctx, event)
 }

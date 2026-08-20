@@ -54,11 +54,16 @@ func (*agentToolRuntimeFake) Execute(_ context.Context, call ai.ToolCall, _ pi.T
 
 func newPublicAgent(t *testing.T, provider ai.Provider, toolRuntime pi.ToolRuntime) *pi.Agent {
 	t.Helper()
+	return newPublicAgentWithThinking(t, provider, toolRuntime, false)
+}
+
+func newPublicAgentWithThinking(t *testing.T, provider ai.Provider, toolRuntime pi.ToolRuntime, thinking bool) *pi.Agent {
+	t.Helper()
 	workDir := t.TempDir()
 	writeValidAgentWorkspace(workDir)
 	toolRuntime = toolRuntimeWithRequiredRead{ToolRuntime: toolRuntime}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 2), false)
+	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 2), thinking)
 	return pi.New(builder, loop, toolRuntime)
 }
 

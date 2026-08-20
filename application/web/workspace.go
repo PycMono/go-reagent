@@ -21,6 +21,7 @@ func NewChatWorkDir(cfg *config.Config) (pi.WorkDir, error) {
 	if path == "" {
 		path = config.DefaultAgentWorkspaceDir
 	}
+
 	resolved, err := resolveDirectory(path)
 	if err != nil {
 		return "", fmt.Errorf("检查 Agent Workspace %q 失败: %w", path, err)
@@ -36,6 +37,7 @@ func NewChatWorkDir(cfg *config.Config) (pi.WorkDir, error) {
 	if resolved == resolvedWorkingDir {
 		return "", fmt.Errorf("Agent Workspace %q 不能使用进程当前目录", path)
 	}
+
 	return pi.WorkDir(resolved), nil
 }
 
