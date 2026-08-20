@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/test"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -132,7 +133,7 @@ func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
 		CoreRegister,
 		fx.Provide(fx.Annotate(
 			func() Extension {
-				return &extensionFake{name: "mcp:test", events: &events, tool: "remote_tool"}
+				return &test.extensionFake{name: "mcp:test", events: &events, tool: "remote_tool"}
 			},
 			fx.ResultTags(`group:"agent_extensions"`),
 		)),
