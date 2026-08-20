@@ -88,7 +88,7 @@ go-reagent 应先定义这条厂商无关的语义主干，再将同一事实分
 | Retry 与 Context Overflow 恢复位于生成流程 | `pi/recovery.go` | 每次物理请求、等待和 Compaction 必须可区分，不能只用一个 Provider Span |
 | Tool 并发由 Scheduler 分波次执行 | `pi/scheduler.go` | Tool Span 在取得信号量并进入 `ToolRuntime.Execute` 后开始；并行 Span 允许重叠 |
 | Tool Runtime 已有 Middleware 链 | `pi/middleware.go` | Tool Tracing 应实现为 Middleware，不在每个具体 Tool 内埋点 |
-| `CostTracker` 是 Provider 装饰器 | `pi/harness/observability/tracker.go` | Tracing Provider 必须在 `Result` 后读取已标准化 Usage，不能复制成本公式 |
+| 服务标准装配始终以 `CostTracker` 包装 Raw Provider，并由它完成调用计时和 Usage/成本补全 | `pi/harness/observability/tracker.go`、`pi/register.go` | TTFT 与 Latency 同属 Invocation 审计事实，由 CostTracker 单点测量；TracingProvider 只消费标准化 Usage 和包内 Timing Snapshot |
 | `RunResult.Invocations` 是无状态 SDK 的成本输出 | `pi/contract.go` | `pi` 只记录 Invocation，不写 MySQL |
 | Conversation 层持有 UserID、ConversationID、RunID | `conversation/store.go` | 业务标识只加在上层业务 Span，不增加到 `pi.RunRequest` |
 | `AppendTurn` 原子保存消息与 Invocation | `conversation/runner.go` | Ledger 继续由服务层持久化；即使只有 Invocation、没有消息也要保存 |
@@ -215,7 +215,7 @@ invoke_agent reagent
 |---|---|---|
 | `gen_ai.operation.name` | string | 固定为 `invoke_agent` |
 | `gen_ai.agent.name` | string | Agent 名称，如 `reagent` |
-| `gen_ai.agent.version` | string | Agent 或 Prompt/配置版本 |
+| `gen_ai.agent.version` | string | Agent 的发布版本；独立 Prompt、Profile 或配置版本不得复用该字段，未来需要时使用 `reagent.*` 自定义属性 |
 | `reagent.termination.reason` | enum | completed、error、canceled、deadline_exceeded、max_turns、max_cost、max_total_tokens、loop_detected |
 | `reagent.run.turns` | int | 已开始的 Turn 数 |
 | `reagent.run.invocations` | int | 已记录模型调用数 |
@@ -281,7 +281,7 @@ chat {model}
 | `reagent.generation.phase` | enum | thinking、action、compaction |
 | `reagent.provider.attempt` | int | 从 1 开始的请求次数 |
 | `reagent.stream.chunk_count` | int | 流式 Chunk 数 |
-| `reagent.stream.ttft_ms` | int | 首个非空 Text Delta 延迟；纯 Tool Call 响应可以缺省；与 TTFT Histogram、Ledger 使用同一次测量值 |
+| `reagent.stream.ttft_ms` | int | CostTracker 从调用开始到首个非空 Text Delta 的延迟；纯 Tool Call 响应缺省；与 TTFT Histogram、Ledger 使用同一个 Timing Snapshot |
 | `reagent.invocation.cost_usd` | double | 本次调用成本 |
 | `reagent.provider.request_index` | int | Run 内每次物理 Provider 请求的单调序号 |
 | `error.type` | string | 稳定、低基数的错误类型 |
@@ -302,7 +302,7 @@ execute_tool {tool_name}
 |---|---|---|
 | `gen_ai.operation.name` | string | 固定为 `execute_tool` |
 | `gen_ai.tool.name` | string | Tool 名称 |
-| `reagent.tool.call_id` | string | Tool Call ID，仅用于 Trace |
+| `gen_ai.tool.call.id` | string | Tool Call ID，仅用于 Trace；可得时按 OTel GenAI 约定记录 |
 | `reagent.tool.parallel_safe` | bool | 是否允许并行 |
 | `reagent.tool.is_error` | bool | Tool 是否返回错误 |
 | `reagent.error.code` | string | 项目稳定错误码 |
@@ -336,7 +336,7 @@ Retry 等待不是独立的远程调用或 Runtime 操作，不创建 `reagent.r
 |---|---|---|
 | `reagent.retry.scheduled` | 启动等待前 | `reagent.retry.next_attempt`、`reagent.retry.delay_ms`、`reagent.retry.reason` |
 | `reagent.retry.completed` | Timer 正常到期 | `reagent.retry.next_attempt`、`reagent.retry.actual_delay_ms` |
-| `reagent.retry.canceled` | 等待被 Context 取消或超时 | `reagent.retry.next_attempt`、`reagent.retry.actual_delay_ms`、`reagent.termination.reason` |
+| `reagent.retry.canceled` | 等待被 Context 取消或超时 | `reagent.retry.next_attempt`、`reagent.retry.actual_delay_ms`、`reagent.retry.cancel_reason`（`context_canceled`、`deadline_exceeded`） |
 
 `next_attempt` 与下一次 Provider Span 的 `reagent.provider.attempt` 使用同一序号，从 2 开始。`reagent.model.retries` Counter 只在记录 `reagent.retry.scheduled` 时累加一次；完成和取消事件不能重复计数。Retry Wait 不单独创建 Duration Histogram，其实际耗时由事件时间戳和相邻 Provider Span 的时间区间确定。
 
@@ -351,33 +351,53 @@ Retry 等待不是独立的远程调用或 Runtime 操作，不创建 `reagent.r
 
 ## 5. 流式 Provider 的 Span 生命周期
 
-当前 Provider 返回 `ai.Stream`，因此不能在 `Stream()` 返回时结束 Span。正确生命周期为：
+当前 Provider 返回 `ai.Stream`，因此不能在 `Stream()` 返回时结束 Span。标准装饰顺序仍为 `TracingProvider → CostTracker → Raw Provider`，但 Invocation Timing 的所有权属于 Ledger-enabled 服务必须装配的 CostTracker。正确生命周期为：
 
 ```text
-Provider.Stream
+TracingProvider.Stream
     → 创建 Provider Span
+    → 调用 CostTracker.Stream
+        → 在调用 Raw Provider.Stream 前记录 startedAt
+        → 返回 trackingStream
     → 返回 tracingStream
 
-tracingStream.Next
+tracingStream.Next（外层）
+    → 调用 trackingStream.Next
+        → 消费 Raw Stream Event
+        → 首个非空 Text Delta 单点记录 TTFT 与 observed=true
     → 统计 Chunk 数
-    → 首个非空 Text Delta 单点计算并记录 TTFT
+    → 通过包内 streamTimingReader 读取同一个 Timing Snapshot
+    → 首次 observed 时写入 Span 和可选 TTFT Histogram
     → 不因 Next 返回 false 自动结束 Span
 
 tracingStream.Result
     → 调用下层 CostTracker.Result
-    → 获取最终 Usage 和成本
-    → 写入 Span 属性和 Metrics
+        → 获取最终 Usage
+        → 补齐 Platform、Model、价格、Cost、LatencyMS
+        → observed=true 时把同一 TTFT 写入 Usage.TTFTMS
+    → 从最终 Usage 写入 Span 属性和其他 Metrics
     → 结束 Span
 
 tracingStream.Close
     → 如果 Result 未调用，标记 abandoned/canceled
     → 始终调用下层 Close
+    → 如已 observed，保留先前写入的 TTFT
     → 结束 Span
 ```
 
 Span 结束必须使用 `sync.Once` 或等价机制，确保正常完成、Provider 错误、Context Cancel、Deadline、提前 Close 和重复 Result 均只结束一次。
 
-TTFT 只由 `tracingStream` 从 Provider Span 开始时间到首个非空 Text Delta 测量一次。该值以整数毫秒写入 Span，并由同一 `time.Duration` 转换为秒写入 `reagent.model.ttft` Histogram；需要进入 Invocation/Ledger 时沿用同一个 `TTFTMS`，不得在 CostTracker、Loop 或持久化层重新计时。纯 Tool Call 响应没有 Text Delta 时，Span、Metric 和 Ledger 均省略 TTFT。
+`trackingStream` 保存 request-local Timing Snapshot，并通过 `pi/harness/observability` 包内私有接口暴露给外层 TracingProvider，例如：
+
+```go
+type streamTimingReader interface {
+    StreamTTFT() (time.Duration, bool)
+}
+```
+
+这不修改公共 `ai.Provider` 或 `ai.Stream` 接口。TracingProvider 在标准链路中不得启动第二个 TTFT 计时器；它把 Snapshot 的整数毫秒写入 Span，把同一 `time.Duration` 转换为秒写入 `reagent.model.ttft` Histogram。即使首个 Text Delta 后 Stream 失败或被提前 Close，Snapshot 仍可供 Trace 使用；只有成功且取得可信 Usage 的调用才把 TTFT 带入 Invocation/Ledger。
+
+纯 Tool Call 响应没有 Text Delta 时，`observed=false`，Span、Metric、Usage 和 Ledger 均省略 TTFT。TracingProvider 被单独用于未实现 `streamTimingReader` 的自定义 Provider 时，可以进行只供 Trace 使用的本地兜底测量，但该值不得回写 Usage 或进入 Ledger；标准应用无论 Telemetry 启用、Noop 或完全移除 TracingProvider，CostTracker 都必须继续产生一致的 Invocation Timing。
 
 调用方向固定为：
 
@@ -385,7 +405,7 @@ TTFT 只由 `tracingStream` 从 Provider Span 开始时间到首个非空 Text D
 Loop → TracingProvider → CostTracker → Raw Provider
 ```
 
-该顺序保证 TracingProvider 的 `Result` 能读到 CostTracker 已补齐的 Platform、Model、价格、Cost 和 Latency，同时 CostTracker 不依赖 OTel。Trace 记录的 Provider 总时延使用 Span Duration；Ledger 沿用 CostTracker 的 `LatencyMS`，两者允许因装饰器开销存在毫秒级差异。
+该顺序保证 TracingProvider 能消费 CostTracker 已补齐的 Platform、Model、价格、Cost、Latency 和 TTFT，同时 CostTracker 不依赖 OTel。Trace 记录的 Provider 总时延使用 Span Duration；Ledger 沿用 CostTracker 的 `LatencyMS`，两者允许因装饰器开销存在毫秒级差异。TTFT 则严格复用 CostTracker 的 Snapshot，不允许产生第二套口径。
 
 ## 6. Telemetry 包边界
 
@@ -396,10 +416,10 @@ pi/harness/observability/
 ├── telemetry.go          # Telemetry、Noop 和构造
 ├── attributes.go         # 属性名、枚举和基数声明
 ├── spans.go              # Run/Turn/Generate/Tool 等 Span
-├── provider.go           # TracingProvider 和 tracingStream
+├── provider.go           # TracingProvider、tracingStream 和包内 Timing Reader
 ├── metrics.go            # OTel Meter Instruments
 ├── content_policy.go     # 第一阶段固定 none；为后续受控模式保留边界
-└── tracker.go            # 现有 CostTracker
+└── tracker.go            # CostTracker、trackingStream 和 canonical Invocation Timing
 ```
 
 应用层负责 OTel SDK 和基础设施装配：
@@ -488,7 +508,7 @@ Hint 不序列化、不跨进程传播、不允许携带 Prompt 或业务 ID。T
 
 ### 8.2 Model Metrics
 
-实现时固定一个 OTel GenAI Semantic Conventions 版本，并把仍处于 Development 状态的名称封装在 `attributes.go`，避免上游改名扩散到业务代码。标准指标可用时采用 P0 的 `gen_ai.client.operation.duration` 与 `gen_ai.client.token.usage`；项目补充：
+实现时必须从 OpenTelemetry 独立的 `semantic-conventions-genai` 仓库固定一个 release；上游尚未发布可用 release 时固定 commit，并在 `attributes.go` 文件头记录来源仓库和精确 revision。仍处于 Development 状态的名称统一封装在该文件，避免上游改名扩散到业务代码。标准指标可用时采用 P0 的 `gen_ai.client.operation.duration` 与 `gen_ai.client.token.usage`；项目补充：
 
 | 指标 | 类型 | Labels | 优先级 |
 |---|---|---|---|
@@ -528,7 +548,7 @@ Hint 不序列化、不跨进程传播、不允许携带 Prompt 或业务 ID。T
 
 ```text
 run_id, conversation_id, trace_id, span_id, user_id,
-tool_call_id, session_id, 文件路径, 命令文本,
+gen_ai.tool.call.id, session_id, 文件路径, 命令文本,
 错误正文, Prompt, Model Response
 ```
 
@@ -570,12 +590,14 @@ type Usage struct {
     CostUSD     float64
     CostQuality CostQuality // exact | estimated
     LatencyMS   int64
-    TTFTMS      int64
+    TTFTMS      *int64 // nil 表示未观测到 Text Delta
 
     PlatformID string
     Model      string
 }
 ```
+
+`LatencyMS` 对每次成功 Invocation 都存在；`TTFTMS` 使用指针表达可选事实，不能用 `0` 代表缺失，因为真实 TTFT 小于 1ms 时按毫秒取整同样可能得到 `0`。TTFT 在阶段 2 由 CostTracker 的 `trackingStream` 开始测量并供 Trace 使用，阶段 3 再进入 `Usage`、`ModelInvocation` 和 Ledger；Cache/Reasoning Usage 字段仍在阶段 4 增强。
 
 `CostQuality=exact` 表示 Provider 返回的分项足以按配置价格重算；缺少缓存分项但 Provider 可能采用差异价格时只能标记 `estimated`。这比用零值冒充“没有缓存”更可审计。现有 MySQL `DECIMAL(20,12)` 继续保存价格和成本；浮点值必须通过现有有限值、范围及 `1e-12` 误差校验。全面替换为十进制 Go 类型会同时改变公开 Usage、Run Budget 和配置，不纳入本 Tracing 变更。
 
@@ -684,6 +706,8 @@ cache_write_price_usd_per_million_tokens
 ```
 
 `trace_id` 由 Conversation 层从当前 `conversation.run` SpanContext 取得，同一 Run 的 Invocation 共享它；具体 Provider Span 通过 `provider_request_index` 精确定位，因此第一阶段不冗余保存 `span_id`。同时补齐领域层 `compaction` phase，使其与现有 `pi.ModelInvocationPhaseCompaction` 一致。
+
+`ttft_ms` 必须允许 `NULL`：只有 CostTracker 观测到非空 Text Delta 且调用最终取得可信 Usage 时才写入；纯 Tool Call 响应保持 `NULL`，合法的 `0` 表示 TTFT 已观测但不足 1ms。Conversation Mapper 只能复制 `Usage.TTFTMS`，不得自行计时或把 `nil` 转成 `0`。
 
 对采样与保留策略最终保留下来的 Trace，排障入口固定为：先使用 Ledger 行中的 `trace_id` 直接取得整条 Trace，再在该 Trace 内使用 `reagent.provider.request_index=provider_request_index` 定位唯一 Provider Span。该路径不依赖跨 Trace 的全局 Attribute 搜索，但所选生产 Trace 后端和 UI/查询工具必须能够展示并过滤单条 Trace 内的 Span Attribute。未采样或已过保留期的 Trace 无法从 Ledger 恢复，Ledger 中的 `trace_id` 不能被解释为 Trace 后端永久存在性保证。
 
@@ -874,6 +898,8 @@ Replay 不属于本期，当前实现不得创建 Replay 配置、Writer、目�
 
 ## 17. Dashboard 与告警
 
+以下面板中，依赖 P1 指标（Turn/Invocation 分布、TTFT、Tool 排队时延）或阶段 4 Usage 增强（Cache/Reasoning Token、缓存命中率、Exact/Estimated Cost 分布）的部分，随对应阶段启用，不要求在阶段 0–3 一次性交付完整 Dashboard。
+
 ### 17.1 Agent Dashboard
 
 - Run 数量、成功率和各终止原因。
@@ -944,6 +970,8 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 还必须断言下层 Stream 的 `Close` 总会被调用，并分别覆盖 `Next=false → Result` 与 Terminal Event → Result 两条消费路径。
 
+TTFT 还必须验证：CostTracker 只在首个非空 Text Delta 写入一次 Snapshot；TracingProvider 的 Span/Histogram 与 Snapshot 同源；首个 Text Delta 后失败或提前 Close 时 Trace 仍有 TTFT、Ledger 无 Invocation；纯 Tool Call 的 `Usage.TTFTMS` 与 Ledger `ttft_ms` 为 `nil/NULL`；小于 1ms 的已观测 TTFT 可以合法写入 `0`。
+
 ### 18.4 成本测试
 
 第一阶段覆盖现有 Input/Output、非法价格、NaN/Inf，以及“语义校验失败但 Invocation 仍返回并进入 Ledger”。第二阶段再覆盖 DeepSeek Cache Hit/Miss、Anthropic Cache Read/Write、OpenAI Cached/Reasoning Token、Cache Token 越界和 Exact/Estimated Cost 分流。
@@ -956,7 +984,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - 验证不存在高基数 Label。
 - 验证 Collector 不可达时 Agent 仍成功。
 - 验证 Metrics、RunTotals 和 MySQL Ledger 可对账。
-- 在 Sampling `1.0` 且测试后端不丢弃 Trace 的环境中，从一行 `agent_model_invocations` 读取 `trace_id + provider_request_index`，定位且只定位到一个 Provider Span，并校验 Model、Phase、Token 和 Cost 一致。
+- 在 Sampling `1.0` 且测试后端不丢弃 Trace 的环境中，从一行 `agent_model_invocations` 读取 `trace_id + provider_request_index`，定位且只定位到一个 Provider Span，并校验 Model、Phase、Token、Cost 和可选 TTFT 一致。
 - 验证取消后的部分 Invocation 使用 3 秒独立 Context 尝试持久化。
 - 验证 `pi/test/package_boundaries_test.go` 继续禁止 `pi` 导入 Service、Infrastructure 或 Persistence。
 
@@ -994,7 +1022,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 - `pi.Agent.Run` 的 `invoke_agent` Span 和单 Turn 函数作用域。
 - Thinking/Action Generate、物理 Provider 和 Compaction Span，以及 Generate 上的 Retry Wait Event。
-- 流式 `TracingProvider`，保证 Result/Close 只结束一次。
+- CostTracker `trackingStream` 单点测量 Invocation TTFT，并通过包内 Timing Snapshot 供流式 `TracingProvider` 消费；TracingProvider 保证 Result/Close 只结束一次。
 - 默认 Tool Tracing Middleware 与 Queue Duration 指标。
 - MCP HTTP Transport 注入 W3C Trace Context，并验证不传播业务 Baggage。
 - P0 Agent、Model、Tool、Compaction Metrics；P1 Instrument 保留定义但不阻塞本阶段。
@@ -1005,8 +1033,8 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 交付：
 
-- `pi.ModelInvocation.Outcome` 与 `ProviderRequestIndex`，并把可信 Usage 的记录与 Governor 累加移动到契约校验之前。
-- Domain 补齐 `compaction` Phase，Invocation 表增加 Trace/Outcome/CostQuality 等第一阶段字段。
+- `pi.ModelInvocation.Outcome`、`ProviderRequestIndex` 与可选 `Usage.TTFTMS`，并把可信 Usage 的记录与 Governor 累加移动到契约校验之前。
+- Domain 补齐 `compaction` Phase，Invocation 表增加 Trace/Outcome/CostQuality 等第一阶段字段，`ttft_ms` 使用可空列并保留“未观测”与合法零值的区别。
 - Conversation Mapper 写入当前 TraceID；取消后使用 3 秒终态持久化 Context。
 - Metrics、RunTotals 与 MySQL Ledger 对账测试。
 
@@ -1057,8 +1085,8 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 ## 21. 正式需求表述
 
 - **OBS-001 — Trace：** go-reagent 必须为业务 Run、Agent Run、Turn、模型逻辑生成、每次物理 Provider 请求、Context Compaction 和每次注册 Tool 执行创建结构化 OTel Span；Retry Wait 使用所属 Generate Span 上的结构化 Event 表达。系统必须通过 W3C Trace Context 保持 HTTP、MCP 和未来异步执行之间的调用关联。
-- **OBS-002 — Metrics：** 系统必须通过 OTel Meter 暴露 Prometheus 指标，覆盖 Run、Turn、模型请求、Token、缓存、成本、TTFT、Retry、Compaction 和 Tool 执行，并按 P0/P1 分阶段交付。指标标签必须为受控低基数，禁止使用 run_id、trace_id、conversation_id、user_id、tool_call_id、路径和错误正文作为标签。
-- **OBS-003 — Ledger：** `agent_model_invocations` 必须作为应用侧成本事实源，Prometheus 仅作为聚合投影。每次已产生可信 Usage 的模型调用，无论后续响应是否通过语义校验，都必须先进入 `RunResult.Invocations`；Conversation 层再按现有 Turn 事务和唯一约束持久化。对 Trace 后端已保留的调用，Ledger 必须能通过 `trace_id + provider_request_index` 定位唯一 Provider Span；未采样或已过期 Trace 不作恢复承诺。进程崩溃窗口必须被明确记录，不能宣称应用账本等同 Provider 最终账单。
+- **OBS-002 — Metrics：** 系统必须通过 OTel Meter 暴露 Prometheus 指标，覆盖 Run、Turn、模型请求、Token、缓存、成本、TTFT、Retry、Compaction 和 Tool 执行，并按 P0/P1 分阶段交付。指标标签必须为受控低基数，禁止使用 run_id、trace_id、conversation_id、user_id、`gen_ai.tool.call.id`、路径和错误正文作为标签。
+- **OBS-003 — Ledger：** `agent_model_invocations` 必须作为应用侧成本事实源，Prometheus 仅作为聚合投影。每次已产生可信 Usage 的模型调用，无论后续响应是否通过语义校验，都必须先进入 `RunResult.Invocations`；Conversation 层再按现有 Turn 事务和唯一约束持久化。任何启用 Invocation Ledger 的服务装配都必须包含 CostTracker；Latency 与 TTFT 等 Ledger 审计字段由它产生，不能依赖 Telemetry 是否启用，且未观测 TTFT 必须与合法零值区分。对 Trace 后端已保留的调用，Ledger 必须能通过 `trace_id + provider_request_index` 定位唯一 Provider Span；未采样或已过期 Trace 不作恢复承诺。进程崩溃窗口必须被明确记录，不能宣称应用账本等同 Provider 最终账单。
 - **OBS-004 — Privacy：** 可观测链路默认不得采集 Prompt、Thinking、Tool 完整参数或输出。任何未来的完整运行回放必须作为独立、显式启用、加密并具有保留期的 Replay 子系统实现，不得使用 OTel Span 代替事件制品存储。
 - **OBS-005 — Reliability：** OTel Telemetry 必须 Fail-open、队列有界、支持采样和确定性关闭；Exporter 或 Collector 故障不得改变 Agent 的业务结果。MySQL 写入失败仍按现有业务错误语义返回，不得被 Telemetry Fail-open 吞掉。
 - **OBS-006 — Compatibility：** Telemetry 未启用时必须使用 Noop 实现，不能改变现有 Agent、Provider、Stream 和 Tool Runtime 的行为；厂商特有 Usage 必须在 Provider Adapter 中归一化，不能泄漏到 Harness 核心语义。
@@ -1070,7 +1098,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 |---|---|---|
 | OBS-001 | 3、4、5、7、15 | In-Memory Span Tree/Event、W3C 传播、并行 Tool 测试 |
 | OBS-002 | 8、12、17 | Metrics 抓取、Label 基数、Dashboard/Rule 测试 |
-| OBS-003 | 9、10、18、19 | 契约非法仍计量、事务/唯一约束、Ledger→Span 关联、对账测试 |
+| OBS-003 | 5、9、10、18、19 | 契约非法仍计量、Noop TTFT、空值语义、事务/唯一约束、Ledger→Span 关联、对账测试 |
 | OBS-004 | 11、16 | 敏感内容负向断言、非法 Content Mode 启动失败 |
 | OBS-005 | 12、13、18 | Collector 不可达、Queue 上限、Shutdown 测试 |
 | OBS-006 | 5、6、9、18 | Noop 等价、Provider Fixture、兼容测试 |

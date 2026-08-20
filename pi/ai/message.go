@@ -63,13 +63,16 @@ func (message *Message) ValidateThinking() error {
 	if len(message.ToolCalls) != 0 {
 		return errors.New("provider returned tool calls while tools were disabled")
 	}
+
 	content, err := TextContent(message.Content)
 	if err != nil {
 		return fmt.Errorf("response content: %w", err)
 	}
+	
 	if strings.TrimSpace(content) == "" {
 		return errors.New("response must contain a non-empty textual plan")
 	}
+
 	return message.Usage.ValidateMetered()
 }
 
