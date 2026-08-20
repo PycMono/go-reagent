@@ -28,7 +28,7 @@ Replay 回答：模型和 Runtime 当时实际看到了、产生了什么？
 
 ### 1.1 本期目标
 
-- 为每次 HTTP/Chat Run、`pi.Agent.Run`、Turn、逻辑 Generate、物理 Provider 请求、Retry Sleep、Compaction 和 Tool 执行建立因果链路。
+- 为每次 HTTP/Chat Run、`pi.Agent.Run`、Turn、逻辑 Generate、物理 Provider 请求、Compaction 和 Tool 执行建立 Span 因果链路，并用 Span Event 记录 Retry Wait。
 - 通过 Prometheus 暴露吞吐、耗时、错误、Token 和成本聚合，并保证 Label 低基数。
 - 保持 `pi` 无状态、可复用和厂商无关；OTel SDK、Exporter、监听端口与 MySQL 继续由服务层拥有。
 - 已取得可信 Usage 的调用必须进入 `RunResult.Invocations`，即使后续 Thinking/Action/Compaction 契约校验失败。
@@ -153,7 +153,7 @@ HTTP SERVER Span
 → Chat Service 创建 conversation.run Span，并写 run_id/conversation_id/profile_code
 → Conversation Runner 加载 History
 → pi.Agent.Run 创建 invoke_agent Span
-→ Loop 创建 Turn/Generate/Retry/Compaction Span
+→ Loop 创建 Turn/Generate/Compaction Span 和 Retry Event
 → TracingProvider 为每次物理请求创建 CLIENT Span
 → Tool Middleware 为每次实际执行创建 INTERNAL Span
 → pi 返回 RunResult{Invocations, Termination}
@@ -281,7 +281,7 @@ chat {model}
 | `reagent.generation.phase` | enum | thinking、action、compaction |
 | `reagent.provider.attempt` | int | 从 1 开始的请求次数 |
 | `reagent.stream.chunk_count` | int | 流式 Chunk 数 |
-| `reagent.stream.ttft_ms` | int | 首个非空 Text Delta 延迟；纯 Tool Call 响应可以缺省 |
+| `reagent.stream.ttft_ms` | int | 首个非空 Text Delta 延迟；纯 Tool Call 响应可以缺省；与 TTFT Histogram、Ledger 使用同一次测量值 |
 | `reagent.invocation.cost_usd` | double | 本次调用成本 |
 | `reagent.provider.request_index` | int | Run 内每次物理 Provider 请求的单调序号 |
 | `error.type` | string | 稳定、低基数的错误类型 |
@@ -308,8 +308,6 @@ execute_tool {tool_name}
 | `reagent.error.code` | string | 项目稳定错误码 |
 | `reagent.tool.arguments_size` | int | 参数字节数 |
 | `reagent.tool.output_size` | int | 输出字节数 |
-| `reagent.tool.arguments_hmac_sha256` | string | 未来 Hash 策略允许时记录带密钥摘要 |
-| `reagent.tool.output_hmac_sha256` | string | 未来 Hash 策略允许时记录带密钥摘要 |
 
 Tool Span 在 Scheduler 获得并发许可、进入 `ToolRuntime` 后开始，以便执行耗时不混入信号量等待时间。实现为 `Order=5` 的默认 `tracing` Middleware，位于现有 Panic Recovery、Schema Validation、Logging 和 Event Forwarding 之外，使这些步骤与真实 Tool 调用都处于 Span 内。未注册 Tool 在 Registry Lookup 阶段返回，不伪装成真实执行；Turn Span 记录稳定错误码，Metrics 的 Tool Label 映射为 `unknown`。
 
@@ -330,16 +328,17 @@ Span 名称固定为 `reagent.compact_context`。
 
 当前实现只有 Overflow 触发，因此第一阶段 `reason` 只产生 `overflow`；`threshold`、`manual` 是保留枚举。没有确定性 Token Estimator 时省略 before/after Token，不能用字符数冒充 Provider Token。
 
-### 4.8 Retry Sleep Span
+### 4.8 Retry Wait Event
 
-Span 名称固定为 `reagent.retry_sleep`。
+Retry 等待不是独立的远程调用或 Runtime 操作，不创建 `reagent.retry_sleep` Span，而是在所属的 `reagent.generate` Span 上记录事件。这样仍能在相邻 Provider Span 之间解释等待时间，同时避免为短暂 Backoff 增加瀑布图噪声。
 
-| 属性 | 类型 | 说明 |
+| Event | 记录时机 | 属性 |
 |---|---|---|
-| `reagent.retry.attempt` | int | 重试序号 |
-| `reagent.retry.delay_ms` | int | 计划等待时间 |
-| `reagent.retry.reason` | enum | transient、rate_limited |
-| `reagent.retry.outcome` | enum | elapsed、canceled |
+| `reagent.retry.scheduled` | 启动等待前 | `reagent.retry.next_attempt`、`reagent.retry.delay_ms`、`reagent.retry.reason` |
+| `reagent.retry.completed` | Timer 正常到期 | `reagent.retry.next_attempt`、`reagent.retry.actual_delay_ms` |
+| `reagent.retry.canceled` | 等待被 Context 取消或超时 | `reagent.retry.next_attempt`、`reagent.retry.actual_delay_ms`、`reagent.termination.reason` |
+
+`next_attempt` 与下一次 Provider Span 的 `reagent.provider.attempt` 使用同一序号，从 2 开始。`reagent.model.retries` Counter 只在记录 `reagent.retry.scheduled` 时累加一次；完成和取消事件不能重复计数。Retry Wait 不单独创建 Duration Histogram，其实际耗时由事件时间戳和相邻 Provider Span 的时间区间确定。
 
 ### 4.9 Span Status、Error 与取消
 
@@ -361,7 +360,7 @@ Provider.Stream
 
 tracingStream.Next
     → 统计 Chunk 数
-    → 首个非空 Text Delta 记录 TTFT
+    → 首个非空 Text Delta 单点计算并记录 TTFT
     → 不因 Next 返回 false 自动结束 Span
 
 tracingStream.Result
@@ -377,6 +376,8 @@ tracingStream.Close
 ```
 
 Span 结束必须使用 `sync.Once` 或等价机制，确保正常完成、Provider 错误、Context Cancel、Deadline、提前 Close 和重复 Result 均只结束一次。
+
+TTFT 只由 `tracingStream` 从 Provider Span 开始时间到首个非空 Text Delta 测量一次。该值以整数毫秒写入 Span，并由同一 `time.Duration` 转换为秒写入 `reagent.model.ttft` Histogram；需要进入 Invocation/Ledger 时沿用同一个 `TTFTMS`，不得在 CostTracker、Loop 或持久化层重新计时。纯 Tool Call 响应没有 Text Delta 时，Span、Metric 和 Ledger 均省略 TTFT。
 
 调用方向固定为：
 
@@ -471,31 +472,33 @@ Hint 不序列化、不跨进程传播、不允许携带 Prompt 或业务 ID。T
 
 应用使用 OTel Meter 创建 Instrument，由 Prometheus Exporter 暴露。名称在代码中使用 OTel 风格，最终由 Exporter 转换成 Prometheus 名称。
 
+指标按交付优先级分为两档：P0 是阶段 0–3 必须上线并纳入基础 Dashboard/告警的最小闭环；P1 保留目标语义和 Instrument 定义，在阶段 5 根据容量与排障价值启用。P1 延后不允许改变名称、单位或 Label 口径，也不能阻塞 P0 上线。
+
 ### 8.1 Agent Metrics
 
-| 指标 | 类型 | Labels |
-|---|---|---|
-| `reagent.agent.runs` | Counter | agent、termination_reason |
-| `reagent.agent.run.duration` | Histogram(s) | agent、termination_reason |
-| `reagent.agent.run.turns` | Histogram(`1`) | agent |
-| `reagent.agent.run.invocations` | Histogram(`1`) | agent |
-| `reagent.chat.runs` | Counter | profile、transport、termination_reason |
+| 指标 | 类型 | Labels | 优先级 |
+|---|---|---|---|
+| `reagent.agent.runs` | Counter | agent、termination_reason | P0 |
+| `reagent.agent.run.duration` | Histogram(s) | agent、termination_reason | P0 |
+| `reagent.agent.run.turns` | 无单位 Histogram（OTel unit=`1`） | agent | P1 |
+| `reagent.agent.run.invocations` | 无单位 Histogram（OTel unit=`1`） | agent | P1 |
+| `reagent.chat.runs` | Counter | profile、transport、termination_reason | P1 |
 
 前四项由 `pi` 产生，不依赖业务 Profile；`reagent.chat.runs` 由 Chat Service 产生。不得为了给 `pi` 指标增加 Profile Label 而修改 `pi.RunRequest`。
 
 ### 8.2 Model Metrics
 
-实现时固定一个 OTel GenAI Semantic Conventions 版本，并把仍处于 Development 状态的名称封装在 `attributes.go`，避免上游改名扩散到业务代码。标准指标可用时采用 `gen_ai.client.operation.duration` 与 `gen_ai.client.token.usage`；项目补充：
+实现时固定一个 OTel GenAI Semantic Conventions 版本，并把仍处于 Development 状态的名称封装在 `attributes.go`，避免上游改名扩散到业务代码。标准指标可用时采用 P0 的 `gen_ai.client.operation.duration` 与 `gen_ai.client.token.usage`；项目补充：
 
-| 指标 | 类型 | Labels |
-|---|---|---|
-| `reagent.model.requests` | Counter | provider、model、phase、outcome、error_code |
-| `reagent.model.invocations` | Counter | provider、model、phase、acceptance |
-| `reagent.model.cost` | Counter(USD) | provider、model、phase、cost_quality |
-| `reagent.model.tokens` | Counter | provider、model、phase、token_type |
-| `reagent.model.ttft` | Histogram(s) | provider、model、phase |
-| `reagent.model.retries` | Counter | provider、model、phase、reason |
-| `reagent.model.context_overflows` | Counter | provider、model、phase |
+| 指标 | 类型 | Labels | 优先级 |
+|---|---|---|---|
+| `reagent.model.requests` | Counter | provider、model、phase、outcome、error_code | P0 |
+| `reagent.model.invocations` | Counter | provider、model、phase、acceptance | P0 |
+| `reagent.model.cost` | Counter(USD) | provider、model、phase、cost_quality | P0 |
+| `reagent.model.tokens` | Counter | provider、model、phase、token_type | P0 |
+| `reagent.model.ttft` | Histogram(s) | provider、model、phase | P1 |
+| `reagent.model.retries` | Counter | provider、model、phase、reason | P0 |
+| `reagent.model.context_overflows` | Counter | provider、model、phase | P0 |
 
 `token_type` 是固定枚举：`input_total`、`output_total`、`cache_read`、`cache_write`、`reasoning`。后三项是前两项的子集，Dashboard 不得把所有 Token Type 直接求和。
 
@@ -503,19 +506,19 @@ Hint 不序列化、不跨进程传播、不允许携带 Prompt 或业务 ID。T
 
 ### 8.3 Tool Metrics
 
-| 指标 | 类型 | Labels |
-|---|---|---|
-| `reagent.tool.executions` | Counter | tool、outcome、error_code |
-| `reagent.tool.duration` | Histogram(s) | tool、outcome |
-| `reagent.tool.queue_duration` | Histogram(s) | tool、execution_mode、outcome |
+| 指标 | 类型 | Labels | 优先级 |
+|---|---|---|---|
+| `reagent.tool.executions` | Counter | tool、outcome、error_code | P0 |
+| `reagent.tool.duration` | Histogram(s) | tool、outcome | P0 |
+| `reagent.tool.queue_duration` | Histogram(s) | tool、execution_mode、outcome | P1 |
 
 ### 8.4 Compaction Metrics
 
-| 指标 | 类型 | Labels |
-|---|---|---|
-| `reagent.compactions` | Counter | reason、outcome |
-| `reagent.compaction.duration` | Histogram(seconds) | reason、outcome |
-| `reagent.compaction.message_reduction_ratio` | Histogram(`1`) | reason |
+| 指标 | 类型 | Labels | 优先级 |
+|---|---|---|---|
+| `reagent.compactions` | Counter | reason、outcome | P0 |
+| `reagent.compaction.duration` | Histogram(s) | reason、outcome | P1 |
+| `reagent.compaction.message_reduction_ratio` | 无单位 Histogram（OTel unit=`1`） | reason | P1 |
 
 `message_reduction_ratio = 1 - after_message_count / before_message_count`，只在 `before_message_count > 0` 时记录，并限制在 `[0,1]`。
 
@@ -682,6 +685,8 @@ cache_write_price_usd_per_million_tokens
 
 `trace_id` 由 Conversation 层从当前 `conversation.run` SpanContext 取得，同一 Run 的 Invocation 共享它；具体 Provider Span 通过 `provider_request_index` 精确定位，因此第一阶段不冗余保存 `span_id`。同时补齐领域层 `compaction` phase，使其与现有 `pi.ModelInvocationPhaseCompaction` 一致。
 
+对采样与保留策略最终保留下来的 Trace，排障入口固定为：先使用 Ledger 行中的 `trace_id` 直接取得整条 Trace，再在该 Trace 内使用 `reagent.provider.request_index=provider_request_index` 定位唯一 Provider Span。该路径不依赖跨 Trace 的全局 Attribute 搜索，但所选生产 Trace 后端和 UI/查询工具必须能够展示并过滤单条 Trace 内的 Span Attribute。未采样或已过保留期的 Trace 无法从 Ledger 恢复，Ledger 中的 `trace_id` 不能被解释为 Trace 后端永久存在性保证。
+
 迁移必须为旧行提供兼容默认值：`outcome='accepted'`、`cost_quality='exact'`，新增 Token/价格字段非负。Repository Mapper 和 Migration Test 必须同步更新。
 
 ### 10.2 Run 汇总持久化决策
@@ -702,32 +707,14 @@ run_id + trace_id → 结构化日志关联
 
 ## 11. 内容、隐私与安全
 
-定义四档内容策略：
-
-| 模式 | 行为 | 使用场景 |
-|---|---|---|
-| `none` | 仅记录元数据、长度、状态和 Token | 默认、生产 |
-| `hash` | 记录长度和带部署密钥的 HMAC-SHA-256，不记录正文 | 开发、关联排查 |
-| `redacted` | 脱敏和字段白名单后，最多记录固定字节数 | 受控调试 |
-| `full` | 在密钥剔除后记录完整可采集内容，仍排除隐藏推理 | 仅本地、显式授权 |
-
-默认必须是 `none`。以下内容永不进入默认 Trace：
+第一阶段的内容策略固定为 `none`，只记录元数据、长度、状态和 Token，不采集可还原的模型或 Tool 正文。以下内容不得进入 Trace：
 
 - API Key、Authorization、Cookie、密码、Token 和 OTP。
 - `.env`、SSH 私钥、数据库连接串。
 - Thinking、Chain of Thought 和隐藏推理内容。
 - 未脱敏个人信息、完整源码和业务文件内容。
 
-第一阶段只实现并允许 `none`。配置出现 `hash`、`redacted` 或 `full` 时启动校验直接报错，不能静默退化；后三种模式必须在独立安全评审、密钥管理和删除机制完成后再开放。普通 SHA-256 对常见路径和短命令容易被字典反推，因此未来 Hash 模式必须使用 HMAC。
-
-未来启用 Hash/Redacted 模式后的逐 Tool 上限建议：
-
-```text
-read: 记录 path HMAC 和读取字节数，不记录文件内容
-exec: 记录 command HMAC、exit code、stdout/stderr size
-edit/write: 记录 path HMAC、changed bytes，不记录完整文件
-web/MCP: 记录目标域名、状态码和耗时，不记录认证 Header
-```
+`content.mode` 第一阶段只接受 `none`，出现其他值时启动校验直接报错，不能静默退化。未来如需内容摘要、关联摘要或正文采集，必须另立 Replay/安全规格，至少完成显式授权、字段白名单、脱敏、密钥管理、保留期和删除机制评审；短路径、命令等低熵值不得使用普通 SHA-256 冒充不可逆匿名化。本设计不预定义未来模式名称、Tool 属性或正文上限。
 
 ## 12. 配置与生命周期
 
@@ -759,8 +746,7 @@ web/MCP: 记录目标域名、状态码和耗时，不记录认证 Header
       "path": "/metrics"
     },
     "content": {
-      "mode": "none",
-      "max_bytes": 4096
+      "mode": "none"
     }
   }
 }
@@ -812,7 +798,7 @@ OnStop:
 
 支持两种互斥模式：
 
-1. `head`：应用使用 `ParentBased(TraceIDRatioBased(sample_ratio))`。实现简单、资源可预测，是第一阶段默认；开发 `1.0`，生产初始 `0.1`。
+1. `head`：应用使用 `ParentBased(TraceIDRatioBased(sample_ratio))`。实现简单、资源可预测，是第一阶段默认；开发、预发以及阶段 2–4 的初期生产部署默认 `1.0`。只有完成 Trace 量、Exporter Queue 和 Collector 容量验证后，才允许在生产降低比例，并明确接受异常或高成本 Run 可能没有 Trace 的风险。
 2. `tail`：应用使用 AlwaysOn，Collector 等 Root Span 结束后按结果采样。能完整保留异常 Run，但 Collector 需要按并发 Run 数配置内存和等待时间，属于运营阶段能力。
 
 Tail Sampling 初始策略：
@@ -833,6 +819,8 @@ Tail Sampling 初始策略：
 ```
 
 如果启用 Tail Sampling，应用 SDK 不能先做低比例 Head Sampling，否则 Collector 无法恢复已被应用丢弃的异常 Trace。Head 模式下未采样的异常仍必须体现在 Metrics 与结构化 Error Log 中。Metrics 永不采样。
+
+Head Sampler 在 Root Span 创建时作出决定，此时最终 `cost_usd`、终止原因和 Tool 结果尚不可得，因此不得设计“Run 完成后按成本强制采样当前 Trace”的伪兜底；已经丢弃的 Span 无法事后恢复。基于输入长度、模型或预算上限的 Head 规则只能作为预测优化，不能宣称保证保留最终高成本 Run。如果生产验收要求错误、超时或 `cost_usd >= 1.0` 的 Run 100% 可追踪，必须把最小可用 Tail Sampling 从阶段 5 提前交付。
 
 默认保留策略为 Trace 7 天、Metrics 30 天；MySQL Ledger 按现有 Conversation 数据保留策略处理。Replay 不在本期，因此不配置其保留期。部署可以延长，但缩短或扩大含业务标识的数据范围必须经过数据治理确认。
 
@@ -880,24 +868,9 @@ execute_tool process [kill/remove]   → 后续独立 Span
 
 ## 16. Replay 子系统
 
-Replay 不属于第一阶段。需要时采用“先记录事实、后解释语义”的模型：
+Replay 不属于本期，当前实现不得创建 Replay 配置、Writer、目录或数据库表。`run_id`、OTel `trace_id`、Replay `replay_id` 必须始终是三个不同标识，避免把业务生命周期、观测保留期和回放制品生命周期耦合。
 
-```text
-trace-bundle/
-├── manifest.json
-├── events.jsonl
-├── payloads/
-│   ├── invocation-1-request.json
-│   ├── invocation-1-response.json
-│   └── tool-call-1-result.json
-└── state.json
-```
-
-运行时只追加有序 Raw Event 和 Payload 引用；离线 Reducer 再构建 Turn、Invocation、Tool、Agent、Process 和消息边。`run_id`、OTel `trace_id`、Replay `replay_id` 必须是三个不同标识。
-
-Replay 必须显式启用、加密、有独立保留期和删除机制，写入失败不能影响 Agent，且不得记录隐藏推理内容。
-
-本期不得创建 Replay 配置、Writer、目录或数据库表。需要 Replay 时先单独完成威胁建模和规格评审，再复用本节的标识分离原则。
+未来需要 Replay 时必须另立规格并完成威胁建模；至少满足显式启用、加密、独立保留期、可删除、写入 Fail-open 和禁止记录隐藏推理。本设计不提前规定 Replay 的目录、事件格式或 Reducer 架构。
 
 ## 17. Dashboard 与告警
 
@@ -953,6 +926,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - Stream Span 恰好结束一次。
 - 默认 Trace 不出现 Prompt、Thinking、Tool 参数和输出正文。
 - 第一次请求 Overflow、Compaction、第二次请求成功时，父 Generate 成功而失败子 Span 保持 Error。
+- Retry Wait 只产生 Generate Span Event，不产生独立 Sleep Span；Scheduled/Completed/Canceled Event 的 Attempt 与下一次 Provider Span 一致，Retry Counter 只累加一次。
 - Provider 成功但 Thinking/Action/Compaction 契约非法时，Invocation Outcome 为 `contract_invalid` 且 RunTotals 已计入。
 
 ### 18.2 并发测试
@@ -982,6 +956,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - 验证不存在高基数 Label。
 - 验证 Collector 不可达时 Agent 仍成功。
 - 验证 Metrics、RunTotals 和 MySQL Ledger 可对账。
+- 在 Sampling `1.0` 且测试后端不丢弃 Trace 的环境中，从一行 `agent_model_invocations` 读取 `trace_id + provider_request_index`，定位且只定位到一个 Provider Span，并校验 Model、Phase、Token 和 Cost 一致。
 - 验证取消后的部分 Invocation 使用 3 秒独立 Context 尝试持久化。
 - 验证 `pi/test/package_boundaries_test.go` 继续禁止 `pi` 导入 Service、Infrastructure 或 Persistence。
 
@@ -997,7 +972,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 - 引入 OTel API/SDK、OTLP gRPC Trace Exporter、Prometheus Exporter 和 Gin OTel Middleware。
 - 增加 `config.ObservabilityConfig`、校验、`config.example.json` 和 Noop 路径。
-- 固定 Span/Metric 名称、属性枚举、Histogram View、内容策略和 Label 基数表。
+- 固定 Span/Metric 名称、P0/P1 优先级、属性枚举、Histogram View、内容策略和 Label 基数表。
 - 增加属性与枚举单元测试，确保动态错误正文和业务 ID 不进入 Metrics。
 
 验收：配置关闭时不创建网络连接和 Metrics Listener；非法配置在 Fx 启动前失败。
@@ -1018,13 +993,13 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 交付：
 
 - `pi.Agent.Run` 的 `invoke_agent` Span 和单 Turn 函数作用域。
-- Thinking/Action Generate、物理 Provider、Retry Sleep、Compaction Span。
+- Thinking/Action Generate、物理 Provider 和 Compaction Span，以及 Generate 上的 Retry Wait Event。
 - 流式 `TracingProvider`，保证 Result/Close 只结束一次。
 - 默认 Tool Tracing Middleware 与 Queue Duration 指标。
 - MCP HTTP Transport 注入 W3C Trace Context，并验证不传播业务 Baggage。
-- Agent、Model、Tool、Compaction Metrics。
+- P0 Agent、Model、Tool、Compaction Metrics；P1 Instrument 保留定义但不阻塞本阶段。
 
-验收：In-Memory Exporter 的 Span Tree、并行时间区间、错误恢复、取消与 Noop 测试全部通过。
+验收：In-Memory Exporter 的 Span Tree/Event、并行时间区间、错误恢复、取消与 Noop 测试全部通过；初期生产使用 Head Sampling `1.0`，降低比例前必须记录容量验证与风险接受结论。
 
 ### 阶段 3：Invocation 与 Ledger 正确性
 
@@ -1035,7 +1010,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - Conversation Mapper 写入当前 TraceID；取消后使用 3 秒终态持久化 Context。
 - Metrics、RunTotals 与 MySQL Ledger 对账测试。
 
-验收：契约非法、预算终止和取消场景均不丢失已返回的可信 Usage；事务失败仍明确返回业务错误。
+验收：契约非法、预算终止和取消场景均不丢失已返回的可信 Usage；事务失败仍明确返回业务错误；在 Sampling `1.0` 的验收环境中能够从 Ledger 行端到端定位唯一 Provider Span。
 
 ### 阶段 4：Provider Usage 增强
 
@@ -1045,7 +1020,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 ### 阶段 5：运营体系
 
-交付 Collector Tail Sampling、Grafana Dashboard、Prometheus Rules、数据保留、容量估算和故障排查 Runbook。Replay 不属于本实施序列，必须另立规格。
+交付 Collector Tail Sampling、P1 Metrics、Grafana Dashboard、Prometheus Rules、数据保留、容量估算和故障排查 Runbook。如果生产上线前已要求异常或高成本 Run 100% 可追踪，Tail Sampling 必须提前，不得等待本阶段。Replay 不属于本实施序列，必须另立规格。
 
 ## 20. 验收标准
 
@@ -1057,6 +1032,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - 每次进入注册 Tool Handler 的执行恰好一个 Span。
 - 并行 Tool 表现为平行 Span。
 - Retry、Compaction、取消、Deadline 和预算终止可区分。
+- Retry Wait 通过 Generate Span Event 表达，不创建独立 Sleep Span。
 - Chat 请求具有 HTTP → conversation.run → invoke_agent 的连续父子关系，直接 SDK 调用不要求业务父 Span。
 
 ### 20.2 数据
@@ -1066,6 +1042,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 - 已产生可信 Usage 的模型调用不会因后续契约失败而从 `RunResult.Invocations` 丢失。
 - Conversation 持久化沿用 `(conversation_id, turn_version, sequence)` 唯一约束；事务失败明确返回，不报告为成功落账。
 - Metrics、RunTotals 和 MySQL Ledger 口径一致。
+- 对 Trace 后端已保留的调用，Invocation Ledger 能通过 `trace_id + provider_request_index` 定位唯一 Provider Span；未采样或已过期 Trace 不作可恢复性承诺。
 - 第二阶段 DeepSeek、Anthropic 和 OpenAI 的缓存/推理 Token 能正确映射，并区分 Exact/Estimated Cost。
 
 ### 20.3 可靠性
@@ -1079,9 +1056,9 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 ## 21. 正式需求表述
 
-- **OBS-001 — Trace：** go-reagent 必须为业务 Run、Agent Run、Turn、模型逻辑生成、每次物理 Provider 请求、Retry、Context Compaction 和每次注册 Tool 执行创建结构化 OTel Span，并通过 W3C Trace Context 保持 HTTP、MCP 和未来异步执行之间的调用关联。
-- **OBS-002 — Metrics：** 系统必须通过 OTel Meter 暴露 Prometheus 指标，覆盖 Run、Turn、模型请求、Token、缓存、成本、TTFT、Retry、Compaction 和 Tool 执行。指标标签必须为受控低基数，禁止使用 run_id、trace_id、conversation_id、user_id、tool_call_id、路径和错误正文作为标签。
-- **OBS-003 — Ledger：** `agent_model_invocations` 必须作为应用侧成本事实源，Prometheus 仅作为聚合投影。每次已产生可信 Usage 的模型调用，无论后续响应是否通过语义校验，都必须先进入 `RunResult.Invocations`；Conversation 层再按现有 Turn 事务和唯一约束持久化。进程崩溃窗口必须被明确记录，不能宣称应用账本等同 Provider 最终账单。
+- **OBS-001 — Trace：** go-reagent 必须为业务 Run、Agent Run、Turn、模型逻辑生成、每次物理 Provider 请求、Context Compaction 和每次注册 Tool 执行创建结构化 OTel Span；Retry Wait 使用所属 Generate Span 上的结构化 Event 表达。系统必须通过 W3C Trace Context 保持 HTTP、MCP 和未来异步执行之间的调用关联。
+- **OBS-002 — Metrics：** 系统必须通过 OTel Meter 暴露 Prometheus 指标，覆盖 Run、Turn、模型请求、Token、缓存、成本、TTFT、Retry、Compaction 和 Tool 执行，并按 P0/P1 分阶段交付。指标标签必须为受控低基数，禁止使用 run_id、trace_id、conversation_id、user_id、tool_call_id、路径和错误正文作为标签。
+- **OBS-003 — Ledger：** `agent_model_invocations` 必须作为应用侧成本事实源，Prometheus 仅作为聚合投影。每次已产生可信 Usage 的模型调用，无论后续响应是否通过语义校验，都必须先进入 `RunResult.Invocations`；Conversation 层再按现有 Turn 事务和唯一约束持久化。对 Trace 后端已保留的调用，Ledger 必须能通过 `trace_id + provider_request_index` 定位唯一 Provider Span；未采样或已过期 Trace 不作恢复承诺。进程崩溃窗口必须被明确记录，不能宣称应用账本等同 Provider 最终账单。
 - **OBS-004 — Privacy：** 可观测链路默认不得采集 Prompt、Thinking、Tool 完整参数或输出。任何未来的完整运行回放必须作为独立、显式启用、加密并具有保留期的 Replay 子系统实现，不得使用 OTel Span 代替事件制品存储。
 - **OBS-005 — Reliability：** OTel Telemetry 必须 Fail-open、队列有界、支持采样和确定性关闭；Exporter 或 Collector 故障不得改变 Agent 的业务结果。MySQL 写入失败仍按现有业务错误语义返回，不得被 Telemetry Fail-open 吞掉。
 - **OBS-006 — Compatibility：** Telemetry 未启用时必须使用 Noop 实现，不能改变现有 Agent、Provider、Stream 和 Tool Runtime 的行为；厂商特有 Usage 必须在 Provider Adapter 中归一化，不能泄漏到 Harness 核心语义。
@@ -1091,9 +1068,9 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 | 需求 | 设计章节 | 核心验证 |
 |---|---|---|
-| OBS-001 | 3、4、5、7、15 | In-Memory Span Tree、W3C 传播、并行 Tool 测试 |
+| OBS-001 | 3、4、5、7、15 | In-Memory Span Tree/Event、W3C 传播、并行 Tool 测试 |
 | OBS-002 | 8、12、17 | Metrics 抓取、Label 基数、Dashboard/Rule 测试 |
-| OBS-003 | 9、10、18、19 | 契约非法仍计量、事务/唯一约束、对账测试 |
+| OBS-003 | 9、10、18、19 | 契约非法仍计量、事务/唯一约束、Ledger→Span 关联、对账测试 |
 | OBS-004 | 11、16 | 敏感内容负向断言、非法 Content Mode 启动失败 |
 | OBS-005 | 12、13、18 | Collector 不可达、Queue 上限、Shutdown 测试 |
 | OBS-006 | 5、6、9、18 | Noop 等价、Provider Fixture、兼容测试 |
