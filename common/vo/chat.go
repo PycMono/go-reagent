@@ -106,6 +106,8 @@ type RunMessageVO struct {
 type RunErrorVO struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// Reason 是结构化的运行终止原因（如 max_turns）；面向用户的文案在 Message 中。
+	Reason string `json:"reason,omitempty"`
 }
 
 type RunEventVO struct {

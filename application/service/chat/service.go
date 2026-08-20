@@ -161,7 +161,9 @@ func (s *Service) ListMessages(ctx context.Context, userID, conversationID strin
 	result := &vo.MessagePageVO{Items: make([]*vo.MessageVO, 0, len(page.Items))}
 	for _, item := range page.Items {
 		if item != nil {
-			result.Items = append(result.Items, messageVO(item))
+			if message := messageVO(item); message != nil {
+				result.Items = append(result.Items, message)
+			}
 		}
 	}
 	if page.HasMore && len(page.Items) > 0 {
@@ -213,6 +215,9 @@ func conversationVO(value *conversationentity.Conversation, total int64) *vo.Con
 }
 
 func messageVO(value *conversationentity.Message) *vo.MessageVO {
+	if value.Role == conversationentity.RoleTool && isReadTool(value.Payload.ToolName) {
+		return nil
+	}
 	result := &vo.MessageVO{
 		ID: value.ID, TurnVersion: value.TurnVersion, Ordinal: value.Ordinal, RunID: value.RunID,
 		Role: string(value.Role), ToolCallID: value.Payload.ToolCallID, ToolName: value.Payload.ToolName,
@@ -223,8 +228,16 @@ func messageVO(value *conversationentity.Message) *vo.MessageVO {
 	for _, block := range value.Payload.Content {
 		result.Content = append(result.Content, vo.ContentBlockVO{Type: string(block.Type), Text: block.Text})
 	}
+	onlySkillReads := len(value.Payload.ToolCalls) > 0
 	for _, call := range value.Payload.ToolCalls {
+		if isSkillRead(call.Name, call.Arguments) {
+			continue
+		}
+		onlySkillReads = false
 		result.ToolCalls = append(result.ToolCalls, vo.ToolCallVO{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
+	}
+	if value.Role == conversationentity.RoleAssistant && (onlySkillReads || len(result.Content) == 0 && len(result.ToolCalls) == 0) {
+		return nil
 	}
 	return result
 }

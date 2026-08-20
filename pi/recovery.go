@@ -3,7 +3,6 @@ package pi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,9 +20,8 @@ const compactionSystemPrompt = `请总结所提供的早期对话，以便另一
 不要回答用户，也不要继续执行任务。`
 
 type generationResult struct {
-	message         *ai.Message
-	context         []ai.Message
-	compactionUsage *ai.Usage
+	message *ai.Message
+	context []ai.Message
 }
 
 func retryDelay(retry int) time.Duration {
@@ -86,11 +84,15 @@ func consumeStream(stream ai.Stream, onText func(ai.ContentBlock)) (*ai.Message,
 	return message, published, err
 }
 
+// generate 执行一次 Thinking 或 Action 调用。遇到 Context Overflow 时会先
+// Compaction；onCompactionUsage 在摘要 Invocation 成功后、重试原请求之前
+// 调用，用于记账和预算准入。预算达到时直接返回，不再重试原请求。
 func (l *Loop) generate(
 	ctx context.Context,
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
 	onText func(ai.ContentBlock),
+	onCompactionUsage func(ai.Usage) error,
 ) (generationResult, error) {
 	response, published, err := l.generateWithRetry(ctx, messages, tools, onText)
 	if err == nil || published || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIContextOverflow {
@@ -105,11 +107,15 @@ func (l *Loop) generate(
 	if compactErr != nil {
 		return generationResult{context: messages}, compactErr
 	}
+	if onCompactionUsage != nil {
+		if observeErr := onCompactionUsage(*usage); observeErr != nil {
+			return generationResult{context: messages}, observeErr
+		}
+	}
 	response, _, err = l.generateWithRetry(ctx, compacted, tools, onText)
 	return generationResult{
-		message:         response,
-		context:         compacted,
-		compactionUsage: usage,
+		message: response,
+		context: compacted,
 	}, err
 }
 
@@ -125,18 +131,8 @@ func (l *Loop) compact(ctx context.Context, plan harness.CompactionPlan) ([]ai.M
 	if err != nil {
 		return nil, nil, err
 	}
-	if response == nil {
-		return nil, nil, pierrors.Wrap(
-			pierrors.ErrorCodeAIGeneration,
-			"context compaction",
-			errors.New("provider returned an empty summary response"),
-		)
-	}
-	if err := validateThinkingResponse(response); err != nil {
+	if err := response.ValidateThinking(); err != nil {
 		return nil, nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
-	}
-	if err := validateMeteredUsage(response.Usage); err != nil {
-		return nil, nil, pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction usage", err)
 	}
 	text, err := ai.TextContent(response.Content)
 	if err != nil {

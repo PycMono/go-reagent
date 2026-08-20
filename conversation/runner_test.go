@@ -27,13 +27,14 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 	runtime := &runnerRuntimeFake{result: pi.RunResult{
 		NewMessages: []ai.Message{answer},
 	}}
-	runner := NewRunner(runtime, store, 100)
+	runner := NewRunner(runtime, store, 100, pi.RunLimits{})
 
 	result, err := runner.Run(context.Background(), RunRequest{
 		UserID:         "user-1",
 		ConversationID: "conversation-1",
 		RunID:          "run-1",
 		Input:          input,
+		ResponsePolicy: "reply in the user's language",
 	}, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -50,7 +51,8 @@ func TestRunnerLoadsRunsAndAppendsTurn(t *testing.T) {
 		SenderType:  "ai",
 	}}
 	if runtime.calls != 1 || !reflect.DeepEqual(runtime.request.History, wantHistory) ||
-		runtime.request.Input.Content != "next" || runtime.request.Input.SenderType != "customer" {
+		runtime.request.Input.Content != "next\n\n<runtime_response_policy>\nreply in the user's language\n</runtime_response_policy>" ||
+		runtime.request.Input.SenderType != "customer" {
 		t.Fatalf("runtime call/request = %d, %#v", runtime.calls, runtime.request)
 	}
 	wantMessages := messagesToDomain([]ai.Message{input, answer}, "run-1")
@@ -66,7 +68,7 @@ func TestRunnerCreatesConversationWhenNotFound(t *testing.T) {
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 		err: runtimeErr,
 	}
 
-	result, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	result, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, runtimeErr) {
 		t.Fatalf("Run() error = %v, want runtime error", err)
 	}
@@ -123,7 +125,7 @@ func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
 	}}
 	store := &runnerStoreFake{conversation: conversationentity.Conversation{ConversationID: "conversation", UserID: "user", Version: 7}}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,12 +140,51 @@ func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
 	}
 }
 
+func TestRunnerPersistsInvocationsWithoutMessagesOnBudgetError(t *testing.T) {
+	runtimeErr := errors.New("runtime failed")
+	invocation := pi.ModelInvocation{
+		Sequence: 1,
+		Phase:    pi.ModelInvocationPhaseThinking,
+		Usage:    ai.Usage{PlatformID: "test", Model: "model"},
+	}
+	store := &runnerStoreFake{conversation: conversationentity.Conversation{ConversationID: "conversation", UserID: "user", Version: 3}}
+	runtime := &runnerRuntimeFake{
+		result: pi.RunResult{Invocations: []pi.ModelInvocation{invocation}},
+		err:    runtimeErr,
+	}
+
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
+	if !errors.Is(err, runtimeErr) {
+		t.Fatalf("Run() error = %v, want runtime error", err)
+	}
+	if store.appendCalls != 1 || len(store.appendedMessages) != 1 ||
+		!reflect.DeepEqual(store.appendedInvocations, invocationsToDomain([]pi.ModelInvocation{invocation}, "run")) {
+		t.Fatalf("append/messages/invocations = %d, %#v, %#v", store.appendCalls, store.appendedMessages, store.appendedInvocations)
+	}
+}
+
+func TestRunnerPassesConfiguredLimitsToRuntime(t *testing.T) {
+	limits := pi.RunLimits{MaxTurns: 7, MaxCostUSD: 0.25, MaxTotalTokens: 1000}
+	store := &runnerStoreFake{conversation: conversationentity.Conversation{ConversationID: "conversation", UserID: "user"}}
+	runtime := &runnerRuntimeFake{result: pi.RunResult{NewMessages: []ai.Message{{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
+	}}}}
+
+	_, err := NewRunner(runtime, store, 100, limits).Run(context.Background(), validConversationRunRequest(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.request.Limits != limits {
+		t.Fatalf("runtime limits = %#v, want %#v", runtime.request.Limits, limits)
+	}
+}
+
 func TestRunnerSkipsAppendWhenRuntimeFailsWithoutMessages(t *testing.T) {
 	runtimeErr := errors.New("runtime failed")
 	store := &runnerStoreFake{conversation: conversationentity.Conversation{ConversationID: "conversation", UserID: "user"}}
 	runtime := &runnerRuntimeFake{err: runtimeErr}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, runtimeErr) || store.appendCalls != 0 {
 		t.Fatalf("Run() error/append calls = %v, %d", err, store.appendCalls)
 	}
@@ -154,7 +195,7 @@ func TestRunnerStopsAfterLoadError(t *testing.T) {
 	store := &runnerStoreFake{findErr: loadErr}
 	runtime := &runnerRuntimeFake{}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, loadErr) || runtime.calls != 0 || store.appendCalls != 0 {
 		t.Fatalf("Run() error/runtime/append = %v, %d, %d", err, runtime.calls, store.appendCalls)
 	}
@@ -170,7 +211,7 @@ func TestRunnerJoinsRuntimeAndAppendErrors(t *testing.T) {
 		err:    runtimeErr,
 	}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, runtimeErr) || !errors.Is(err, appendErr) {
 		t.Fatalf("Run() error = %v, want both errors", err)
 	}
@@ -185,7 +226,7 @@ func TestRunnerReturnsConflictWithoutRetry(t *testing.T) {
 		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
 	}}}}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), validConversationRunRequest(), nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), validConversationRunRequest(), nil)
 	if !errors.Is(err, commonerrors.ErrConflict) || store.findCalls != 1 || runtime.calls != 1 || store.appendCalls != 1 {
 		t.Fatalf("Run() error/calls = %v, %d/%d/%d", err, store.findCalls, runtime.calls, store.appendCalls)
 	}
@@ -216,7 +257,7 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 			request.Input = cloneMessage(valid.Input)
 			tt.mutate(&request)
 			store := &runnerStoreFake{}
-			_, err := NewRunner(&runnerRuntimeFake{}, store, 100).Run(context.Background(), request, nil)
+			_, err := NewRunner(&runnerRuntimeFake{}, store, 100, pi.RunLimits{}).Run(context.Background(), request, nil)
 			if err == nil || !strings.Contains(err.Error(), tt.want) || store.findCalls != 0 {
 				t.Fatalf("Run() error/find calls = %v, %d", err, store.findCalls)
 			}
@@ -237,8 +278,8 @@ func TestRunnerValidatesHistoryLimitAndCancellation(t *testing.T) {
 		runner Runner
 		want   error
 	}{
-		{name: "invalid history limit", ctx: context.Background(), runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 0)},
-		{name: "canceled context", ctx: canceled, runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100), want: context.Canceled},
+		{name: "invalid history limit", ctx: context.Background(), runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 0, pi.RunLimits{})},
+		{name: "canceled context", ctx: canceled, runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100, pi.RunLimits{}), want: context.Canceled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -265,7 +306,7 @@ func TestRunnerClonesBoundaryValues(t *testing.T) {
 		Input: input, Context: contextBlocks,
 	}
 
-	_, err := NewRunner(runtime, store, 100).Run(context.Background(), request, nil)
+	_, err := NewRunner(runtime, store, 100, pi.RunLimits{}).Run(context.Background(), request, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,8 @@ type RunRequest struct {
 	RunID string
 	// Input 是本轮用户消息。
 	Input ai.Message
+	// ResponsePolicy 是仅附加到模型输入、不写入会话历史的本轮回复约束。
+	ResponsePolicy string
 	// Context 是本轮额外注入的业务上下文。
 	Context []pi.ContextBlock
 }

@@ -225,6 +225,51 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 	}
 }
 
+func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
+	repo := &controllerRepo{found: true}
+	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+		skillCall := ai.ToolCall{
+			ID: "call-skill", Name: "read", Arguments: []byte(`{"path":"skills/writing-assistance/SKILL.md"}`),
+		}
+		reporter.Report(ctx, pi.NewMessageStartEvent())
+		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{skillCall}}))
+		reporter.Report(ctx, pi.NewToolStartEvent(skillCall))
+		reporter.Report(ctx, pi.NewToolEndEvent(skillCall, pi.ToolResult{
+			ToolCallID: skillCall.ID, ToolName: skillCall.Name,
+			Content: []ai.ContentBlock{ai.TextBlock("private skill instructions")},
+		}))
+
+		fileCall := ai.ToolCall{ID: "call-file", Name: "read", Arguments: []byte(`{"path":"README.md"}`)}
+		reporter.Report(ctx, pi.NewMessageStartEvent())
+		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{fileCall}}))
+		reporter.Report(ctx, pi.NewToolStartEvent(fileCall))
+		reporter.Report(ctx, pi.NewToolUpdateEvent(fileCall, ai.ToolUpdate{
+			Content: []ai.ContentBlock{ai.TextBlock("private streamed file body")}, Details: "private details",
+		}))
+		reporter.Report(ctx, pi.NewToolEndEvent(fileCall, pi.ToolResult{
+			ToolCallID: fileCall.ID, ToolName: fileCall.Name,
+			Content: []ai.ContentBlock{ai.TextBlock("private file body")},
+		}))
+		return pi.RunResult{}, nil
+	})
+	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/chat-1/runs", bytes.NewBufferString(`{"content":"hello"}`))
+	request.Header.Set("Content-Type", "application/json")
+	testRouter(service).ServeHTTP(response, request)
+
+	body := response.Body.String()
+	for _, forbidden := range []string{"SKILL.md", "private skill instructions", "private streamed file body", "private details", "private file body"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("SSE body exposed %q:\n%s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, `"path":"README.md"`) || !strings.Contains(body, "event: tool.updated\n") ||
+		!strings.Contains(body, "event: tool.completed\n") {
+		t.Fatalf("SSE body lost ordinary read metadata:\n%s", body)
+	}
+}
+
 func TestCancelRunForwardsPathAndBusinessIdentity(t *testing.T) {
 	repo := &controllerRepo{found: true}
 	started := make(chan struct{})

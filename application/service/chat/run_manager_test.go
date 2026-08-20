@@ -23,6 +23,7 @@ type controllableRunner struct {
 	started  chan struct{}
 	release  chan error
 	canceled chan struct{}
+	result   pi.RunResult
 }
 
 func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
@@ -39,7 +40,7 @@ func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRe
 			reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("answer")))
 			reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}))
 		}
-		return pi.RunResult{}, err
+		return r.result, err
 	case <-ctx.Done():
 		if r.canceled != nil {
 			close(r.canceled)
@@ -116,6 +117,16 @@ func TestRunLifecycleUsesOwnedConversationAndRenamesOnSuccess(t *testing.T) {
 	if textErr != nil || request.UserID != "visitor-1" || request.ConversationID != "chat-1" || request.RunID != "run-1" ||
 		request.Input.Role != ai.RoleUser || text != "A title for this chat" {
 		t.Fatalf("request = %#v, text = %q, err = %v", request, text, textErr)
+	}
+	for _, fragment := range []string{
+		"最新一条用户消息的主要语言",
+		"工具、Skill 和资料中的其他语言不能改变回复语言",
+		"默认使用自然段纯文本",
+		"工具调用前的说明",
+	} {
+		if !strings.Contains(request.ResponsePolicy, fragment) {
+			t.Errorf("ResponsePolicy missing %q: %q", fragment, request.ResponsePolicy)
+		}
 	}
 	if len(repo.renameTitles) != 1 || repo.renameTitles[0] != "visitor-1,chat-1,A title for this chat" {
 		t.Fatalf("titles = %#v", repo.renameTitles)
@@ -227,6 +238,35 @@ func TestCancelRunChecksRunIdentityAndCancelsRunner(t *testing.T) {
 	events := receiveUntilTerminal(t, run.Events)
 	if len(events) != 1 || events[0].Type != vo.RunEventRunFailed {
 		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestRunBudgetFailureExposesSafeTerminationReason(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "general"}}
+	runner := &controllableRunner{
+		release: make(chan error, 1),
+		result: pi.RunResult{Termination: pi.RunTermination{
+			Reason: pi.RunTerminationMaxTurns,
+			Limit:  pi.RunLimitTurns,
+		}},
+	}
+	service := newRunService(repo, runner, "run-1")
+	run, err := service.StartRun(context.Background(), "visitor", "chat", dto.StartRunDTO{Content: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-run.Events
+	runner.release <- errors.New("agent run limit exceeded: turns")
+	events := receiveUntilTerminal(t, run.Events)
+	if len(events) != 1 || events[0].Type != vo.RunEventRunFailed || events[0].Error == nil {
+		t.Fatalf("events = %#v", events)
+	}
+	if events[0].Error.Reason != string(pi.RunTerminationMaxTurns) {
+		t.Fatalf("reason = %q, want %q", events[0].Error.Reason, pi.RunTerminationMaxTurns)
+	}
+	if !strings.Contains(events[0].Error.Message, "资源上限") ||
+		strings.Contains(events[0].Error.Message, "turns") {
+		t.Fatalf("message = %q, want safe budget text without internals", events[0].Error.Message)
 	}
 }
 

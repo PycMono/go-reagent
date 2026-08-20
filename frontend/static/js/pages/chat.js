@@ -1,3 +1,7 @@
+import { isVisibleChatMessage } from "./chat-visibility.js";
+import { renderMessageContent } from "./chat-message-content.js";
+import { createChatStream } from "./chat-stream.js";
+
 const API_ROOT = "/api/v1/conversations";
 const PROFILE_API = "/api/v1/agent-profiles";
 
@@ -424,7 +428,8 @@ function renderMessages(items) {
   state.streamingMessage = null;
   ui.messages.replaceChildren();
   ui.messages.dataset.loaded = "true";
-  if (!items || items.length === 0) {
+  const visibleItems = (items || []).filter(isVisibleChatMessage);
+  if (visibleItems.length === 0) {
     ui.welcome.hidden = false;
   renderWelcome();
     ui.messages.appendChild(ui.welcome);
@@ -432,7 +437,7 @@ function renderMessages(items) {
   }
   ui.welcome.hidden = true;
   const fragment = document.createDocumentFragment();
-  items.forEach(function (message) {
+  visibleItems.forEach(function (message) {
     fragment.appendChild(createMessageElement(message));
   });
   ui.messages.appendChild(fragment);
@@ -448,50 +453,7 @@ function appendMessage(message, provisional) {
   ui.messages.scrollTop = ui.messages.scrollHeight;
 }
 
-function startStreamingMessage() {
-  const element = createMessageElement({
-    role: "assistant",
-    content: [{ type: "text", text: "" }],
-    created_at: new Date().toISOString(),
-  });
-  element.dataset.provisional = "true";
-  if (ui.welcome.parentNode === ui.messages) ui.welcome.remove();
-  ui.welcome.hidden = true;
-  ui.messages.appendChild(element);
-  state.streamingMessage = {
-    element: element,
-    body: element.querySelector(".qb-chat__message-body"),
-  };
-  ui.messages.scrollTop = ui.messages.scrollHeight;
-}
-
-function appendStreamingDelta(delta) {
-  if (!delta || delta.type !== "text" || !delta.text) return;
-  if (!state.streamingMessage) startStreamingMessage();
-  state.streamingMessage.body.textContent += delta.text;
-  ui.messages.scrollTop = ui.messages.scrollHeight;
-}
-
-function completeStreamingMessage(message) {
-  if (!message) return;
-  const completed = createMessageElement(message);
-  completed.dataset.provisional = "true";
-  if (state.streamingMessage) {
-    state.streamingMessage.element.replaceWith(completed);
-  } else {
-    if (ui.welcome.parentNode === ui.messages) ui.welcome.remove();
-    ui.welcome.hidden = true;
-    ui.messages.appendChild(completed);
-  }
-  state.streamingMessage = null;
-  ui.messages.scrollTop = ui.messages.scrollHeight;
-}
-
-function discardStreamingMessage() {
-  if (!state.streamingMessage) return;
-  state.streamingMessage.element.remove();
-  state.streamingMessage = null;
-}
+const chatStream = createChatStream({ state, ui, createMessageElement, isVisibleChatMessage });
 
 function createMessageElement(message) {
   const role = message.role || "assistant";
@@ -506,6 +468,7 @@ function createMessageElement(message) {
   avatar.textContent = role === "user" ? "YOU" : role === "tool" ? "TL" : "R";
 
   const content = document.createElement("div");
+  content.className = "qb-chat__message-content";
   const head = document.createElement("div");
   head.className = "qb-chat__message-head";
   const roleLabel = document.createElement("strong");
@@ -522,7 +485,7 @@ function createMessageElement(message) {
     blocks.forEach(function (block) {
       const text = document.createElement("div");
       text.className = "qb-chat__message-body";
-      text.textContent = block.text || "";
+      renderMessageContent(text, block.text || "");
       content.appendChild(text);
     });
   }
@@ -598,7 +561,7 @@ async function loadMessages(reset) {
       const previousTop = ui.messages.scrollTop;
       const fragment = document.createDocumentFragment();
       (page.items || []).forEach(function (message) {
-        fragment.appendChild(createMessageElement(message));
+        if (isVisibleChatMessage(message)) fragment.appendChild(createMessageElement(message));
       });
       ui.messages.insertBefore(fragment, ui.messages.firstChild);
       ui.messages.scrollTop = ui.messages.scrollHeight - previousHeight + previousTop;
@@ -666,7 +629,7 @@ function addActivity(key, label, details) {
 }
 
 async function startRun(content) {
-  discardStreamingMessage();
+  chatStream.discard();
   resetActivity();
   setRunning(true);
   state.runAbort = new AbortController();
@@ -707,15 +670,15 @@ async function startRun(content) {
         const tool = data.tool || {};
         addActivity("tool:" + tool.id, (tool.is_error ? "工具失败 · " : "工具完成 · ") + (tool.name || "unknown"), tool.content || tool.details);
       } else if (eventName === "message.started") {
-        startStreamingMessage();
+        chatStream.start();
       } else if (eventName === "message.delta") {
-        appendStreamingDelta(data.delta);
+        chatStream.appendDelta(data.delta);
       } else if (eventName === "message.completed") {
-        completeStreamingMessage(data.message);
-        addActivity("message", "回复已生成，正在保存");
+        chatStream.complete(data.message);
+        if (isVisibleChatMessage(data.message)) addActivity("message", "回复已生成，正在保存");
       } else if (eventName === "run.failed") {
         terminal = true;
-        discardStreamingMessage();
+        chatStream.discard();
         addActivity("terminal", "本轮未完成", data.error && data.error.message);
         showToast(data.error && data.error.message ? data.error.message : "本轮回复失败");
       } else if (eventName === "run.completed") {
@@ -725,7 +688,7 @@ async function startRun(content) {
     });
     if (!terminal) throw new Error("连接提前结束，请重新发送");
   } catch (error) {
-    discardStreamingMessage();
+    chatStream.discard();
     if (error.name !== "AbortError") showToast(error.message || "回复失败");
   } finally {
     setRunning(false);

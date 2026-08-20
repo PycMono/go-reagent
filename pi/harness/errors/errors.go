@@ -35,6 +35,7 @@ const (
 	ErrorCodeToolPanic            ErrorCode = "tool_panic"
 	ErrorCodeCanceled             ErrorCode = "canceled"
 	ErrorCodeDeadlineExceeded     ErrorCode = "deadline_exceeded"
+	ErrorCodeRunLimitExceeded     ErrorCode = "run_limit_exceeded"
 	ErrorCodeClosed               ErrorCode = "agent_closed"
 	ErrorCodeInternal             ErrorCode = "internal"
 )
@@ -44,6 +45,7 @@ var (
 	ErrWorkspaceInvalid = stderrors.New("agent workspace invalid")
 	ErrRequestInvalid   = stderrors.New("agent request invalid")
 	ErrToolRuntime      = stderrors.New("agent tool runtime failed")
+	ErrRunLimitExceeded = stderrors.New("agent run limit exceeded")
 )
 
 // Error carries one stable Pi error code while preserving the concrete cause.
@@ -74,6 +76,10 @@ func ErrorCodeOf(err error) ErrorCode {
 		return ErrorCodeDeadlineExceeded
 	case stderrors.Is(err, ErrClosed):
 		return ErrorCodeClosed
+	case stderrors.Is(err, ErrRunLimitExceeded):
+		return ErrorCodeRunLimitExceeded
+	case stderrors.Is(err, ErrRequestInvalid):
+		return ErrorCodeRequestInvalid
 	default:
 		return ErrorCodeUnknown
 	}
@@ -107,6 +113,8 @@ func Classify(op string, err error) error {
 		return Wrap(ErrorCodeWorkspaceInvalid, op, err)
 	case stderrors.Is(err, ErrToolRuntime):
 		return Wrap(ErrorCodeToolRuntime, op, err)
+	case stderrors.Is(err, ErrRunLimitExceeded):
+		return Wrap(ErrorCodeRunLimitExceeded, op, err)
 	default:
 		return Wrap(ErrorCodeInternal, op, err)
 	}

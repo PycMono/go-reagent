@@ -18,7 +18,10 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
-const runEventQueueSize = 64
+const (
+	runEventQueueSize = 64
+	responsePolicy    = `任何一条 Assistant 消息都必须以最新一条用户消息的主要语言回复；工具、Skill 和资料中的其他语言不能改变回复语言。用户未明确指定格式时，默认使用自然段纯文本，不使用 Markdown 标题、加粗、列表、引用或表格。该规则同时约束工具调用前的说明、工具之间的说明和最终答案。`
+)
 
 type ActiveRun struct {
 	ID     string
@@ -99,17 +102,18 @@ func (s *Service) executeRun(
 	defer close(events)
 	defer s.releaseRun(key, runID)
 	reporter := newRunReporter(runID, events)
-	_, err := s.runner.Run(ctx, conversation.RunRequest{
+	result, err := s.runner.Run(ctx, conversation.RunRequest{
 		UserID: userID, ConversationID: conversationID, RunID: runID,
-		Input:   ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
-		Context: profileContext,
+		Input:          ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
+		ResponsePolicy: responsePolicy,
+		Context:        profileContext,
 	}, reporter)
 	if err == nil {
 		err = s.repository.RenameIfUntitled(ctx, userID, conversationID, firstRunes(content, 60))
 	}
 	if err != nil {
 		sendTerminalEvent(ctx, events, vo.RunEventVO{
-			Type: vo.RunEventRunFailed, RunID: runID, Error: runErrorVO(err),
+			Type: vo.RunEventRunFailed, RunID: runID, Error: runErrorVO(err, result.Termination),
 		})
 		return
 	}
@@ -177,14 +181,31 @@ func firstRunes(value string, limit int) string {
 	return string([]rune(value)[:limit])
 }
 
-func runErrorVO(err error) *vo.RunErrorVO {
+func runErrorVO(err error, termination pi.RunTermination) *vo.RunErrorVO {
+	// 预算终止：Message 是明确但不含价格、Token 或模型响应正文的用户文案；
+	// Reason 保留结构化终止原因供客户端区分。
+	switch termination.Reason {
+	case pi.RunTerminationMaxTurns, pi.RunTerminationMaxCost, pi.RunTerminationMaxTotalTokens:
+		return &vo.RunErrorVO{
+			Code:    commonerrors.ErrConflict.Code(),
+			Message: "本轮已达到运行资源上限，请重新发送",
+			Reason:  string(termination.Reason),
+		}
+	}
 	if errors.Is(err, context.Canceled) {
-		return &vo.RunErrorVO{Code: commonerrors.ErrConflict.Code(), Message: "run canceled"}
+		return &vo.RunErrorVO{Code: commonerrors.ErrConflict.Code(), Message: "run canceled", Reason: terminationReason(termination)}
 	}
 	if codeErr, ok := err.(commonerrors.CodeError); ok {
-		return &vo.RunErrorVO{Code: codeErr.Code(), Message: codeErr.Message()}
+		return &vo.RunErrorVO{Code: codeErr.Code(), Message: codeErr.Message(), Reason: terminationReason(termination)}
 	}
-	return &vo.RunErrorVO{Code: commonerrors.ErrInternal.Code(), Message: "run failed"}
+	return &vo.RunErrorVO{Code: commonerrors.ErrInternal.Code(), Message: "run failed", Reason: terminationReason(termination)}
+}
+
+func terminationReason(termination pi.RunTermination) string {
+	if termination.Reason == "" || termination.Reason == pi.RunTerminationCompleted {
+		return ""
+	}
+	return string(termination.Reason)
 }
 
 var _ pi.Reporter = (*runReporter)(nil)

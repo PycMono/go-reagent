@@ -100,3 +100,39 @@ func TestReporterMayDropToolUpdatesWhenQueueIsFull(t *testing.T) {
 		t.Fatal("droppable update blocked on a full queue")
 	}
 }
+
+func TestSkillReadVisibilityNormalizesTheReadPath(t *testing.T) {
+	for _, arguments := range []json.RawMessage{
+		json.RawMessage(`{"path":" skills/writing/../review/SKILL.md "}`),
+		json.RawMessage(`{"path":"profiles\\writing\\skills\\review\\SKILL.md"}`),
+	} {
+		if !isSkillRead("read", arguments) {
+			t.Fatalf("isSkillRead(read, %s) = false", arguments)
+		}
+	}
+	for _, arguments := range []json.RawMessage{
+		json.RawMessage(`{"path":"docs/SKILL.md"}`),
+		json.RawMessage(`{"path":"skills/review/examples.md"}`),
+	} {
+		if isSkillRead("read", arguments) {
+			t.Fatalf("isSkillRead(read, %s) = true", arguments)
+		}
+	}
+}
+
+func TestReporterCompletesSkillReadNarrationAsAnInvisibleMessage(t *testing.T) {
+	event, important, ok := mapRunEvent("run-1", pi.NewMessageEndEvent(ai.Message{
+		Role:    ai.RoleAssistant,
+		Content: []ai.ContentBlock{ai.TextBlock("我先读取对应的 Skill。")},
+		ToolCalls: []ai.ToolCall{{
+			ID: "call-skill", Name: "read",
+			Arguments: json.RawMessage(`{"path":"profiles/writing/skills/social-content/SKILL.md"}`),
+		}},
+	}))
+	if !ok || !important || event.Type != vo.RunEventMessageCompleted {
+		t.Fatalf("mapped event = %#v, important=%v, ok=%v", event, important, ok)
+	}
+	if event.Message != nil {
+		t.Fatalf("skill read narration leaked as message = %#v", event.Message)
+	}
+}

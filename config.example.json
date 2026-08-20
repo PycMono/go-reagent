@@ -8,7 +8,12 @@
     "secure_cookies": false
   },
   "agent": {
-    "workspace_dir": "./workspaces/chat"
+    "workspace_dir": "./workspaces/chat",
+    "limits": {
+      "max_turns": 20,
+      "max_cost_usd": 1,
+      "max_total_tokens": 2000000
+    }
   },
   "mcp": {
     "servers": [

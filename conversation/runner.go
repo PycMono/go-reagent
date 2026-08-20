@@ -17,10 +17,11 @@ type runner struct {
 	runtime      pi.Runner
 	repository   conversationrepo.IConversationRepository
 	historyLimit int
+	limits       pi.RunLimits
 }
 
-func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepository, historyLimit int) Runner {
-	return &runner{runtime: runtime, repository: repository, historyLimit: historyLimit}
+func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepository, historyLimit int, limits pi.RunLimits) Runner {
+	return &runner{runtime: runtime, repository: repository, historyLimit: historyLimit, limits: limits}
 }
 
 func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
@@ -60,16 +61,21 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Report
 	if err != nil {
 		return result, err
 	}
+	runtimeInputText := inputText
+	if responsePolicy := strings.TrimSpace(request.ResponsePolicy); responsePolicy != "" {
+		runtimeInputText += "\n\n<runtime_response_policy>\n" + responsePolicy + "\n</runtime_response_policy>"
+	}
 	runtimeResult, runErr := r.runtime.Run(ctx, pi.RunRequest{
 		History: historyMessages,
 		Input: pi.Message{
 			ContentType: "text",
-			Content:     inputText,
+			Content:     runtimeInputText,
 			SenderType:  "customer",
 		},
 		Context: append([]pi.ContextBlock(nil), request.Context...),
+		Limits:  r.limits,
 	}, reporter)
-	if runErr != nil && len(runtimeResult.NewMessages) == 0 {
+	if runErr != nil && len(runtimeResult.NewMessages) == 0 && len(runtimeResult.Invocations) == 0 {
 		return runtimeResult, runErr
 	}
 

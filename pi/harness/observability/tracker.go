@@ -3,7 +3,6 @@ package observability
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"time"
 
@@ -16,6 +15,17 @@ import (
 type Pricing struct {
 	InputUSDPerMillionTokens  float64
 	OutputUSDPerMillionTokens float64
+}
+
+// Validate 校验价格快照是否落在账本支持的数值范围内。
+func (p Pricing) Validate() error {
+	if !ai.ValidUsageDecimal(p.InputUSDPerMillionTokens) {
+		return errors.New("model cost tracker: input price is outside the supported range")
+	}
+	if !ai.ValidUsageDecimal(p.OutputUSDPerMillionTokens) {
+		return errors.New("model cost tracker: output price is outside the supported range")
+	}
+	return nil
 }
 
 // CostTracker enriches every successful model response with trustworthy cost metrics.
@@ -46,10 +56,9 @@ func newCostTracker(
 		return nil, errors.New("model cost tracker: platform ID is required")
 	case model == "":
 		return nil, errors.New("model cost tracker: model is required")
-	case invalidPrice(pricing.InputUSDPerMillionTokens):
-		return nil, errors.New("model cost tracker: input price is outside the supported range")
-	case invalidPrice(pricing.OutputUSDPerMillionTokens):
-		return nil, errors.New("model cost tracker: output price is outside the supported range")
+	}
+	if err := pricing.Validate(); err != nil {
+		return nil, err
 	}
 	return &CostTracker{next: next, platformID: platformID, model: model, pricing: pricing, now: now}, nil
 }
@@ -142,7 +151,7 @@ func (t *CostTracker) meter(
 	usage.OutputPriceUSDPerMillionTokens = t.pricing.OutputUSDPerMillionTokens
 	cost := (float64(usage.InputTokens)*t.pricing.InputUSDPerMillionTokens +
 		float64(usage.OutputTokens)*t.pricing.OutputUSDPerMillionTokens) / 1_000_000
-	if invalidUsageDecimal(cost) {
+	if !ai.ValidUsageDecimal(cost) {
 		logsdk.Warn(ctx, "model invocation cost invalid",
 			logsdk.Any("component", "model_cost"),
 			logsdk.Any("event", "usage_invalid"),
@@ -170,12 +179,4 @@ func (t *CostTracker) meter(
 		logsdk.Any("latency_ms", usage.LatencyMS),
 	)
 	return &result, nil
-}
-
-func invalidPrice(value float64) bool {
-	return invalidUsageDecimal(value)
-}
-
-func invalidUsageDecimal(value float64) bool {
-	return value < 0 || value >= ai.MaxUsageDecimalExclusive || math.IsNaN(value) || math.IsInf(value, 0)
 }

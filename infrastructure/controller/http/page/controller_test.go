@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,6 +59,19 @@ func TestChatJavaScriptContainsAPIAndSSEContract(t *testing.T) {
 		if strings.Contains(source, forbidden) {
 			t.Errorf("chat.js contains forbidden %q", forbidden)
 		}
+	}
+}
+
+func TestChatVisibilityJavaScript(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	root := filepath.Clean(filepath.Join(frontendTemplateRoot(t), "..", "static", "js", "pages"))
+	command := exec.Command(node, "--test", filepath.Join(root, "chat_visibility_test.mjs"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("chat visibility tests failed: %v\n%s", err, output)
 	}
 }
 

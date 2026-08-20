@@ -35,7 +35,7 @@ func NewPromptComposer(workDir string) *PromptComposer {
 	return &PromptComposer{workDir: workDir}
 }
 
-// Build 将内置核心指令、工作区 AGENTS.md 和传入的 Skill 目录组合成系统消息，
+// Build 将内置核心指令、传入的 Skill 目录和工作区 AGENTS.md 组合成系统消息，
 // 同时返回 Skill Prompt 的收录、截断和省略统计。
 func (c *PromptComposer) Build(snapshot *skills.Snapshot) (ai.Message, skills.PromptReport, error) {
 	agentsInstructions, err := c.loadAgentsInstructions()
@@ -45,14 +45,14 @@ func (c *PromptComposer) Build(snapshot *skills.Snapshot) (ai.Message, skills.Pr
 
 	var builder strings.Builder
 	builder.WriteString(corePrompt)
+	skillPrompt, report := snapshot.RenderPrompt()
+	if skillPrompt != "" {
+		builder.WriteString("\n")
+		builder.WriteString(skillPrompt)
+	}
 	builder.WriteString("\n# Agent 定义（来自 AGENTS.md）\n\n")
 	builder.Write(agentsInstructions)
 	builder.WriteString("\n")
-
-	skillPrompt, report := snapshot.RenderPrompt()
-	if skillPrompt != "" {
-		builder.WriteString(skillPrompt)
-	}
 
 	return ai.Message{
 		Role:    ai.RoleSystem,

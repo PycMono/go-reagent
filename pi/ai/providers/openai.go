@@ -41,11 +41,11 @@ func (p *OpenAIImpl) Stream(
 ) ai.Stream {
 	openAIMessages, err := toOpenAIMessages(msgs)
 	if err != nil {
-		return newFailedOpenAIStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	openAITools, err := toOpenAITools(availableTools)
 	if err != nil {
-		return newFailedOpenAIStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := openaisdk.ChatCompletionNewParams{
@@ -61,20 +61,12 @@ func (p *OpenAIImpl) Stream(
 }
 
 type openAIStream struct {
+	streamState
 	provider    *OpenAIImpl
 	stream      *openaisstream.Stream[openaisdk.ChatCompletionChunk]
 	accumulator openaisdk.ChatCompletionAccumulator
-	current     ai.StreamEvent
 	pending     []ai.StreamEvent
-	started     bool
-	terminal    bool
 	usageSeen   bool
-	result      *ai.Message
-	err         error
-}
-
-func newFailedOpenAIStream(err error) ai.Stream {
-	return &openAIStream{err: err}
 }
 
 func (s *openAIStream) Next() bool {
@@ -86,24 +78,17 @@ func (s *openAIStream) Next() bool {
 	if s.terminal {
 		return false
 	}
-	if !s.started {
-		s.started = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventStart}
+	if s.start() {
 		return true
 	}
 	if s.stream == nil {
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(s.err)
 	}
 
 	for s.stream.Next() {
 		chunk := s.stream.Current()
 		if !s.accumulator.AddChunk(chunk) {
-			s.err = pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", errors.New("流式响应拼接失败"))
-			s.terminal = true
-			s.current = ai.StreamEvent{Type: ai.StreamEventError}
-			return true
+			return s.fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", errors.New("流式响应拼接失败")))
 		}
 		if chunk.JSON.Usage.Valid() && chunk.Usage.JSON.PromptTokens.Valid() &&
 			chunk.Usage.JSON.CompletionTokens.Valid() {
@@ -133,25 +118,13 @@ func (s *openAIStream) Next() bool {
 	}
 
 	if err := s.stream.Err(); err != nil {
-		s.err = s.provider.classifyError(err)
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(s.provider.classifyError(err))
 	}
 	if err := s.finish(); err != nil {
-		s.err = err
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(err)
 	}
-	s.terminal = true
-	s.current = ai.StreamEvent{Type: ai.StreamEventDone}
-	return true
+	return s.done()
 }
-
-func (s *openAIStream) Current() ai.StreamEvent { return s.current }
-
-func (s *openAIStream) Result() (*ai.Message, error) { return s.result, s.err }
 
 func (s *openAIStream) Close() error {
 	if s.stream == nil {
@@ -218,57 +191,49 @@ func (p *OpenAIImpl) classifyError(err error) error {
 }
 
 func toOpenAIMessages(messages []ai.Message) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
-	result := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(messages))
-	for _, message := range messages {
-		text, err := ai.TextContent(message.Content)
-		if err != nil {
-			return nil, fmt.Errorf("message content: %w", err)
-		}
-		switch message.Role {
+	normalized, err := normalizeMessages(messages)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(normalized))
+	for _, message := range normalized {
+		switch message.role {
 		case ai.RoleSystem:
-			result = append(result, openaisdk.SystemMessage(text))
+			result = append(result, openaisdk.SystemMessage(message.text))
 		case ai.RoleUser:
-			result = append(result, openaisdk.UserMessage(text))
+			result = append(result, openaisdk.UserMessage(message.text))
 		case ai.RoleTool:
-			if message.ToolCallID == "" {
-				return nil, errors.New("tool message requires tool_call_id")
-			}
-			result = append(result, openaisdk.ToolMessage(text, message.ToolCallID))
+			result = append(result, openaisdk.ToolMessage(message.text, message.toolCallID))
 		case ai.RoleAssistant:
-			if text == "" && len(message.ToolCalls) == 0 {
-				return nil, errors.New("assistant message contains no content or tool calls")
-			}
 			assistant := openaisdk.ChatCompletionAssistantMessageParam{}
-			if text != "" {
-				assistant.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{OfString: openaisdk.String(text)}
+			if message.text != "" {
+				assistant.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{OfString: openaisdk.String(message.text)}
 			}
-			for _, toolCall := range message.ToolCalls {
+			for _, toolCall := range message.toolCalls {
 				assistant.ToolCalls = append(assistant.ToolCalls, openaisdk.ChatCompletionMessageToolCallUnionParam{
 					OfFunction: &openaisdk.ChatCompletionMessageFunctionToolCallParam{
-						ID: toolCall.ID,
+						ID: toolCall.id,
 						Function: openaisdk.ChatCompletionMessageFunctionToolCallFunctionParam{
-							Name: toolCall.Name, Arguments: string(toolCall.Arguments),
+							Name: toolCall.name, Arguments: string(toolCall.arguments),
 						},
 					},
 				})
 			}
 			result = append(result, openaisdk.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
-		default:
-			return nil, fmt.Errorf("unsupported message role %q", message.Role)
 		}
 	}
 	return result, nil
 }
 
 func toOpenAITools(definitions []ai.ToolDefinition) ([]openaisdk.ChatCompletionToolUnionParam, error) {
-	result := make([]openaisdk.ChatCompletionToolUnionParam, 0, len(definitions))
-	for _, definition := range definitions {
-		parameters, err := schemaObject(definition.InputSchema)
-		if err != nil {
-			return nil, fmt.Errorf("tool %q input schema: %w", definition.Name, err)
-		}
+	normalized, err := normalizeToolDefinitions(definitions)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]openaisdk.ChatCompletionToolUnionParam, 0, len(normalized))
+	for _, definition := range normalized {
 		result = append(result, openaisdk.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-			Name: definition.Name, Description: openaisdk.String(definition.Description), Parameters: shared.FunctionParameters(parameters),
+			Name: definition.name, Description: openaisdk.String(definition.description), Parameters: shared.FunctionParameters(definition.inputSchema),
 		}))
 	}
 	return result, nil

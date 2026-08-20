@@ -8,7 +8,7 @@ import (
 )
 
 func newRegisteredRunner(runtime pi.Runner, repository conversationrepo.IConversationRepository, cfg *config.Config) Runner {
-	return NewRunner(runtime, repository, cfg.Conversation.HistoryMessageLimit)
+	return NewRunner(runtime, repository, cfg.Conversation.HistoryMessageLimit, cfg.Agent.Limits)
 }
 
 var Register = fx.Options(fx.Provide(newRegisteredRunner))

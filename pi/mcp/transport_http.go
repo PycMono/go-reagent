@@ -19,6 +19,29 @@ import (
 
 const maxHTTPResponseBytes int64 = 16 << 20
 
+type transportError struct {
+	op     string
+	kind   string
+	status int
+	code   int
+	cause  error
+}
+
+func (err *transportError) Error() string {
+	switch {
+	case err.status != 0:
+		return fmt.Sprintf("mcp %s: HTTP status %d", err.op, err.status)
+	case err.code != 0:
+		return fmt.Sprintf("mcp %s: remote JSON-RPC error code %d", err.op, err.code)
+	case err.cause != nil:
+		return fmt.Sprintf("mcp %s: %s: %v", err.op, err.kind, err.cause)
+	default:
+		return fmt.Sprintf("mcp %s: %s", err.op, err.kind)
+	}
+}
+
+func (err *transportError) Unwrap() error { return err.cause }
+
 type HTTPTransportOptions struct {
 	Endpoint   string
 	Headers    http.Header
@@ -37,14 +60,14 @@ type HTTPTransport struct {
 }
 
 func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
-	endpoint, err := validateEndpoint(options.Endpoint)
+	endpoint, err := options.validateEndpoint()
 	if err != nil {
 		return nil, err
 	}
 	if options.Timeout <= 0 {
 		return nil, errors.New("mcp HTTP timeout must be greater than zero")
 	}
-	headers, err := validateHeaders(options.Headers)
+	headers, err := options.validateHeaders()
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +84,10 @@ func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
 	return &HTTPTransport{endpoint: endpoint, headers: headers, timeout: options.Timeout, client: client}, nil
 }
 
-func validateEndpoint(raw string) (*url.URL, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
+// validateEndpoint 校验并解析传输端点：必须是绝对的 HTTP(S) URL，
+// 明文 HTTP 只允许 loopback。
+func (options HTTPTransportOptions) validateEndpoint() (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(options.Endpoint))
 	if err != nil || parsed.Host == "" {
 		return nil, errors.New("mcp endpoint must be an absolute URL")
 	}
@@ -89,7 +114,10 @@ func validateEndpoint(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func validateHeaders(input http.Header) (http.Header, error) {
+// validateHeaders 规范化并校验自定义 Header：名称必须合法，不能覆盖
+// 协议控制 Header，值必须合法。
+func (options HTTPTransportOptions) validateHeaders() (http.Header, error) {
+	input := options.Headers
 	result := make(http.Header, len(input))
 	blocked := map[string]struct{}{
 		"Host": {}, "Content-Length": {}, "Mcp-Session-Id": {}, "Content-Type": {}, "Accept": {},

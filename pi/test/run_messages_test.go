@@ -8,7 +8,6 @@ import (
 
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
-	"github.com/PycMono/go-reagent/pi/harness"
 )
 
 func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
@@ -16,17 +15,13 @@ func TestAgentLoopReturnsDirectAssistantIncrement(t *testing.T) {
 		Role:    ai.RoleAssistant,
 		Content: blocks("done"),
 	}}}
-	toolRuntime := &fakeToolRuntime{}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := harness.Context{Messages: []ai.Message{
-		{Role: ai.RoleSystem, Content: blocks("system")},
-		{Role: ai.RoleUser, Content: blocks("hello")},
-	}}
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
 
-	newMessages, err := loop.Run(context.Background(), runContext, nil)
+	result, err := runtime.Run(context.Background(), validAgentRequest("hello"), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	newMessages := result.NewMessages
 	if len(newMessages) != 1 || newMessages[0].Role != ai.RoleAssistant || messageText(t, newMessages[0]) != "done" {
 		t.Fatalf("NewMessages = %#v, want one assistant message containing done", newMessages)
 	}
@@ -44,16 +39,13 @@ func TestAgentLoopReturnsToolConversationInOrder(t *testing.T) {
 			"echo": toolResult(call, "hello", false),
 		},
 	}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := harness.Context{
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
-		Tools:    toolRuntime.definitions,
-	}
+	runtime := newPublicAgent(t, provider, toolRuntime)
 
-	newMessages, err := loop.Run(context.Background(), runContext, nil)
+	result, err := runtime.Run(context.Background(), validAgentRequest("run echo"), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	newMessages := result.NewMessages
 	if len(newMessages) != 3 {
 		t.Fatalf("NewMessages count = %d, want 3: %#v", len(newMessages), newMessages)
 	}
@@ -73,18 +65,14 @@ func TestAgentLoopExcludesThinkingScaffoldingFromIncrement(t *testing.T) {
 		{Role: ai.RoleAssistant, Content: blocks("internal plan")},
 		{Role: ai.RoleAssistant, Content: blocks("done")},
 	}}
-	toolRuntime := &fakeToolRuntime{}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), true)
-	runContext := harness.Context{Messages: []ai.Message{
-		{Role: ai.RoleUser, Content: blocks("hello")},
-	}}
+	runtime := newPublicAgentWithThinking(t, provider, &fakeToolRuntime{}, true)
 
-	newMessages, err := loop.Run(context.Background(), runContext, nil)
+	result, err := runtime.Run(context.Background(), validAgentRequest("hello"), nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(newMessages) != 1 || messageText(t, newMessages[0]) != "done" {
-		t.Fatalf("NewMessages = %#v, want only final assistant message", newMessages)
+	if len(result.NewMessages) != 1 || messageText(t, result.NewMessages[0]) != "done" {
+		t.Fatalf("NewMessages = %#v, want only final assistant message", result.NewMessages)
 	}
 }
 
@@ -100,16 +88,13 @@ func TestAgentLoopReturnsCompletedMessagesWithProviderError(t *testing.T) {
 			"echo": toolResult(call, "completed before failure", false),
 		},
 	}
-	loop := pi.NewLoop(provider, pi.NewScheduler(toolRuntime, 1), false)
-	runContext := harness.Context{
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: blocks("run echo")}},
-		Tools:    toolRuntime.definitions,
-	}
+	runtime := newPublicAgent(t, provider, toolRuntime)
 
-	newMessages, err := loop.Run(context.Background(), runContext, nil)
+	result, err := runtime.Run(context.Background(), validAgentRequest("run echo"), nil)
 	if err == nil || !strings.Contains(err.Error(), "unexpected provider call 2") {
 		t.Fatalf("Run() error = %v, want second provider call failure", err)
 	}
+	newMessages := result.NewMessages
 	if len(newMessages) != 2 || newMessages[0].Role != ai.RoleAssistant || newMessages[1].Role != ai.RoleTool {
 		t.Fatalf("NewMessages = %#v, want completed assistant tool call and tool result", newMessages)
 	}

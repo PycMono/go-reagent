@@ -30,7 +30,7 @@ type ContextRequest struct {
 // Context contains the prepared message and tool snapshot returned to Agent Core.
 type Context struct {
 	Messages []ai.Message
-	Tools    []ai.ToolDefinition
+	Tools    ai.ToolDefinitions
 }
 
 // ContextBuilder prepares workspace-specific context for one Agent run.
@@ -48,7 +48,7 @@ func NewContextBuilder(composer *PromptComposer, workDir string) *ContextBuilder
 func (f *ContextBuilder) Build(
 	ctx context.Context,
 	request ContextRequest,
-	definitions []ai.ToolDefinition,
+	definitions ai.ToolDefinitions,
 ) (Context, error) {
 	snapshot, err := skills.Discover(f.workDir)
 	if err != nil {
@@ -59,7 +59,7 @@ func (f *ContextBuilder) Build(
 	}
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
-	if !snapshot.Empty() && !hasToolDefinition(definitions, "read") {
+	if !snapshot.Empty() && !definitions.Has("read") {
 		return Context{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
@@ -98,17 +98,8 @@ func (f *ContextBuilder) Build(
 
 	return Context{
 		Messages: messages,
-		Tools:    append([]ai.ToolDefinition(nil), definitions...),
+		Tools:    append(ai.ToolDefinitions(nil), definitions...),
 	}, nil
-}
-
-func hasToolDefinition(definitions []ai.ToolDefinition, name string) bool {
-	for _, definition := range definitions {
-		if definition.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func logSkillDiagnostics(ctx context.Context, diagnostics []skills.Diagnostic) {

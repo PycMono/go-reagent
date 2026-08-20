@@ -12,6 +12,7 @@ func TestLoadConfigParsesAndNormalizesRequiredRedis(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":[" 127.0.0.1:6379 "],"password":"redis-secret","db":2,"pool_size":5}
 	}`)
 
@@ -39,7 +40,7 @@ func TestLoadConfigRejectsInvalidRequiredRedisWithoutLeakingPassword(t *testing.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			document := `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"redis":` + test.redis + `}`
+			document := `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"agent":{"limits":{"max_turns":5}},"redis":` + test.redis + `}`
 			_, err := Load(writeConfig(t, document))
 			if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), credential) {
 				t.Fatalf("Load() error = %v, want %q without credential", err, test.want)
@@ -52,6 +53,7 @@ func TestLoadConfigParsesConversationAndMySQLConfiguration(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"deepseek",
 		"platforms":[{"id":"deepseek","protocol":"openai","baseURL":"https://example.test/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"conversation":{"enabled":true,"history_message_limit":100},
 		"mysql":{
@@ -80,6 +82,7 @@ func TestLoadConfigDefaultsConversationHistoryLimit(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`))
 	if err != nil {
@@ -94,6 +97,7 @@ func TestLoadConfigDefaultsHTTPServer(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{
 		"currentPlatform":"x",
 		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`))
 	if err != nil {
@@ -111,16 +115,17 @@ func TestLoadConfigDefaultsAndNormalizesAgentWorkspace(t *testing.T) {
 		agent     string
 		workspace string
 	}{
-		{name: "missing", workspace: DefaultAgentWorkspaceDir},
-		{name: "blank", agent: `,"agent":{"workspace_dir":"  "}`, workspace: DefaultAgentWorkspaceDir},
-		{name: "trimmed", agent: `,"agent":{"workspace_dir":"  ./workspaces/legal  "}`, workspace: "./workspaces/legal"},
+		{name: "missing", agent: `,"agent":{"limits":{"max_turns":5}}`, workspace: DefaultAgentWorkspaceDir},
+		{name: "blank", agent: `,"agent":{"workspace_dir":"  ","limits":{"max_turns":5}}`, workspace: DefaultAgentWorkspaceDir},
+		{name: "trimmed", agent: `,"agent":{"workspace_dir":"  ./workspaces/legal  ","limits":{"max_turns":5}}`, workspace: "./workspaces/legal"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := Load(writeConfig(t, `{
 					"currentPlatform":"x",
 					"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
-					"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}`+tt.agent+`
+					"agent":{"limits":{"max_turns":5}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}`+tt.agent+`
 				}`))
 			if err != nil {
 				t.Fatal(err)
@@ -147,6 +152,7 @@ func TestLoadConfigRejectsInvalidHTTPServer(t *testing.T) {
 			_, err := Load(writeConfig(t, `{
 				"currentPlatform":"x",
 				"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+				"agent":{"limits":{"max_turns":5}},
 				"http":`+tt.http+`
 			}`))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -196,7 +202,7 @@ func TestLoadConfigRejectsInvalidConversationAndMySQLConfiguration(t *testing.T)
 			}
 			document := `{"currentPlatform":"x","platforms":[` +
 				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],` +
-				conversation + `,"mysql":{` + mysql + `}}`
+				`"agent":{"limits":{"max_turns":5}},` + conversation + `,"mysql":{` + mysql + `}}`
 
 			_, err := Load(writeConfig(t, document))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -228,6 +234,7 @@ func TestLoadConfigSelectsAndNormalizesCurrentPlatform(t *testing.T) {
 				"model": "glm-4.5-air","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
 			}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
@@ -260,6 +267,7 @@ func TestLoadConfigNormalizesOptionalWeComWebhookURL(t *testing.T) {
 		"platforms":[
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
 	}`)
@@ -279,6 +287,7 @@ func TestLoadConfigAllowsMissingWeComWebhookURL(t *testing.T) {
 		"platforms":[
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
@@ -298,6 +307,7 @@ func TestLoadConfigRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
 		"platforms":[
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"bot":{"wecom":{"webhookURL":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
 	}`)
 
@@ -329,6 +339,9 @@ platforms:
     pricing:
       input_usd_per_million_tokens: 0.15
       output_usd_per_million_tokens: 0.60
+agent:
+  limits:
+    max_turns: 5
 redis:
   addr:
     - "127.0.0.1:6379"
@@ -351,6 +364,9 @@ model = " deepseek-chat "
 [platforms.pricing]
 input_usd_per_million_tokens = 0.15
 output_usd_per_million_tokens = 0.60
+
+[agent.limits]
+max_turns = 5
 
 [redis]
 addr = ["127.0.0.1:6379"]
@@ -393,6 +409,7 @@ func TestLoadConfigAppliesShellEnvironmentOverride(t *testing.T) {
 			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
 			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
@@ -418,6 +435,7 @@ func TestLoadConfigAppliesEnvironmentFileOverlay(t *testing.T) {
 			{"id":"primary","protocol":"openai","baseURL":"https://primary.test/","apiKey":"primary-key","model":"primary-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}},
 			{"id":"backup","protocol":"anthropic","baseURL":"https://backup.test/","apiKey":"backup-key","model":"backup-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 	writeConfigAt(t, dir, "config.test.json", `{"currentPlatform":"backup"}`)
@@ -443,6 +461,7 @@ func TestLoadConfigFallsBackToExampleFile(t *testing.T) {
 		"platforms":[
 			{"id":"example","protocol":"openai","baseURL":"https://example.test/","apiKey":"example-key","model":"example-model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 	}`)
 
@@ -465,6 +484,7 @@ func TestLoadConfigUsesConfigorPermissiveJSONDefaults(t *testing.T) {
 		"platforms":[
 			{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
 		"unknown":true
 	} {"ignored":"trailing document"}`)
@@ -657,6 +677,51 @@ func TestLoadConfigAllowsAbsentAndDisabledMCP(t *testing.T) {
 	}
 }
 
+func TestLoadConfigValidatesAgentLimits(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent string
+		want  string
+	}{
+		{name: "all zero", agent: `"agent":{"limits":{}}`, want: "agent.limits"},
+		{name: "missing", agent: ``, want: "agent.limits"},
+		{name: "negative turns", agent: `"agent":{"limits":{"max_turns":-1}}`, want: "max_turns"},
+		{name: "negative tokens", agent: `"agent":{"limits":{"max_total_tokens":-1}}`, want: "max_total_tokens"},
+		{name: "negative cost", agent: `"agent":{"limits":{"max_cost_usd":-0.5}}`, want: "max_cost_usd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent := tt.agent
+			if agent != "" {
+				agent += ","
+			}
+			document := `{"currentPlatform":"x","platforms":[` +
+				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],` +
+				agent + `"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}}`
+			_, err := Load(writeConfig(t, document))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigParsesAgentLimits(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":20,"max_cost_usd":1.5,"max_total_tokens":2000000}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Limits.MaxTurns != 20 || cfg.Agent.Limits.MaxCostUSD != 1.5 ||
+		cfg.Agent.Limits.MaxTotalTokens != 2_000_000 {
+		t.Fatalf("Limits = %#v", cfg.Agent.Limits)
+	}
+}
+
 func validMCPBaseConfig(extra string) string {
 	separator := ""
 	if extra != "" {
@@ -665,6 +730,7 @@ func validMCPBaseConfig(extra string) string {
 	return `{
 		"currentPlatform":"x",
 		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}` + separator + extra + `
 	}`
 }

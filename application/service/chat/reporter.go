@@ -45,6 +45,9 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 		if event.Tool == nil {
 			return vo.RunEventVO{}, false, false
 		}
+		if isSkillRead(event.Tool.Call.Name, event.Tool.Call.Arguments) {
+			return vo.RunEventVO{}, false, false
+		}
 		result.Tool = &vo.ToolEventVO{
 			ID: event.Tool.Call.ID, Name: event.Tool.Call.Name,
 			Arguments: append([]byte(nil), event.Tool.Call.Arguments...),
@@ -55,7 +58,7 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 			return result, true, true
 		case pi.AgentEventToolUpdate:
 			result.Type = vo.RunEventToolUpdated
-			if event.Tool.Update != nil {
+			if event.Tool.Update != nil && !isReadTool(event.Tool.Call.Name) {
 				result.Tool.Content = mapAIContent(event.Tool.Update.Content)
 				result.Tool.Details = event.Tool.Update.Details
 			}
@@ -65,8 +68,10 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 			if event.Tool.Result != nil {
 				result.Tool.ID = event.Tool.Result.ToolCallID
 				result.Tool.Name = event.Tool.Result.ToolName
-				result.Tool.Content = mapAIContent(event.Tool.Result.Content)
-				result.Tool.Details = event.Tool.Result.Details
+				if !isReadTool(event.Tool.Call.Name) {
+					result.Tool.Content = mapAIContent(event.Tool.Result.Content)
+					result.Tool.Details = event.Tool.Result.Details
+				}
 				result.Tool.IsError = event.Tool.Result.IsError
 				result.Tool.ErrorCode = string(event.Tool.Result.ErrorCode)
 			}
@@ -107,10 +112,18 @@ func mapRunMessage(message ai.Message) *vo.RunMessageVO {
 		ToolCallID: message.ToolCallID, ToolName: message.ToolName, IsError: message.IsError,
 		ToolCalls: make([]vo.ToolCallVO, 0, len(message.ToolCalls)),
 	}
+	onlySkillReads := len(message.ToolCalls) > 0
 	for _, call := range message.ToolCalls {
+		if isSkillRead(call.Name, call.Arguments) {
+			continue
+		}
+		onlySkillReads = false
 		result.ToolCalls = append(result.ToolCalls, vo.ToolCallVO{
 			ID: call.ID, Name: call.Name, Arguments: append([]byte(nil), call.Arguments...),
 		})
+	}
+	if onlySkillReads {
+		return nil
 	}
 	return result
 }

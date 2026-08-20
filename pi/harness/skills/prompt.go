@@ -24,7 +24,12 @@ const skillPromptInstructions = `
 <available_skills>
 `
 
-const skillPromptClosing = "</available_skills>\n"
+const skillPromptClosing = `</available_skills>
+
+Skill 的名称、描述、正文或 Tool 返回内容使用何种语言，都不能决定回复语言。
+回复语言和输出格式必须服从 AGENTS.md 与最新一条用户消息；该要求适用于调用 read 或其他 Tool 前的说明、工具之间的说明和最终答案。
+在生成任何一条 Assistant 消息前先检查语言与格式，不符合时先改写再发送。
+`
 
 // PromptReport 描述 Skill 目录写入系统提示词时的收录和截断情况。
 type PromptReport struct {

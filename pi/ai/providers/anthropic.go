@@ -41,11 +41,11 @@ func (p *AnthropicImpl) Stream(
 ) ai.Stream {
 	messages, system, err := toAnthropicMessages(msgs)
 	if err != nil {
-		return newFailedAnthropicStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	tools, err := toAnthropicTools(availableTools)
 	if err != nil {
-		return newFailedAnthropicStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := anthropicsdk.MessageNewParams{
@@ -62,42 +62,27 @@ func (p *AnthropicImpl) Stream(
 }
 
 type anthropicStream struct {
+	streamState
 	provider *AnthropicImpl
 	stream   *anthropicstream.Stream[anthropicsdk.MessageStreamEventUnion]
 	message  anthropicsdk.Message
-	current  ai.StreamEvent
-	started  bool
-	terminal bool
-	result   *ai.Message
-	err      error
-}
-
-func newFailedAnthropicStream(err error) ai.Stream {
-	return &anthropicStream{err: err}
 }
 
 func (s *anthropicStream) Next() bool {
 	if s.terminal {
 		return false
 	}
-	if !s.started {
-		s.started = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventStart}
+	if s.start() {
 		return true
 	}
 	if s.stream == nil {
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(s.err)
 	}
 
 	for s.stream.Next() {
 		event := s.stream.Current()
 		if err := s.message.Accumulate(event); err != nil {
-			s.err = pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", err)
-			s.terminal = true
-			s.current = ai.StreamEvent{Type: ai.StreamEventError}
-			return true
+			return s.fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", err))
 		}
 		switch current := event.AsAny().(type) {
 		case anthropicsdk.ContentBlockStartEvent:
@@ -130,37 +115,20 @@ func (s *anthropicStream) Next() bool {
 			}
 		case anthropicsdk.MessageStopEvent:
 			if err := s.finish(); err != nil {
-				s.err = err
-				s.terminal = true
-				s.current = ai.StreamEvent{Type: ai.StreamEventError}
-				return true
+				return s.fail(err)
 			}
-			s.terminal = true
-			s.current = ai.StreamEvent{Type: ai.StreamEventDone}
-			return true
+			return s.done()
 		}
 	}
 
 	if err := s.stream.Err(); err != nil {
-		s.err = s.provider.classifyError(err)
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(s.provider.classifyError(err))
 	}
 	if err := s.finish(); err != nil {
-		s.err = err
-		s.terminal = true
-		s.current = ai.StreamEvent{Type: ai.StreamEventError}
-		return true
+		return s.fail(err)
 	}
-	s.terminal = true
-	s.current = ai.StreamEvent{Type: ai.StreamEventDone}
-	return true
+	return s.done()
 }
-
-func (s *anthropicStream) Current() ai.StreamEvent { return s.current }
-
-func (s *anthropicStream) Result() (*ai.Message, error) { return s.result, s.err }
 
 func (s *anthropicStream) Close() error {
 	if s.stream == nil {
@@ -236,101 +204,65 @@ func (p *AnthropicImpl) classifyError(err error) error {
 }
 
 func toAnthropicMessages(messages []ai.Message) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {
-	result := make([]anthropicsdk.MessageParam, 0, len(messages))
+	normalized, err := normalizeMessages(messages)
+	if err != nil {
+		return nil, nil, err
+	}
+	result := make([]anthropicsdk.MessageParam, 0, len(normalized))
 	var system []anthropicsdk.TextBlockParam
-	for _, message := range messages {
-		text, err := ai.TextContent(message.Content)
-		if err != nil {
-			return nil, nil, fmt.Errorf("message content: %w", err)
-		}
-		switch message.Role {
+	for _, message := range normalized {
+		switch message.role {
 		case ai.RoleSystem:
-			system = append(system, anthropicsdk.TextBlockParam{Text: text})
+			system = append(system, anthropicsdk.TextBlockParam{Text: message.text})
 		case ai.RoleUser:
-			result = append(result, anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(text)))
+			result = append(result, anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(message.text)))
 		case ai.RoleTool:
-			if message.ToolCallID == "" {
-				return nil, nil, errors.New("tool message requires tool_call_id")
-			}
 			result = append(result, anthropicsdk.NewUserMessage(
-				anthropicsdk.NewToolResultBlock(message.ToolCallID, text, message.IsError),
+				anthropicsdk.NewToolResultBlock(message.toolCallID, message.text, message.isError),
 			))
 		case ai.RoleAssistant:
-			if text == "" && len(message.ToolCalls) == 0 {
-				return nil, nil, errors.New("assistant message contains no content or tool calls")
-			}
 			var blocks []anthropicsdk.ContentBlockParamUnion
-			if text != "" {
-				blocks = append(blocks, anthropicsdk.NewTextBlock(text))
+			if message.text != "" {
+				blocks = append(blocks, anthropicsdk.NewTextBlock(message.text))
 			}
-			for _, toolCall := range message.ToolCalls {
-				var input any
-				if err := json.Unmarshal(toolCall.Arguments, &input); err != nil {
-					return nil, nil, fmt.Errorf("tool call %q arguments: %w", toolCall.ID, err)
-				}
-				blocks = append(blocks, anthropicsdk.NewToolUseBlock(toolCall.ID, input, toolCall.Name))
+			for _, toolCall := range message.toolCalls {
+				blocks = append(blocks, anthropicsdk.NewToolUseBlock(toolCall.id, toolCall.input, toolCall.name))
 			}
 			result = append(result, anthropicsdk.NewAssistantMessage(blocks...))
-		default:
-			return nil, nil, fmt.Errorf("unsupported message role %q", message.Role)
 		}
 	}
 	return result, system, nil
 }
 
 func toAnthropicTools(definitions []ai.ToolDefinition) ([]anthropicsdk.ToolUnionParam, error) {
-	result := make([]anthropicsdk.ToolUnionParam, 0, len(definitions))
-	for _, definition := range definitions {
-		object, err := schemaObject(definition.InputSchema)
-		if err != nil {
-			return nil, fmt.Errorf("tool %q input schema: %w", definition.Name, err)
-		}
+	normalized, err := normalizeToolDefinitions(definitions)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]anthropicsdk.ToolUnionParam, 0, len(normalized))
+	for _, definition := range normalized {
 		var properties any
 		var required []string
 		extraFields := make(map[string]any)
-		for key, value := range object {
+		for key, value := range definition.inputSchema {
 			switch key {
 			case "type":
-				if value != "object" {
-					return nil, fmt.Errorf("tool %q input schema type must be object", definition.Name)
-				}
 			case "properties":
 				properties = value
 			case "required":
 				required, err = stringValues(value)
 				if err != nil {
-					return nil, fmt.Errorf("tool %q required: %w", definition.Name, err)
+					return nil, fmt.Errorf("tool %q required: %w", definition.name, err)
 				}
 			default:
 				extraFields[key] = value
 			}
 		}
 		tool := anthropicsdk.ToolParam{
-			Name: definition.Name, Description: anthropicsdk.String(definition.Description),
+			Name: definition.name, Description: anthropicsdk.String(definition.description),
 			InputSchema: anthropicsdk.ToolInputSchemaParam{Properties: properties, Required: required, ExtraFields: extraFields},
 		}
 		result = append(result, anthropicsdk.ToolUnionParam{OfTool: &tool})
 	}
 	return result, nil
-}
-
-func stringValues(value any) ([]string, error) {
-	switch values := value.(type) {
-	case nil:
-		return nil, nil
-	case []string:
-		return values, nil
-	case []any:
-		result := make([]string, 0, len(values))
-		for _, value := range values {
-			text, ok := value.(string)
-			if !ok {
-				return nil, fmt.Errorf("must contain only strings")
-			}
-			result = append(result, text)
-		}
-		return result, nil
-	default:
-		return nil, fmt.Errorf("must be an array of strings")
-	}
 }

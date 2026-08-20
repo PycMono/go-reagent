@@ -1,6 +1,9 @@
 package config
 
-import "github.com/PycMono/go-reagent/pi/ai/providers"
+import (
+	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
+)
 
 const (
 	DefaultHistoryMessageLimit = 100
@@ -22,7 +25,8 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	WorkspaceDir string `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	WorkspaceDir string       `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	Limits       pi.RunLimits `json:"limits" yaml:"limits" toml:"limits"`
 }
 
 type MCPConfig struct {

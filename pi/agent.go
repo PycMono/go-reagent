@@ -3,7 +3,6 @@ package pi
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
@@ -30,24 +29,30 @@ func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime) *
 // Run 校验并执行一次相互隔离的请求。
 func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) (RunResult, error) {
 	result := RunResult{}
-	if err := ctx.Err(); err != nil {
+	fail := func(err error) (RunResult, error) {
+		result.Termination = terminationFromError(err, RunTotals{})
 		return result, err
 	}
-	if err := validateRunRequest(request); err != nil {
-		return result, err
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := request.Validate(); err != nil {
+		return fail(err)
 	}
 
 	runContext, err := a.prepareRunContext(ctx, request)
 	if err != nil {
-		return result, err
+		return fail(err)
 	}
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return fail(err)
 	}
 
-	loopResult, err := a.loop.runDetailed(ctx, runContext, reporter)
+	governor := newRunGovernor(request.Limits)
+	loopResult, err := a.loop.runDetailed(ctx, runContext, reporter, governor)
 	result.NewMessages = loopResult.newMessages
 	result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
+	result.Termination = governor.termination(err)
 	return result, err
 }
 
@@ -83,17 +88,4 @@ func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (harn
 	}
 
 	return prepared, nil
-}
-
-func validateRunRequest(request RunRequest) error {
-	for index, block := range request.Context {
-		if strings.TrimSpace(block.Name) == "" {
-			return fmt.Errorf("%w: context block %d name must not be empty", pierrors.ErrRequestInvalid, index)
-		}
-		if strings.TrimSpace(block.Content) == "" {
-			return fmt.Errorf("%w: context block %d content must not be empty", pierrors.ErrRequestInvalid, index)
-		}
-	}
-
-	return nil
 }
