@@ -31,10 +31,10 @@ func NewScheduler(toolRuntime ToolRuntime, maxParallel int) *Scheduler {
 func (s *Scheduler) Schedule(
 	ctx context.Context,
 	calls []ai.ToolCall,
-	definitions []ai.ToolDefinition,
+	definitions ai.ToolDefinitions,
 	observer ToolEventObserver,
 ) ([]ToolResult, error) {
-	parallelSafe := definitionSafety(definitions)
+	parallelSafe := definitions.ParallelSafety()
 	results := make([]ToolResult, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
@@ -55,11 +55,11 @@ func (s *Scheduler) Schedule(
 }
 
 // Mode 返回本批工具调用的执行模式：serial、parallel 或 mixed。
-func (s *Scheduler) Mode(calls []ai.ToolCall, definitions []ai.ToolDefinition) string {
+func (s *Scheduler) Mode(calls []ai.ToolCall, definitions ai.ToolDefinitions) string {
 	if len(calls) == 0 || s.maxParallel <= 1 {
 		return "serial"
 	}
-	parallelSafe := definitionSafety(definitions)
+	parallelSafe := definitions.ParallelSafety()
 	hasParallelWave := false
 	hasSerialCall := false
 	for start := 0; start < len(calls); {
@@ -86,14 +86,6 @@ func (s *Scheduler) Mode(calls []ai.ToolCall, definitions []ai.ToolDefinition) s
 		return "parallel"
 	}
 	return "serial"
-}
-
-func definitionSafety(definitions []ai.ToolDefinition) map[string]bool {
-	parallelSafe := make(map[string]bool, len(definitions))
-	for _, definition := range definitions {
-		parallelSafe[definition.Name] = definition.ParallelSafe
-	}
-	return parallelSafe
 }
 
 func (s *Scheduler) executeWave(

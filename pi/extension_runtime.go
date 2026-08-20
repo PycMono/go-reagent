@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 
@@ -49,19 +48,6 @@ func newExtensionRuntime(params extensionRuntimeParams) (*extensionRuntime, erro
 	runtime := &extensionRuntime{registry: params.Registry, extensions: extensions}
 	params.Lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
 	return runtime, nil
-}
-
-func isNilExtension(extension Extension) bool {
-	if extension == nil {
-		return true
-	}
-	value := reflect.ValueOf(extension)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }
 
 func (runtime *extensionRuntime) start(ctx context.Context) error {

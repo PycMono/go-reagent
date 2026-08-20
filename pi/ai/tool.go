@@ -68,6 +68,15 @@ func (definitions ToolDefinitions) Has(name string) bool {
 	return false
 }
 
+// ParallelSafety 返回每个工具名称对应的并发安全标记快照。
+func (definitions ToolDefinitions) ParallelSafety() map[string]bool {
+	parallelSafe := make(map[string]bool, len(definitions))
+	for _, definition := range definitions {
+		parallelSafe[definition.Name] = definition.ParallelSafe
+	}
+	return parallelSafe
+}
+
 // ToolOutput is the final content produced by one tool execution.
 type ToolOutput struct {
 	Content []ContentBlock `json:"content"`

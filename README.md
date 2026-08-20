@@ -2,7 +2,7 @@
 
 `go-reagent` 是一个用 Go 编写的企业级 Agent Harness 内核，用于统一承载大模型推理、工具调用与 Agent 生命周期。
 
-项目目前处于核心能力搭建阶段：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry，以及最终的 `apply_patch`、`edit`、`exec`、`process`、`read` 和 `write` 六工具闭环已经就位。
+项目已经具备可投产的核心闭环：公共协议、可测试的 ReAct Main Loop、配置驱动的 OpenAI/Anthropic 兼容适配器、真实 Tool Registry、六工具 Coding 闭环、逐次成本台账、请求级运行预算（轮次/成本/Token）与结构化终止结果，以及承载 Exa 等外部能力的 MCP 扩展通道。
 
 ## 核心流程
 
@@ -74,16 +74,22 @@ result, err := runner.Run(ctx, pi.RunRequest{
 	Context: []pi.ContextBlock{
 		{Name: "customer-profile", Content: customerProfile, Priority: 100},
 	},
+	Limits: pi.RunLimits{MaxTurns: 20, MaxCostUSD: 1, MaxTotalTokens: 2_000_000},
 }, nil)
-// 业务事务负责持久化 Input 和 result.NewMessages；err 非 nil 时，
-// 如果 NewMessages 非空，业务可按自身策略保留已经完成的部分结果。
+// 业务事务负责持久化 Input、result.NewMessages 和 result.Invocations；err 非
+// nil 时，只要 NewMessages 或 Invocations 非空，业务就应保留已经完成的部分
+// 结果和成本台账，并通过 result.Termination 判断终止原因。
 ```
 
 `RunResult.NewMessages` 只包含本次 Action/Tool Loop 新增的 Assistant/Tool 消息，不重复返回 System Prompt、外部 Context、History、Input 或内部 Thinking 脚手架。一个 `Agent` 支持并发调用；取消一个 Run 不会取消其他 Run。
 
 `History` 和 `Input` 统一使用业务 `Message`。目前只接受 `content_type=text`，历史消息允许 `sender_type=customer/ai`，当前 Input 只允许 `customer`。`Message2AI` 将二者分别转换为模型的 User、Assistant；消息 ID、时间、昵称和文件地址不会发送给模型。完整的 `ai.Message` 只保留在需要表达 Assistant、ToolCall 和 ToolResult 的 `RunResult.NewMessages` 中。
 
-`RunResult.Invocations` 按真实模型调用顺序记录所有已完成的 Thinking 和 Action 调用。每条记录包含阶段、输入/输出 Token、平台、模型、配置单价、USD 成本和耗时。一次工具循环触发多次模型调用时会产生多条独立记录；隐藏 Thinking 文本不会进入 `NewMessages`，但其成本不会漏记。默认 SDK 会强制计量每次成功响应；上游缺少 Usage、Usage 非法或成本计算不一致都会让本次 Run 以 AI generation error 失败。
+`RunResult.Invocations` 按真实模型调用顺序记录所有已完成的 Thinking、Action 和 Compaction 调用。每条记录包含阶段、输入/输出 Token、平台、模型、配置单价、USD 成本和耗时。一次工具循环触发多次模型调用时会产生多条独立记录；隐藏 Thinking 文本不会进入 `NewMessages`，但其成本不会漏记。默认 SDK 会强制计量每次成功响应；上游缺少 Usage、Usage 非法或成本计算不一致都会让本次 Run 以 AI generation error 失败。
+
+`RunRequest.Limits` 为一次 Run 提供确定性资源上限：`MaxTurns` 限制外层 Agent turn 数，`MaxCostUSD` 和 `MaxTotalTokens` 限制所有已完成且可计量模型调用的累计成本和 Token。每个维度零值表示不限制，SDK 保持向后兼容；bundled service 的配置校验拒绝全零策略。每次成功调用先记账再判断准入，越界最多一个已完成调用且该调用必定入账；Compaction 在重试原请求前同样经过预算检查。达到预算时：带工具的 Action 不会执行工具、不会写入 `NewMessages`；无工具的完整 Action 仍可持久化。预算终止返回 `run_limit_exceeded` 错误，`errors.Is(err, pierrors.ErrRunLimitExceeded)` 判断大类。
+
+`RunResult.Termination` 对每个返回路径给出结构化终止结果：`completed`、`error`、`canceled`、`deadline_exceeded`、`max_turns`、`max_cost`、`max_total_tokens` 之一，附触发额度和累计 `RunTotals`（turn 数、调用数、输入/输出/总 Token、成本）。`Totals.Invocations` 恒等于 `len(Invocations)`，`TotalTokens` 恒等于输入加输出 Token。累计使用检查型整数加法和带补偿的浮点求和，溢出或非有限值按内部错误终止。
 
 `pi` 不开放 Store，也不把业务配置、会话和数据库职责带进 SDK。Agent Core 直接位于根 `pi` 包，模型协议位于 `pi/ai`；完整默认 Agent 由 `pi.Register` 组合 `pi/harness` 中的 Workspace、Skills、工具和观测实现。
 
@@ -117,7 +123,7 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 
 仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；根 AGENTS/Skills 是所有聊天助手共享的基础层，会话绑定的 Agent Profile 再叠加角色 AGENTS 和专属 Skills，无需修改 Runtime 核心或训练模型权重。
 
-默认 Chat Workspace 提供通用、写作、学习、健康、法律、汽车、职场和育儿八个 Agent Profile，以及天气、写作、决策和学习讲解四个通用 Skill。Profile 创建后固定在会话上，Run 时由服务端读取，不能由客户端中途切换。Web 默认工具为 `calculate`、`get_current_time`、`get_weather`、`read`；天气数据来自 Open-Meteo，无需 API Key，重名地点会先要求消歧。Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具。
+默认 Chat Workspace 提供通用、写作、学习、健康、法律、汽车、职场和育儿八个 Agent Profile，以及天气、写作、决策和学习讲解四个通用 Skill；每个 Profile 另有自己的专属 Skills。Profile 创建后固定在会话上，Run 时由服务端读取，不能由客户端中途切换。Web 本地工具为 `calculate`、`get_current_time` 和 `read`；当前时间由本地工具无网络生成。天气、实时价格、新闻和网页资料等公网当前信息统一通过 Exa MCP 工具 `web_search_exa`/`web_fetch_exa` 查询，Exa 失败或证据不足时明确无法确认，不回退到其他公网数据源或模型记忆。Web 不提供提醒、长期记忆、在线训练或 Coding 工具。
 
 ## 项目布局
 
@@ -125,7 +131,8 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 go-reagent/
 ├── pi/                        # 唯一 Agent Core 与默认 Fx 注册
 │   ├── agent.go               # Agent 与 Runner
-│   ├── contract.go            # Run 请求、结果与模型调用记录
+│   ├── contract.go            # Run 请求、额度、结果、台账与终止契约
+│   ├── governor.go            # 请求级预算累计与准入
 │   ├── message.go             # 面向业务的消息契约与内部转换
 │   ├── loop.go                # 模型/工具循环
 │   ├── scheduler.go           # 工具调度
@@ -139,6 +146,7 @@ go-reagent/
 │   │   ├── observability/     # Usage、USD 成本与耗时跟踪
 │   │   ├── skills/            # Skill 发现与加载
 │   │   └── tools/             # 六个默认工具和进程监督器
+│   ├── mcp/                   # MCP 客户端、HTTP 传输与工具扩展
 │   └── test/                  # 根 pi 公共 API 与包边界测试
 ├── config/                    # 业务配置、平台列表与 Configor 加载
 ├── domain/                    # 业务实体与 Repository 接口
@@ -192,7 +200,12 @@ chmod 600 config.json
 ```json
 {
   "agent": {
-    "workspace_dir": "./workspaces/chat"
+    "workspace_dir": "./workspaces/chat",
+    "limits": {
+      "max_turns": 20,
+      "max_cost_usd": 1,
+      "max_total_tokens": 2000000
+    }
   },
   "currentPlatform": "deepseek",
   "platforms": [
@@ -250,6 +263,16 @@ CONFIG_PATH=./config.json go run ./cmd/server
 
 `pricing` 是每个平台的必填配置，允许两个价格均为 `0` 表示免费模型。单价和计算后的单次调用成本都必须小于 100,000,000 USD，以匹配总账 `DECIMAL(20,12)` 的可表示范围。示例中的 `0.15`/`0.60` 只演示格式，不代表厂商官方或实时价格；部署时必须按实际模型账单填写并维护。
 
+`agent.limits` 是 bundled service 的必填安全策略，不允许全零：
+
+| 字段 | 说明 |
+| --- | --- |
+| `agent.limits.max_turns` | 单次 Run 的外层 Agent turn 上限，0 表示不限制 |
+| `agent.limits.max_cost_usd` | 单次 Run 可计量模型调用的累计美元成本上限，0 表示不限制 |
+| `agent.limits.max_total_tokens` | 单次 Run 可计量模型调用的累计输入加输出 Token 上限，0 表示不限制 |
+
+三个维度分别拒绝负数；成本还拒绝 NaN 和无穷。服务端预算由配置注入，HTTP 客户端不能提交或覆盖。wall-clock 超时继续由调用方 `context.Context` deadline 承担，不并入额度结构。
+
 配置文件由 Configor 加载，支持环境叠加、example 回退和 Shell 环境变量覆盖：
 
 | 变量 | 默认值 | 说明 |
@@ -284,7 +307,7 @@ pi.CoreRegister + 业务 Tool Providers      -> 行业 Agent
 pi.Register                               -> 完整 Coding 工具兼容图
 ```
 
-浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister + Chat Tool Providers`，传入 `ThinkingEnabled(false)`，当前准确暴露 `calculate`、`get_current_time`、`get_weather`、`read`。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
+浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister + Chat Tool Providers + MCP 扩展`，传入 `ThinkingEnabled(false)`，当前准确暴露本地工具 `calculate`、`get_current_time`、`read`，以及通过 MCP 接入的 Exa 工具 `web_search_exa`、`web_fetch_exa`。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
 
 ### 日志输出
 
@@ -297,7 +320,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 每次成功模型调用都会输出包含平台、模型、输入/输出 Token、USD/1M tokens 单价、`cost_usd` 和 `latency_ms` 的结构化计量日志。上游缺少或返回非法 Usage 时会输出 `usage_missing`/`usage_invalid` 并终止 Run，不会估算或伪造零成本；Provider 调用失败只记录失败耗时，不生成成本记录。日志不包含消息正文、工具参数、API Key 或完整 Provider 请求。
 
-启用 MySQL 会话持久化后，形成可持久化 turn 的运行会把每次已完成的 Thinking/Action 调用各自写入 `agent_model_invocations`。该表是 Token、成本和耗时统计的唯一权威来源；不要再叠加可见 Assistant 消息 JSON 中的 Usage。隐藏 Thinking 文本和完整 Provider 请求不会持久化。部署顺序和聚合 SQL 见 [MySQL 会话持久化](docs/conversation-persistence.md)。
+启用 MySQL 会话持久化后，形成可持久化 turn 的运行会把每次已完成的 Thinking/Action/Compaction 调用各自写入 `agent_model_invocations`。只有 Invocation、没有业务消息的预算终止运行同样落账，不会丢失已经发生的成本。该表是 Token、成本和耗时统计的唯一权威来源；不要再叠加可见 Assistant 消息 JSON 中的 Usage。隐藏 Thinking 文本和完整 Provider 请求不会持久化。部署顺序和聚合 SQL 见 [MySQL 会话持久化](docs/conversation-persistence.md)。
 
 `go-logger-sdk` v1.0.5 的 `caller` 字段目前指向 SDK 内部方法，而不是实际业务调用位置。
 排查日志时应以 `component`、`turn`、`phase`、`tool` 和 `tool_call_id` 等结构化字段为准。
@@ -306,7 +329,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
 - 完整 SDK Coding 图中只有 `read` 标记为并发安全，其余五个 Coding 工具保持独占执行。
-- Web Chat 图中的 `calculate`、`get_current_time`、`get_weather` 和 `read` 都标记为并发安全。
+- Web Chat 图中的 `calculate`、`get_current_time` 和 `read` 标记为并发安全；Exa 等 MCP 工具按独占方式执行。
 - 连续的安全工具组成一个波次，默认最多同时执行 4 个；`MaxParallelTools <= 0` 时退化为串行。
 - 独占工具会等待前一安全波完成，并阻止后一波提前启动。
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
@@ -314,7 +337,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 ### 完整 SDK 工具协议
 
-兼容聚合 `pi.Register` 注册下列六个 Coding 工具名称。Web 产品只复用其中的 `read`，另外显式注册三个 Chat 业务 Tool：
+兼容聚合 `pi.Register` 注册下列六个 Coding 工具名称。Web 产品只复用其中的 `read`，另外显式注册 `calculate`、`get_current_time` 两个本地 Chat 工具，并通过 MCP 扩展接入 Exa 检索工具：
 
 | 工具 | 参数字段 |
 | --- | --- |
@@ -377,7 +400,11 @@ go test ./...
 - 配置驱动的 Anthropic Messages 兼容 Provider。
 - 通过 `currentPlatform` 一键切换 DeepSeek、智谱或其他兼容服务。
 - 基于 `go-logger-sdk` 的 JSON 运行日志，以及 Bootstrap、Engine 和 Registry 的结构化上下文字段。
-- 按平台配置 USD/1M tokens 单价，逐次追踪每个 Thinking/Action 模型调用的 Token、成本和耗时。
+- 按平台配置 USD/1M tokens 单价，逐次追踪每个 Thinking/Action/Compaction 模型调用的 Token、成本和耗时。
+- 请求级运行预算 `RunLimits`：轮次、累计成本和累计 Token 三项确定性上限，先记账后准入，Compaction 无法绕过。
+- 结构化运行终止 `RunTermination`：每个返回路径携带终止原因、触发额度和累计 `RunTotals`，预算终止有稳定的 `run_limit_exceeded` 错误码。
+- 响应契约校验内聚在数据类型上：`ai.Message`、`ai.Usage`、`ai.ToolCalls`、`RunRequest`/`RunLimits` 各自提供 `Validate*` 方法。
+- 基于 `pi/mcp` 的 MCP HTTP 客户端与工具扩展，支持把 Exa 等远端工具按注册组接入 Agent。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。
@@ -405,10 +432,12 @@ go test ./...
 - [x] 实现配置驱动的 OpenAI/Anthropic 兼容 Provider。
 - [x] 使用 Uber Fx 组装真实 Config、Provider、Registry、Reporter、Engine 和 Runner。
 - [x] 增加按工具安全等级分波的有界并发调度器。
-- [ ] 增加可配置的轮次、Token、时间与成本预算。
+- [x] 增加可配置的轮次、Token 与成本预算（wall-clock 由 `context.Context` deadline 承担）。
+- [ ] 增加行为型循环检测（重复工具调用提醒与熔断）。
 - [x] 增加支持多格式、环境叠加和字段覆盖的平台启动配置。
 - [x] 发布 `ai -> agent -> reagent` 公共 SDK 包结构。
 - [x] 在浏览器聊天中增加 MySQL 会话持久化。
+- [x] 增加 MCP 客户端扩展与 Exa 公网检索通道。
 - [ ] 增加飞书等外部消息渠道适配。
 - [x] 增加企业微信群机器人单向生命周期通知。
 - [ ] 增加企业微信和飞书的双向消息接入。
