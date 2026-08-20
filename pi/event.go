@@ -75,6 +75,7 @@ func NewAgentToolEvent(event ToolEvent) AgentEvent {
 	case ToolEventEnd:
 		eventType = AgentEventToolEnd
 	}
+
 	return AgentEvent{Type: eventType, Tool: &event}
 }
 
@@ -110,6 +111,11 @@ func NewMessageEndEvent(message ai.Message) AgentEvent {
 type Reporter interface {
 	Report(context.Context, AgentEvent)
 }
+
+// nopReporter 丢弃全部事件，用于把可选 Reporter 归一化为非 nil。
+type nopReporter struct{}
+
+func (nopReporter) Report(context.Context, AgentEvent) {}
 
 // ReporterRegistration describes one deterministic Reporter subscriber.
 type ReporterRegistration struct {
