@@ -9,6 +9,7 @@
   },
   "agent": {
     "workspace_dir": "./workspaces/chat",
+    "enable_context_prune": false,
     "limits": {
       "max_turns": 20,
       "max_cost_usd": 1,
@@ -42,6 +43,7 @@
       "baseURL": "https://api.deepseek.com/v1/",
       "apiKey": "",
       "model": "deepseek-chat",
+      "contextWindowTokens": 131072,
       "pricing": {
         "input_usd_per_million_tokens": 0.15,
         "output_usd_per_million_tokens": 0.60

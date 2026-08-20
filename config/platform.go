@@ -78,6 +78,9 @@ func validatePlatform(platform *providers.Options, index int) error {
 	if platform.Model == "" {
 		return fmt.Errorf("%s.model 不能为空", prefix)
 	}
+	if platform.ContextWindowTokens < 0 {
+		return fmt.Errorf("%s.contextWindowTokens 不能为负数", prefix)
+	}
 	return validatePricing(platform.Pricing, prefix)
 }
 

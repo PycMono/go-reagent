@@ -20,6 +20,7 @@ var Register = fx.Options(
 		config.NewFromEnvironment,
 		config.NewPlatform,
 		NewChatWorkDir,
+		NewChatCompactionConfig,
 		agentprofiledriver.NewCatalog,
 		RegisterMCPExtensions,
 	),

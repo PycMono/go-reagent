@@ -21,6 +21,8 @@ type Options struct {
 	APIKey   string   `json:"apiKey" yaml:"apiKey" toml:"apiKey"`
 	Model    string   `json:"model" yaml:"model" toml:"model"`
 	Pricing  *Pricing `json:"pricing" yaml:"pricing" toml:"pricing"`
+	// ContextWindowTokens 是模型的上下文窗口容量；0 表示未声明，主动压缩保持关闭。
+	ContextWindowTokens int64 `json:"contextWindowTokens,omitempty" yaml:"contextWindowTokens" toml:"contextWindowTokens"`
 }
 
 // Pricing snapshots USD prices per one million tokens for a platform.
@@ -44,6 +46,9 @@ func (opts *Options) NormalizeAndValidate() error {
 	}
 	if opts.BaseURL == "" {
 		return errors.New("baseURL 不能为空")
+	}
+	if opts.ContextWindowTokens < 0 {
+		return errors.New("contextWindowTokens 不能为负数")
 	}
 	return nil
 }

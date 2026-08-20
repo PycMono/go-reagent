@@ -31,6 +31,9 @@ type ContextRequest struct {
 type Context struct {
 	Messages []ai.Message
 	Tools    ai.ToolDefinitions
+	// CurrentInputIndex 是 request.Input 在 Messages 中的位置，
+	// 供压缩识别本次真实用户输入（不能用 RoleUser 猜测）。
+	CurrentInputIndex int
 }
 
 // ContextBuilder prepares workspace-specific context for one Agent run.
@@ -97,8 +100,9 @@ func (f *ContextBuilder) Build(
 	messages = append(messages, request.Input)
 
 	return Context{
-		Messages: messages,
-		Tools:    append(ai.ToolDefinitions(nil), definitions...),
+		Messages:          messages,
+		Tools:             append(ai.ToolDefinitions(nil), definitions...),
+		CurrentInputIndex: len(messages) - 1,
 	}, nil
 }
 

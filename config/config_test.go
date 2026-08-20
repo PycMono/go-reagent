@@ -760,3 +760,43 @@ func errorText(err error) string {
 	}
 	return err.Error()
 }
+
+func TestLoadConfigParsesContextWindowTokens(t *testing.T) {
+	document := func(extra string) string {
+		return `{
+			"currentPlatform":"deepseek",
+			"platforms":[{
+				"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/",
+				"apiKey":"k","model":"deepseek-chat",` + extra + `
+				"pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}
+			}],
+			"agent":{"limits":{"max_turns":5}},
+			"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+		}`
+	}
+
+	t.Run("省略时窗口容量为零", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, document("")))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Platforms[0].ContextWindowTokens != 0 {
+			t.Fatalf("ContextWindowTokens = %d, want 0 when omitted", cfg.Platforms[0].ContextWindowTokens)
+		}
+	})
+	t.Run("正值生效", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, document(`"contextWindowTokens":131072,`)))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Platforms[0].ContextWindowTokens != 131072 {
+			t.Fatalf("ContextWindowTokens = %d, want 131072", cfg.Platforms[0].ContextWindowTokens)
+		}
+	})
+	t.Run("负值被拒绝", func(t *testing.T) {
+		_, err := Load(writeConfig(t, document(`"contextWindowTokens":-1,`)))
+		if err == nil {
+			t.Fatal("Load() error = nil, want negative contextWindowTokens rejected")
+		}
+	})
+}
