@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -38,7 +37,7 @@ func newToolRegistry(tools []ai.Tool) (*toolRegistry, error) {
 }
 
 func (r *toolRegistry) register(owner string, tool ai.Tool) error {
-	if isNilTool(tool) {
+	if ai.IsNilTool(tool) {
 		return errors.New("tool must not be nil")
 	}
 	definition := tool.Definition()
@@ -65,19 +64,6 @@ func (r *toolRegistry) register(owner string, tool ai.Tool) error {
 	}
 	r.tools[name] = entry
 	return nil
-}
-
-func isNilTool(tool ai.Tool) bool {
-	if tool == nil {
-		return true
-	}
-	value := reflect.ValueOf(tool)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }
 
 func (r *toolRegistry) rollback(owner string) {

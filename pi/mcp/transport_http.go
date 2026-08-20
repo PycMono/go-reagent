@@ -216,7 +216,7 @@ func (transport *HTTPTransport) Send(ctx context.Context, request Request) (Resp
 	default:
 		return Response{}, &transportError{op: request.Method, kind: "unsupported response content type"}
 	}
-	return selectResponse(request, responses)
+	return request.selectResponse(responses)
 }
 
 func (transport *HTTPTransport) applyHeaders(request *http.Request) {
@@ -314,7 +314,8 @@ func decodeSSEResponses(data []byte) ([]Response, error) {
 	return responses, nil
 }
 
-func selectResponse(request Request, responses []Response) (Response, error) {
+// selectResponse 在候选响应中选择与本请求匹配的 JSON-RPC 响应。
+func (request Request) selectResponse(responses []Response) (Response, error) {
 	for _, response := range responses {
 		if response.JSONRPC != "2.0" {
 			continue
