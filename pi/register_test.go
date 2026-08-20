@@ -14,6 +14,59 @@ import (
 	"go.uber.org/fx/fxtest"
 )
 
+func TestCoreRegisterInjectsCompactionConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var loop *Loop
+	app := fxtest.New(
+		t,
+		CoreRegister,
+		fx.Supply(
+			WorkDir(root),
+			ThinkingEnabled(false),
+			providers.Options{
+				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
+				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
+			},
+			harness.CompactionConfig{ContextWindowTokens: 128000, EnablePrune: true},
+		),
+		fx.Populate(&loop),
+	)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+	if loop.compaction.ContextWindowTokens != 128000 || !loop.compaction.EnablePrune {
+		t.Fatalf("loop compaction config = %+v, want the supplied value (fx optional injection)", loop.compaction)
+	}
+}
+
+func TestCoreRegisterDefaultsZeroCompactionConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var loop *Loop
+	app := fxtest.New(
+		t,
+		CoreRegister,
+		fx.Supply(
+			WorkDir(root),
+			ThinkingEnabled(false),
+			providers.Options{
+				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
+				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
+			},
+		),
+		fx.Populate(&loop),
+	)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+	if loop.compaction != (harness.CompactionConfig{}) {
+		t.Fatalf("loop compaction config = %+v, want zero value when not supplied", loop.compaction)
+	}
+}
+
 func TestReadOnlyToolsRegisterExposesOnlyRead(t *testing.T) {
 	got := resolveRegisteredToolNames(t, ReadOnlyToolsRegister)
 	if want := []string{"read"}; !slices.Equal(got, want) {

@@ -102,8 +102,19 @@ func newScheduler(toolRuntime ToolRuntime) *Scheduler {
 	return NewScheduler(toolRuntime, defaultMaxParallelTools)
 }
 
-func newLoop(provider ai.Provider, scheduler *Scheduler, enabled ThinkingEnabled) *Loop {
-	return NewLoop(provider, scheduler, bool(enabled))
+type loopParams struct {
+	fx.In
+	Provider  ai.Provider
+	Scheduler *Scheduler
+	Enabled   ThinkingEnabled
+	// Compaction 是可选的压缩配置；未提供时使用零值（主动压缩与 L1 关闭）。
+	// 值类型与装配层提供的 harness.CompactionConfig 精确匹配——fx 不做
+	// 值/指针隐式转换，类型不一致会让 optional 字段静默落空。
+	Compaction harness.CompactionConfig `optional:"true"`
+}
+
+func newLoop(params loopParams) *Loop {
+	return NewLoopWithCompaction(params.Provider, params.Scheduler, bool(params.Enabled), params.Compaction)
 }
 
 func newToolRoot(workDir WorkDir) tools.Root {

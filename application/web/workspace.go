@@ -9,7 +9,19 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/harness"
 )
+
+// NewChatCompactionConfig 把业务开关与平台模型容量组合为 Agent 压缩配置。
+// pi 层不反向依赖 config 包，装配责任留在本层。
+func NewChatCompactionConfig(cfg *config.Config, platform providers.Options) harness.CompactionConfig {
+	compaction := harness.CompactionConfig{ContextWindowTokens: platform.ContextWindowTokens}
+	if cfg != nil {
+		compaction.EnablePrune = cfg.Agent.EnableContextPrune
+	}
+	return compaction
+}
 
 // NewChatWorkDir resolves the configured runtime Agent Workspace.
 func NewChatWorkDir(cfg *config.Config) (pi.WorkDir, error) {

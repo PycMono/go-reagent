@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 type providerStep struct {
 	response *ai.Message
 	err      error
+	stream   ai.Stream
 }
 
 type scriptedProvider struct {
@@ -41,6 +41,9 @@ func (p *scriptedProvider) Stream(
 
 	if p.afterCall != nil {
 		p.afterCall(call)
+	}
+	if step.stream != nil {
+		return step.stream
 	}
 	return newTestStream(withTestUsage(step.response), step.err)
 }
@@ -96,6 +99,28 @@ func TestLoopDoesNotRetryTerminalAICode(t *testing.T) {
 	}
 }
 
+func TestLoopDoesNotRetryAfterPublishingStreamContent(t *testing.T) {
+	streamErr := pierrors.Wrap(pierrors.ErrorCodeAITransient, "test", errors.New("stream interrupted"))
+	provider := &scriptedProvider{steps: []providerStep{
+		{
+			stream: &contractStream{
+				events: []ai.StreamEvent{
+					{Type: ai.StreamEventStart},
+					{Type: ai.StreamEventTextDelta, TextDelta: "partial"},
+					{Type: ai.StreamEventError},
+				},
+				err: streamErr,
+			},
+		},
+		{response: &ai.Message{Role: ai.RoleAssistant, Content: blocks("duplicate")}},
+	}}
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
+	_, err := runtime.Run(context.Background(), validAgentRequest("run"), nil)
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAITransient || provider.callCount() != 1 {
+		t.Fatalf("error/calls = %v/%d, want transient/1", err, provider.callCount())
+	}
+}
+
 func TestLoopCancelsDuringRetryBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &scriptedProvider{
@@ -119,6 +144,51 @@ func TestLoopCancelsDuringRetryBackoff(t *testing.T) {
 	}
 }
 
+func TestLoopNormalizesRetryBackoffCancelCause(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cause := errors.New("custom cancellation cause")
+	provider := &scriptedProvider{
+		steps: []providerStep{{
+			err: pierrors.Wrap(pierrors.ErrorCodeAITransient, "test", errors.New("temporary")),
+		}},
+		afterCall: func(call int) {
+			if call == 1 {
+				cancel(cause)
+			}
+		},
+	}
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
+	result, err := runtime.Run(ctx, validAgentRequest("run"), nil)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, cause) || provider.callCount() != 1 {
+		t.Fatalf("error/calls = %v/%d, want canceled without custom cause/1", err, provider.callCount())
+	}
+	if result.Termination.Reason != pi.RunTerminationCanceled {
+		t.Fatalf("termination = %#v, want canceled", result.Termination)
+	}
+}
+
+func TestLoopNormalizesRetryBackoffTimeoutCause(t *testing.T) {
+	cause := errors.New("custom timeout cause")
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 100*time.Millisecond, cause)
+	defer cancel()
+	provider := &scriptedProvider{
+		steps: []providerStep{{
+			err: pierrors.Wrap(pierrors.ErrorCodeAITransient, "test", errors.New("temporary")),
+		}},
+		afterCall: func(int) {
+			<-ctx.Done()
+		},
+	}
+	runtime := newPublicAgent(t, provider, &fakeToolRuntime{})
+	result, err := runtime.Run(ctx, validAgentRequest("run"), nil)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, cause) || provider.callCount() != 1 {
+		t.Fatalf("error/calls = %v/%d, want deadline without custom cause/1", err, provider.callCount())
+	}
+	if result.Termination.Reason != pi.RunTerminationDeadline {
+		t.Fatalf("termination = %#v, want deadline", result.Termination)
+	}
+}
+
 func TestAgentCompactsOnceAfterContextOverflow(t *testing.T) {
 	provider := &scriptedProvider{steps: []providerStep{
 		{err: pierrors.Wrap(pierrors.ErrorCodeAIContextOverflow, "test", errors.New("too long"))},
@@ -137,7 +207,8 @@ func TestAgentCompactsOnceAfterContextOverflow(t *testing.T) {
 	if len(tools[1]) != 0 || !messagesContain(requests[1], "请总结所提供的早期对话") {
 		t.Fatalf("summary request/tools = %#v/%#v", requests[1], tools[1])
 	}
-	if !messagesContain(requests[2], "# Earlier conversation summary\nold work summarized") ||
+	if !messagesContain(requests[2], `<compacted-summary untrusted="true">`) ||
+		!messagesContain(requests[2], "old work summarized") ||
 		!messagesContain(requests[2], "current question") {
 		t.Fatalf("retried request = %#v", requests[2])
 	}
@@ -151,14 +222,15 @@ func TestAgentCompactsOnceAfterContextOverflow(t *testing.T) {
 	}
 }
 
-func TestAgentReturnsSummaryFailureWithoutFallback(t *testing.T) {
+func TestAgentReturnsOriginalOverflowWhenSummaryFails(t *testing.T) {
+	// Reactive 的辅助压缩错误默认不覆盖原始 overflow；无 L1 进展时直接返回。
 	provider := &scriptedProvider{steps: []providerStep{
 		{err: pierrors.Wrap(pierrors.ErrorCodeAIContextOverflow, "test", errors.New("too long"))},
 		{err: pierrors.Wrap(pierrors.ErrorCodeAIUnauthorized, "test", errors.New("summary failed"))},
 	}}
 	runtime := newPublicAgent(t, provider, &agentToolRuntimeFake{})
 	result, err := runtime.Run(context.Background(), recoveryAgentRequest(), nil)
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIUnauthorized || provider.callCount() != 2 {
+	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIContextOverflow || provider.callCount() != 2 {
 		t.Fatalf("error/calls = %v/%d", err, provider.callCount())
 	}
 	if len(result.NewMessages) != 0 || len(result.Invocations) != 0 {
@@ -201,7 +273,8 @@ func recoveryAgentRequest() pi.RunRequest {
 	request := validAgentRequest("current question")
 	request.History = []pi.Message{
 		{ContentType: "text", Content: "old question", SenderType: "customer"},
-		{ContentType: "text", Content: "old answer", SenderType: "ai"},
+		// 历史需要足够大，才能通过新范围选择的净缩减过滤（投影字节 − 预估摘要 > 0）。
+		{ContentType: "text", Content: strings.Repeat("答", 4096), SenderType: "ai"},
 	}
 	return request
 }
@@ -214,78 +287,4 @@ func messagesContain(messages []ai.Message, fragment string) bool {
 		}
 	}
 	return false
-}
-
-func TestLoopInjectsToolRecoveryHintOnlyIntoProviderContext(t *testing.T) {
-	call := ai.ToolCall{ID: "call-1", Name: "edit", Arguments: json.RawMessage(`{"path":"a"}`)}
-	provider := &fakeProvider{responses: []*ai.Message{
-		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{call}},
-		{Role: ai.RoleAssistant, Content: blocks("done")},
-	}}
-	toolRuntime := &fakeToolRuntime{
-		definitions: []ai.ToolDefinition{{Name: "edit"}},
-		results: map[string]pi.ToolResult{"edit": {
-			ToolCallID: "call-1",
-			ToolName:   "edit",
-			Content:    blocks("在文件中未找到 oldText"),
-			IsError:    true,
-			ErrorCode:  pierrors.ErrorCodeToolEditNoMatch,
-		}},
-	}
-	reporter := &recordingReporter{}
-	runtime := newPublicAgent(t, provider, toolRuntime)
-	result, err := runtime.Run(context.Background(), validAgentRequest("edit file"), reporter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newMessages := result.NewMessages
-	if len(newMessages) != 3 || messageText(t, newMessages[1]) != "在文件中未找到 oldText" ||
-		strings.Contains(messageText(t, newMessages[1]), "Recovery Hint") {
-		t.Fatalf("NewMessages = %#v", newMessages)
-	}
-	observation := provider.requests[1][len(provider.requests[1])-1]
-	if !strings.Contains(messageText(t, observation), "在文件中未找到 oldText") ||
-		!strings.Contains(messageText(t, observation), "先使用 read") {
-		t.Fatalf("provider observation = %#v", observation)
-	}
-	var toolEnd *pi.ToolResult
-	for _, event := range reporter.Events() {
-		if event.Type == pi.AgentEventToolEnd {
-			toolEnd = event.Tool.Result
-		}
-	}
-	if toolEnd == nil || toolResultText(t, *toolEnd) != "在文件中未找到 oldText" ||
-		strings.Contains(toolResultText(t, *toolEnd), "Recovery Hint") {
-		t.Fatalf("ToolEnd result = %#v", toolEnd)
-	}
-	if len(toolRuntime.Calls()) != 1 {
-		t.Fatalf("tool calls = %d", len(toolRuntime.Calls()))
-	}
-}
-
-func TestLoopInjectsToolRecoveryHintSkipsUnknownCode(t *testing.T) {
-	call := ai.ToolCall{ID: "call-1", Name: "custom", Arguments: json.RawMessage(`{}`)}
-	provider := &fakeProvider{responses: []*ai.Message{
-		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{call}},
-		{Role: ai.RoleAssistant, Content: blocks("done")},
-	}}
-	toolRuntime := &fakeToolRuntime{
-		definitions: []ai.ToolDefinition{{Name: "custom"}},
-		results: map[string]pi.ToolResult{"custom": {
-			ToolCallID: "call-1",
-			ToolName:   "custom",
-			Content:    blocks("custom failed"),
-			IsError:    true,
-			ErrorCode:  pierrors.ErrorCodeToolRuntime,
-		}},
-	}
-	runtime := newPublicAgent(t, provider, toolRuntime)
-	_, err := runtime.Run(context.Background(), validAgentRequest("run"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation := provider.requests[1][len(provider.requests[1])-1]
-	if messageText(t, observation) != "custom failed" {
-		t.Fatalf("provider observation = %#v", observation)
-	}
 }

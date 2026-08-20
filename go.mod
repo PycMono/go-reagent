@@ -10,6 +10,7 @@ require (
 	github.com/PycMono/go-logger-sdk v1.0.5
 	github.com/PycMono/go-mysql-sdk v1.0.2
 	github.com/anthropics/anthropic-sdk-go v1.61.0
+	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.10.0

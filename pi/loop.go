@@ -20,6 +20,7 @@ type Loop struct {
 	provider       ai.Provider
 	scheduler      *Scheduler
 	enableThinking bool
+	compaction     harness.CompactionConfig
 }
 
 type loopResult struct {
@@ -29,7 +30,18 @@ type loopResult struct {
 
 // NewLoop creates the state-machine boundary for Agent execution.
 func NewLoop(provider ai.Provider, scheduler *Scheduler, enableThinking bool) *Loop {
-	return &Loop{provider: provider, scheduler: scheduler, enableThinking: enableThinking}
+	return NewLoopWithCompaction(provider, scheduler, enableThinking, harness.CompactionConfig{})
+}
+
+// NewLoopWithCompaction 与 NewLoop 相同，但显式注入压缩配置；
+// 零值配置关闭主动压缩与 L1，reactive 兜底始终启用。
+func NewLoopWithCompaction(
+	provider ai.Provider,
+	scheduler *Scheduler,
+	enableThinking bool,
+	compaction harness.CompactionConfig,
+) *Loop {
+	return &Loop{provider: provider, scheduler: scheduler, enableThinking: enableThinking, compaction: compaction}
 }
 
 func (l *Loop) runDetailed(
@@ -51,7 +63,7 @@ func (l *Loop) runDetailed(
 		}, err
 	}
 
-	availableTools := append([]ai.ToolDefinition(nil), runContext.Tools...)
+	availableTools := append(ai.ToolDefinitions(nil), runContext.Tools...)
 	slices.SortFunc(availableTools, func(a, b ai.ToolDefinition) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
@@ -69,9 +81,12 @@ func (l *Loop) runDetailed(
 		invocations = append(invocations, invocation)
 		return invocation
 	}
+
 	observeCompaction := func(usage ai.Usage) error {
 		return governor.observe(recordInvocation(ModelInvocationPhaseCompaction, usage))
 	}
+	compactionRt := newCompactionRuntime(l.compaction, runContext.CurrentInputIndex)
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
@@ -89,18 +104,26 @@ func (l *Loop) runDetailed(
 
 		if l.enableThinking {
 			reporter.Report(ctx, NewThinkingEvent())
-			generated, err := l.generate(ctx, contextHistory, nil, nil, observeCompaction)
+			compactedHistory, compactErr := l.maybeCompact(ctx, contextHistory, nil, compactionRt, observeCompaction)
+			if compactErr != nil {
+				return finish(fmt.Errorf("thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", compactErr)))
+			}
+			
+			contextHistory = compactedHistory
+			generated, err := l.generate(ctx, contextHistory, nil, nil, observeCompaction, compactionRt)
 			contextHistory = generated.context
 			if err != nil {
-				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
+				return finish(fmt.Errorf("thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
+
 			thinkResp := generated.message
-			if err := thinkResp.ValidateThinking(); err != nil {
+			if err = thinkResp.ValidateThinking(); err != nil {
 				return finish(fmt.Errorf("Thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", err)))
 			}
-			if err := governor.observe(recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)); err != nil {
+			if err = governor.observe(recordInvocation(ModelInvocationPhaseThinking, *thinkResp.Usage)); err != nil {
 				return finish(err)
 			}
+
 			contextHistory = append(contextHistory, *thinkResp, ai.Message{
 				Role:    ai.RoleUser,
 				Content: []ai.ContentBlock{ai.TextBlock("请依据上述计划进入 Action。匹配技能时先完整读取对应 SKILL.md。")},
@@ -112,9 +135,14 @@ func (l *Loop) runDetailed(
 		}
 		reporter.Report(ctx, NewMessageStartEvent())
 
+		compactedHistory, compactErr := l.maybeCompact(ctx, contextHistory, availableTools, compactionRt, observeCompaction)
+		if compactErr != nil {
+			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", compactErr)))
+		}
+		contextHistory = compactedHistory
 		generated, err := l.generate(ctx, contextHistory, availableTools, func(block ai.ContentBlock) {
 			reporter.Report(ctx, NewMessageUpdateEvent(block))
-		}, observeCompaction)
+		}, observeCompaction, compactionRt)
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
 		}
@@ -174,8 +202,7 @@ func (l *Loop) runDetailed(
 				ToolName:   result.ToolName,
 				IsError:    result.IsError,
 			}
-			modelMessage := toolRecoveryMessage(rawMessage, result.ErrorCode)
-			contextHistory = append(contextHistory, modelMessage)
+			contextHistory = append(contextHistory, rawMessage)
 			newMessages = append(newMessages, rawMessage)
 		}
 	}
