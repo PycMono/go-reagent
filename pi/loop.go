@@ -88,7 +88,7 @@ func (l *Loop) runDetailed(
 			logsdk.Any("component", "engine"), logsdk.Any("turn", turnCount))
 
 		if l.enableThinking {
-			emit(ctx, reporter, NewThinkingEvent())
+			reporter.Report(ctx, NewThinkingEvent())
 			generated, err := l.generate(ctx, contextHistory, nil, nil, observeCompaction)
 			contextHistory = generated.context
 			if err != nil {
@@ -110,10 +110,10 @@ func (l *Loop) runDetailed(
 		if err := ctx.Err(); err != nil {
 			return finish(fmt.Errorf("Agent 运行已取消: %w", err))
 		}
-		emit(ctx, reporter, NewMessageStartEvent())
+		reporter.Report(ctx, NewMessageStartEvent())
 
 		generated, err := l.generate(ctx, contextHistory, availableTools, func(block ai.ContentBlock) {
-			emit(ctx, reporter, NewMessageUpdateEvent(block))
+			reporter.Report(ctx, NewMessageUpdateEvent(block))
 		}, observeCompaction)
 		if err != nil {
 			return finish(fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", err)))
@@ -131,14 +131,14 @@ func (l *Loop) runDetailed(
 			if len(actionResp.ToolCalls) == 0 {
 				contextHistory = append(contextHistory, *actionResp)
 				newMessages = append(newMessages, *actionResp)
-				emit(ctx, reporter, NewMessageEndEvent(*actionResp))
+				reporter.Report(ctx, NewMessageEndEvent(*actionResp))
 			}
 			return finish(observeErr)
 		}
 
 		contextHistory = append(contextHistory, *actionResp)
 		newMessages = append(newMessages, *actionResp)
-		emit(ctx, reporter, NewMessageEndEvent(*actionResp))
+		reporter.Report(ctx, NewMessageEndEvent(*actionResp))
 
 		if len(actionResp.ToolCalls) == 0 {
 			return finish(nil)
@@ -155,7 +155,7 @@ func (l *Loop) runDetailed(
 			logsdk.Any("execution_mode", mode),
 		)
 		observer := func(ctx context.Context, event ToolEvent) {
-			emit(ctx, reporter, NewAgentToolEvent(event))
+			reporter.Report(ctx, NewAgentToolEvent(event))
 		}
 
 		results, err := l.scheduler.Schedule(ctx, actionResp.ToolCalls, availableTools, observer)
@@ -179,14 +179,4 @@ func (l *Loop) runDetailed(
 			newMessages = append(newMessages, rawMessage)
 		}
 	}
-}
-
-// emit 向可选 Reporter 发布事件；nil Reporter 表示调用方不订阅事件，
-// 这是本文件唯一的 nil 判断点。
-func emit(ctx context.Context, reporter Reporter, event AgentEvent) {
-	if reporter == nil {
-		return
-	}
-
-	reporter.Report(ctx, event)
 }

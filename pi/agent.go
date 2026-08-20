@@ -49,6 +49,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) 
 	}
 
 	governor := newRunGovernor(request.Limits)
+	if reporter == nil {
+		reporter = nopReporter{}
+	}
 	loopResult, err := a.loop.runDetailed(ctx, runContext, reporter, governor)
 	result.NewMessages = loopResult.newMessages
 	result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
