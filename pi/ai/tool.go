@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 // ToolCall 表示模型发起的一次工具调用请求。
@@ -86,4 +87,18 @@ type UpdateEmitter func(ToolUpdate)
 type Tool interface {
 	Definition() ToolDefinition
 	Execute(context.Context, json.RawMessage, UpdateEmitter) (ToolOutput, error)
+}
+
+// IsNilTool 报告工具接口是否为空或装有一个类型化 nil 值。
+func IsNilTool(tool Tool) bool {
+	if tool == nil {
+		return true
+	}
+	value := reflect.ValueOf(tool)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
