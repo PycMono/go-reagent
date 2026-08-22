@@ -110,7 +110,7 @@ func (s *Service) executeRun(
 	var result pi.RunResult
 	var terminationReason string
 	runErr := contexttracing.WithSpan(ctx, piobservability.SpanNameConversationRun, func(ctx context.Context) error {
-		ctx = contexttracing.WithKV(ctx,
+		contexttracing.WithKV(ctx,
 			contexttracing.KV(piobservability.AttrRunID, runID),
 			contexttracing.KV(piobservability.AttrGenAIConversationID, conversationID),
 			contexttracing.KV(piobservability.AttrProfileCode, profileCode),

@@ -227,7 +227,7 @@ func (l *Loop) runTurnIn(
 	rt *compactionRuntime,
 	observeCompaction invocationObserver,
 ) (done bool, err error) {
-	ctx = contexttracing.WithKV(ctx,
+	contexttracing.WithKV(ctx,
 		contexttracing.KV(observability.AttrTurnIndex, turnCount),
 		contexttracing.KV(observability.AttrContextMessageCount, len(state.contextHistory)),
 		contexttracing.KV(observability.AttrContextEstimatedToken,
@@ -327,7 +327,7 @@ func (l *Loop) runTurnIn(
 	}
 
 	mode := l.scheduler.Mode(actionResp.ToolCalls, state.availableTools)
-	ctx = contexttracing.WithKV(ctx,
+	contexttracing.WithKV(ctx,
 		contexttracing.KV(observability.AttrToolsRequestedCount, len(actionResp.ToolCalls)),
 		contexttracing.KV(observability.AttrToolsExecutionMode, mode),
 	)

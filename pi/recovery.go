@@ -51,7 +51,7 @@ func (l *Loop) generateWithSpan(
 	rt *compactionRuntime,
 ) (result generationResult, err error) {
 	err = contexttracing.WithSpan(ctx, observability.SpanNameGenerate, func(ctx context.Context) error {
-		ctx = contexttracing.WithKV(ctx, contexttracing.KV(observability.AttrGenerationPhase, string(phase)))
+		contexttracing.WithKV(ctx, contexttracing.KV(observability.AttrGenerationPhase, string(phase)))
 
 		state := &generateState{phase: phase, rt: rt}
 		var genErr error

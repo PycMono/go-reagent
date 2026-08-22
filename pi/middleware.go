@@ -61,7 +61,7 @@ func tracingMiddleware() Middleware {
 		return func(ctx context.Context, execution Execution, emit ai.UpdateEmitter) (output ai.ToolOutput, err error) {
 			startedAt := time.Now()
 			err = contexttracing.WithSpan(ctx, observability.ToolSpanName(execution.Definition.Name), func(ctx context.Context) error {
-				ctx = contexttracing.WithKV(ctx,
+				contexttracing.WithKV(ctx,
 					contexttracing.OperationName("execute_tool"),
 					contexttracing.ToolName(execution.Definition.Name),
 					contexttracing.ToolCallID(execution.Call.ID),

@@ -207,7 +207,7 @@ func (l *Loop) compactWithSpan(
 	rt *compactionRuntime,
 ) (outcome compactionOutcome) {
 	contexttracing.WithSpan(ctx, observability.SpanNameCompaction, func(ctx context.Context) error {
-		ctx = contexttracing.WithKV(ctx,
+		contexttracing.WithKV(ctx,
 			contexttracing.KV(observability.AttrCompactionReason, string(reason)),
 			contexttracing.KV(observability.AttrCompactionBeforeMessageCount, len(messages)),
 			contexttracing.KV(observability.AttrCompactionBeforeTokens,
