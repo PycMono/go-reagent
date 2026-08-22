@@ -59,12 +59,13 @@ func (t *CostTracker) Stream(
 	messages []ai.Message,
 	tools []ai.ToolDefinition,
 ) ai.Stream {
-	return &trackingStream{
+	return &CostTrackerStream{
 		ctx: ctx, next: t.next.Stream(ctx, messages, tools), tracker: t, startedAt: t.now(),
 	}
 }
 
-type trackingStream struct {
+// CostTrackerStream meters one model response stream for its owning CostTracker.
+type CostTrackerStream struct {
 	ctx       context.Context
 	next      ai.Stream
 	tracker   *CostTracker
@@ -81,7 +82,7 @@ type trackingStream struct {
 	hasTTFT bool
 }
 
-func (s *trackingStream) Next() bool {
+func (s *CostTrackerStream) Next() bool {
 	if !s.next.Next() {
 		return false
 	}
@@ -95,13 +96,13 @@ func (s *trackingStream) Next() bool {
 
 // StreamTTFT 实现 streamTimingReader：返回首个非空 Text Delta 的延迟
 // Snapshot；未观测到时 ok=false。
-func (s *trackingStream) StreamTTFT() (time.Duration, bool) {
+func (s *CostTrackerStream) StreamTTFT() (time.Duration, bool) {
 	return s.ttft, s.hasTTFT
 }
 
-func (s *trackingStream) Current() ai.StreamEvent { return s.current }
+func (s *CostTrackerStream) Current() ai.StreamEvent { return s.current }
 
-func (s *trackingStream) Result() (*ai.Message, error) {
+func (s *CostTrackerStream) Result() (*ai.Message, error) {
 	if s.resolved {
 		return s.response, s.err
 	}
@@ -117,7 +118,7 @@ func (s *trackingStream) Result() (*ai.Message, error) {
 	return s.response, s.err
 }
 
-func (s *trackingStream) Close() error { return s.next.Close() }
+func (s *CostTrackerStream) Close() error { return s.next.Close() }
 
 func (t *CostTracker) meter(
 	ctx context.Context,

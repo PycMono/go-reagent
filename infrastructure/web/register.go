@@ -15,6 +15,5 @@ var Register = fx.Options(
 	infrastructure.Register,
 	observability.Register,
 	controller.Register,
-	fx.Provide(gingext.NewEngine, gingext.NewHTTPServer),
-	fx.Invoke(gingext.RegisterLifecycle),
+	gingext.Register,
 )

@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/PycMono/go-context-sdk/bizctx"
+	ginsdk "github.com/PycMono/go-gin-sdk"
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	"github.com/PycMono/go-reagent/common/dto"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/common/vo"
-	"github.com/PycMono/go-reagent/infrastructure/driver/gingext"
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,61 +24,61 @@ func NewController(service *chatservice.Service) *Controller {
 func (ctl *Controller) CreateConversation(c *gin.Context) {
 	var param dto.CreateConversationDTO
 	if err := c.ShouldBindJSON(&param); err != nil {
-		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	data, err := ctl.service.CreateConversation(c.Request.Context(), userID(c), param)
-	gingext.Send(c, data, err)
+	ginsdk.Send(c, data, err, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) ListAgentProfiles(c *gin.Context) {
-	gingext.Send(c, ctl.service.ListAgentProfiles(), nil)
+	ginsdk.Send(c, ctl.service.ListAgentProfiles(), nil, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) ListConversations(c *gin.Context) {
 	var query dto.ListConversationsQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	data, err := ctl.service.ListConversations(c.Request.Context(), userID(c), query)
-	gingext.Send(c, data, err)
+	ginsdk.Send(c, data, err, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) ListMessages(c *gin.Context) {
 	var query dto.ListMessagesQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	data, err := ctl.service.ListMessages(c.Request.Context(), userID(c), c.Param("id"), query)
-	gingext.Send(c, data, err)
+	ginsdk.Send(c, data, err, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) RenameConversation(c *gin.Context) {
 	var param dto.RenameConversationDTO
 	if err := c.ShouldBindJSON(&param); err != nil {
-		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	err := ctl.service.RenameConversation(c.Request.Context(), userID(c), c.Param("id"), param)
-	gingext.Send(c, nil, err)
+	ginsdk.Send(c, nil, err, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) DeleteConversation(c *gin.Context) {
 	err := ctl.service.DeleteConversation(c.Request.Context(), userID(c), c.Param("id"))
-	gingext.Send(c, nil, err)
+	ginsdk.Send(c, nil, err, commonerrors.HTTPStatusForCode)
 }
 
 func (ctl *Controller) StartRun(c *gin.Context) {
 	var param dto.StartRunDTO
 	if err := c.ShouldBindJSON(&param); err != nil {
-		gingext.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err))
+		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	run, err := ctl.service.StartRun(c.Request.Context(), userID(c), c.Param("id"), param)
 	if err != nil {
-		gingext.Send(c, nil, err)
+		ginsdk.Send(c, nil, err, commonerrors.HTTPStatusForCode)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (ctl *Controller) StartRun(c *gin.Context) {
 
 func (ctl *Controller) CancelRun(c *gin.Context) {
 	err := ctl.service.CancelRun(c.Request.Context(), userID(c), c.Param("id"), c.Param("run_id"))
-	gingext.Send(c, nil, err)
+	ginsdk.Send(c, nil, err, commonerrors.HTTPStatusForCode)
 }
 
 func writeSSE(c *gin.Context, event vo.RunEventVO) error {
