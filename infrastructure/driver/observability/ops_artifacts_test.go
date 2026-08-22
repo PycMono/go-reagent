@@ -51,10 +51,10 @@ func TestOpsArtifactsReferenceKnownMetrics(t *testing.T) {
 	prefixes := opsSeriesPrefixes(piobservability.DomainMetricDefinitions())
 
 	files := []string{
-		"../../deploy/observability/prometheus-rules.yaml",
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-agent.json",
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-model.json",
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-tool.json",
+		"../../../deploy/observability/prometheus-rules.yaml",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-agent.json",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-model.json",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-tool.json",
 	}
 	for _, file := range files {
 		content, err := os.ReadFile(file)
@@ -82,14 +82,14 @@ func TestOpsArtifactsReferenceKnownMetrics(t *testing.T) {
 // TestOpsArtifactsParse 校验部署件语法有效。
 func TestOpsArtifactsParse(t *testing.T) {
 	for _, file := range []string{
-		"../../deploy/observability/docker-compose.yaml",
-		"../../deploy/observability/otel-collector.yaml",
-		"../../deploy/observability/otel-collector-tail.yaml",
-		"../../deploy/observability/prometheus.yml",
-		"../../deploy/observability/prometheus-rules.yaml",
-		"../../deploy/observability/tempo.yaml",
-		"../../deploy/observability/grafana/provisioning/datasources/datasources.yaml",
-		"../../deploy/observability/grafana/provisioning/dashboards/dashboards.yaml",
+		"../../../deploy/observability/docker-compose.yaml",
+		"../../../deploy/observability/otel-collector.yaml",
+		"../../../deploy/observability/otel-collector-tail.yaml",
+		"../../../deploy/observability/prometheus.yml",
+		"../../../deploy/observability/prometheus-rules.yaml",
+		"../../../deploy/observability/tempo.yaml",
+		"../../../deploy/observability/grafana/provisioning/datasources/datasources.yaml",
+		"../../../deploy/observability/grafana/provisioning/dashboards/dashboards.yaml",
 	} {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -101,9 +101,9 @@ func TestOpsArtifactsParse(t *testing.T) {
 		}
 	}
 	for _, file := range []string{
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-agent.json",
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-model.json",
-		"../../deploy/observability/grafana/provisioning/dashboards/reagent-tool.json",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-agent.json",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-model.json",
+		"../../../deploy/observability/grafana/provisioning/dashboards/reagent-tool.json",
 	} {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -124,7 +124,7 @@ func TestOpsArtifactsParse(t *testing.T) {
 
 // TestTailCollectorKeepsAbnormalTraces 锁定 §13 Tail 策略的关键保留项。
 func TestTailCollectorKeepsAbnormalTraces(t *testing.T) {
-	content, err := os.ReadFile("../../deploy/observability/otel-collector-tail.yaml")
+	content, err := os.ReadFile("../../../deploy/observability/otel-collector-tail.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

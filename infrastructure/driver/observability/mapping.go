@@ -4,7 +4,6 @@
 //
 // 本包不重复创建 TracerProvider、MeterProvider、Exporter、Resource、
 // W3C Propagator 或 Metrics Listener——这些全部由 go-observability-sdk
-// Runtime 唯一拥有（设计 §3、§6）。
 package observability
 
 import (
@@ -28,6 +27,7 @@ func MapConfig(cfg config.ObservabilityConfig, version string) sdkobservability.
 	if !cfg.Enabled {
 		return mapped
 	}
+
 	mapped.Tracing = sdkobservability.TracingConfig{
 		Enabled:            cfg.Tracing.Enabled,
 		Endpoint:           cfg.OTLP.Endpoint,

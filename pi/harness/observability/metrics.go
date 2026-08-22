@@ -5,7 +5,7 @@ package observability
 //
 // MetricDefinition 是 pi 私有的定义载体：pi 只依赖 OTel API 与
 // go-observability-sdk/metrics 的记录 API，Definition 的注册转换由
-// infrastructure/observability 负责（OBS-007 边界）。
+// infrastructure/driver/observability 负责（OBS-007 边界）。
 
 // ---------- Metrics 名称与 Label Key（§8） ----------
 
@@ -76,7 +76,7 @@ var (
 // ---------- 领域 Metric Definition ----------
 
 // MetricKind 是领域指标的 Instrument 类型。取值与
-// go-observability-sdk/metrics.Kind 对齐；由 infrastructure/observability
+// go-observability-sdk/metrics.Kind 对齐；由 infrastructure/driver/observability
 // 负责转换注册。
 type MetricKind string
 
