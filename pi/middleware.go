@@ -7,11 +7,14 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
 type Execution struct {
@@ -37,13 +40,60 @@ const (
 )
 
 // DefaultMiddlewareRegistrations returns a fresh ordered default middleware set.
+//
+// tracing（Order=5）包住现有 Middleware 与真实 Tool 调用（§4.6）；未注册
+// Tool 在 ToolRuntime 入口即返回，不经过本链，不创建执行 Span。
 func DefaultMiddlewareRegistrations() []MiddlewareRegistration {
 	return []MiddlewareRegistration{
+		{Name: "tracing", Order: 5, Middleware: tracingMiddleware()},
 		{Name: "panic_recovery", Order: 10, Middleware: panicRecoveryMiddleware()},
 		{Name: "schema_validation", Order: 20, Middleware: schemaValidationMiddleware()},
 		{Name: "logging", Order: 30, Middleware: loggingMiddleware()},
 		{Name: "event_forwarding", Order: 40, Middleware: eventForwardingMiddleware()},
 	}
+}
+
+// tracingMiddleware 为每次实际 Tool 执行创建 execute_tool Span 并记录
+// 执行指标（§4.6、§8.3）。Span 只记录元数据与长度，不采集参数/输出正文
+// （§11 content.mode=none）；状态与生命周期由 WithSpan 管理。
+func tracingMiddleware() Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, execution Execution, emit ai.UpdateEmitter) (output ai.ToolOutput, err error) {
+			startedAt := time.Now()
+			err = contexttracing.WithSpan(ctx, observability.ToolSpanName(execution.Definition.Name), func(ctx context.Context) error {
+				ctx = contexttracing.WithKV(ctx,
+					contexttracing.OperationName("execute_tool"),
+					contexttracing.ToolName(execution.Definition.Name),
+					contexttracing.ToolCallID(execution.Call.ID),
+					contexttracing.KV(observability.AttrToolParallelSafe, execution.Definition.ParallelSafe),
+					contexttracing.KV(observability.AttrToolArgumentsSize, len(execution.Call.Arguments)),
+				)
+
+				var runErr error
+				output, runErr = next(ctx, execution, emit)
+
+				// Tool 业务性失败（IsError）设置 Error Status，但 Scheduler 成功
+				// 返回这类结果不会把整个 Run 标记为内部错误（§4.9）。
+				fields := []contexttracing.Field{
+					contexttracing.KV(observability.AttrToolIsError, runErr != nil),
+					contexttracing.KV(observability.AttrToolOutputSize, toolOutputSize(output)),
+				}
+				fields = append(fields, observability.ErrorFields(runErr)...)
+				contexttracing.WithKV(ctx, fields...)
+				observability.RecordToolExecution(ctx, execution.Definition.Name, runErr, time.Since(startedAt))
+				return runErr
+			}, contexttracing.WithErrorClassifier(observability.ClassifyError))
+			return output, err
+		}
+	}
+}
+
+func toolOutputSize(output ai.ToolOutput) int {
+	size := 0
+	for _, block := range output.Content {
+		size += len(block.Text)
+	}
+	return size
 }
 
 func composeHandler(registrations []MiddlewareRegistration) Handler {

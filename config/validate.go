@@ -37,7 +37,214 @@ func (config *Config) normalizeAndValidate() error {
 	if err := config.Conversation.normalizeAndValidate(&config.MySQL); err != nil {
 		return err
 	}
+	if err := config.Observability.normalizeAndValidate(); err != nil {
+		return err
+	}
 	return config.Redis.normalizeAndValidate()
+}
+
+// observability 默认值与 go-observability-sdk v1.0.1 保持一致（§12）。
+const (
+	defaultObservabilityTimeoutSeconds     = 5
+	defaultObservabilityMaxQueueSize       = 2048
+	defaultObservabilityMaxExportBatchSize = 512
+	defaultObservabilityMetricsHost        = "127.0.0.1"
+	defaultObservabilityMetricsPort        = 9464
+	defaultObservabilityMetricsPath        = "/metrics"
+)
+
+// observabilityNonProductionEnvironments 是允许 Insecure OTLP Endpoint 的
+// 非生产环境白名单（与 go-observability-sdk 一致）。
+var observabilityNonProductionEnvironments = map[string]struct{}{
+	"local": {}, "dev": {}, "development": {}, "test": {}, "testing": {}, "staging": {},
+}
+
+func (config *ObservabilityConfig) normalizeAndValidate() error {
+	if !config.Enabled {
+		return nil
+	}
+	config.ServiceName = strings.TrimSpace(config.ServiceName)
+	if config.ServiceName == "" {
+		return errors.New("observability.service_name 不能为空")
+	}
+	config.Environment = strings.TrimSpace(config.Environment)
+	if err := config.OTLP.normalizeAndValidate(); err != nil {
+		return err
+	}
+	if err := config.Tracing.normalizeAndValidate(); err != nil {
+		return err
+	}
+	if err := config.Metrics.normalizeAndValidate(); err != nil {
+		return err
+	}
+	if err := config.Content.normalizeAndValidate(); err != nil {
+		return err
+	}
+	// 启用 Tracing 时 Endpoint 必须合法；Insecure 只允许 Loopback 或明确的
+	// 非生产环境（§12）。
+	if config.Tracing.Enabled {
+		if !validObservabilityOTLPTarget(config.OTLP.Endpoint) {
+			return errors.New("observability.otlp.endpoint 必须是合法的 OTLP/gRPC 目标")
+		}
+		if config.OTLP.Insecure && !isObservabilityLoopback(config.OTLP.Endpoint) && !isObservabilityNonProduction(config.Environment) {
+			return errors.New("observability.otlp.insecure 只允许 loopback 或非生产环境")
+		}
+	}
+	return nil
+}
+
+func (config *ObservabilityOTLPConfig) normalizeAndValidate() error {
+	config.Endpoint = strings.TrimSpace(config.Endpoint)
+	// OTLP gRPC Exporter 只接受 host:port 目标；剥掉用户配置里可能携带的
+	// http(s):// scheme，避免 "too many colons in address" 导出失败。
+	config.Endpoint = strings.TrimPrefix(config.Endpoint, "http://")
+	config.Endpoint = strings.TrimPrefix(config.Endpoint, "https://")
+	config.Protocol = strings.TrimSpace(config.Protocol)
+	if config.Protocol == "" {
+		config.Protocol = "grpc"
+	}
+	if config.Protocol != "grpc" {
+		return errors.New("observability.otlp.protocol 本期只能是 grpc")
+	}
+	if config.TimeoutSeconds == 0 {
+		config.TimeoutSeconds = defaultObservabilityTimeoutSeconds
+	}
+	if config.MaxQueueSize == 0 {
+		config.MaxQueueSize = defaultObservabilityMaxQueueSize
+	}
+	if config.MaxExportBatchSize == 0 {
+		config.MaxExportBatchSize = defaultObservabilityMaxExportBatchSize
+	}
+	if config.TimeoutSeconds < 0 || config.MaxQueueSize < 0 || config.MaxExportBatchSize < 0 {
+		return errors.New("observability.otlp 的 timeout_seconds、max_queue_size、max_export_batch_size 必须为正数")
+	}
+	if config.MaxExportBatchSize > config.MaxQueueSize {
+		return errors.New("observability.otlp.max_export_batch_size 不能大于 max_queue_size")
+	}
+	return nil
+}
+
+func (config *ObservabilityTracingConfig) normalizeAndValidate() error {
+	config.SamplingMode = strings.TrimSpace(config.SamplingMode)
+	if config.SamplingMode == "" {
+		config.SamplingMode = "head"
+	}
+	if config.SamplingMode != "head" && config.SamplingMode != "tail" {
+		return errors.New("observability.tracing.sampling_mode 只能是 head 或 tail")
+	}
+	if config.SampleRatio == nil {
+		ratio := 1.0
+		config.SampleRatio = &ratio
+	} else {
+		ratio := *config.SampleRatio
+		if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+			return errors.New("observability.tracing.sample_ratio 必须在 (0,1] 区间内")
+		}
+		// go-observability-sdk v1.0.1 会把 0 归一化为 1.0；需要 0% 采样时应关闭
+		// Tracing，不得用 0 表示（§12）。
+		if ratio == 0 {
+			return errors.New("observability.tracing.sample_ratio 不允许显式 0：需要 0% 采样请关闭 tracing")
+		}
+		if config.SamplingMode == "tail" && ratio != 1.0 {
+			return errors.New("observability.tracing.sampling_mode=tail 时 sample_ratio 必须为 1.0")
+		}
+	}
+	for index, upstream := range config.TrustedUpstreams {
+		config.TrustedUpstreams[index] = strings.TrimSpace(upstream)
+		if err := parseTrustedUpstream(config.TrustedUpstreams[index]); err != nil {
+			return errors.New("observability.tracing.trusted_upstreams 必须是合法的 IP 或 CIDR")
+		}
+	}
+	return nil
+}
+
+// parseTrustedUpstream 接受单个 IP 或 CIDR。
+func parseTrustedUpstream(value string) error {
+	if value == "" {
+		return errors.New("empty upstream")
+	}
+	if strings.Contains(value, "/") {
+		_, _, err := net.ParseCIDR(value)
+		return err
+	}
+	if ip := net.ParseIP(value); ip == nil {
+		return errors.New("invalid IP")
+	}
+	return nil
+}
+
+func (config *ObservabilityMetricsConfig) normalizeAndValidate() error {
+	config.Host = strings.TrimSpace(config.Host)
+	if config.Host == "" {
+		config.Host = defaultObservabilityMetricsHost
+	}
+	if config.Port == 0 {
+		config.Port = defaultObservabilityMetricsPort
+	}
+	if config.Port < 1 || config.Port > 65535 {
+		return errors.New("observability.metrics.port 必须在 1 到 65535 之间")
+	}
+	config.Path = strings.TrimSpace(config.Path)
+	if config.Path == "" {
+		config.Path = defaultObservabilityMetricsPath
+	}
+	if !strings.HasPrefix(config.Path, "/") || strings.Contains(config.Path, "//") ||
+		strings.ContainsAny(config.Path, "?#*") {
+		return errors.New("observability.metrics.path 必须以 / 开头且不能包含 query、fragment、通配符或重复斜杠")
+	}
+	if config.RuntimeMetrics == nil {
+		enabled := true
+		config.RuntimeMetrics = &enabled
+	}
+	return nil
+}
+
+func (config *ObservabilityContentConfig) normalizeAndValidate() error {
+	config.Mode = strings.TrimSpace(config.Mode)
+	if config.Mode == "" {
+		config.Mode = "none"
+	}
+	if config.Mode != "none" {
+		return errors.New("observability.content.mode 本期只能是 none")
+	}
+	return nil
+}
+
+// validObservabilityOTLPTarget 校验 OTLP/gRPC Target：host[:port] 或带
+// http(s)/dns scheme 的形式，与 go-observability-sdk 的判定保持一致。
+func validObservabilityOTLPTarget(endpoint string) bool {
+	if host, _, err := net.SplitHostPort(endpoint); err == nil {
+		return host != ""
+	}
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://")
+	trimmed = strings.TrimPrefix(trimmed, "dns:///")
+	if trimmed == "" || strings.ContainsAny(trimmed, " \t/") {
+		return false
+	}
+	return true
+}
+
+func isObservabilityLoopback(endpoint string) bool {
+	host := endpoint
+	if h, _, err := net.SplitHostPort(endpoint); err == nil {
+		host = h
+	} else {
+		host = strings.TrimPrefix(strings.TrimPrefix(host, "http://"), "https://")
+		host = strings.TrimPrefix(host, "dns:///")
+		if index := strings.Index(host, "/"); index >= 0 {
+			host = host[:index]
+		}
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+func isObservabilityNonProduction(environment string) bool {
+	_, ok := observabilityNonProductionEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+	return ok
 }
 
 func (config *MCPConfig) normalizeAndValidate() error {

@@ -1,0 +1,37 @@
+{
+  "title": "Reagent Agent",
+  "uid": "reagent-agent",
+  "schemaVersion": 39,
+  "tags": ["reagent"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Runs / 终止原因",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{"expr": "sum by (termination_reason) (rate(reagent_agent_runs_total[5m]))", "legendFormat": "{{termination_reason}}"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Run 时延 P50/P95/P99",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(reagent_agent_run_duration_seconds_bucket[5m])))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(reagent_agent_run_duration_seconds_bucket[5m])))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(reagent_agent_run_duration_seconds_bucket[5m])))", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "每 Run 成本（USD）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [{"expr": "sum(rate(reagent_model_cost_USD_total[5m])) / sum(rate(reagent_agent_runs_total[5m]))", "legendFormat": "cost/run"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Turn / Invocation 分布 P95",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(reagent_agent_run_turns_bucket[5m])))", "legendFormat": "turns"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(reagent_agent_run_invocations_bucket[5m])))", "legendFormat": "invocations"}
+      ]
+    }
+  ]
+}

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const maxHTTPResponseBytes int64 = 16 << 20
@@ -54,6 +56,9 @@ type HTTPTransport struct {
 	headers  http.Header
 	timeout  time.Duration
 	client   *http.Client
+	// baseTransport 是 otelhttp 包装下的真实 Transport；otelhttp.Transport
+	// 不实现 CloseIdleConnections，关闭时空闲连接必须直达它。
+	baseTransport http.RoundTripper
 
 	sessionMu sync.RWMutex
 	sessionID string
@@ -72,16 +77,28 @@ func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
 		return nil, err
 	}
 	client := &http.Client{}
+	baseTransport := http.DefaultTransport
 	if options.HTTPClient != nil {
 		*client = *options.HTTPClient
+		if options.HTTPClient.Transport != nil {
+			baseTransport = options.HTTPClient.Transport
+		}
 	}
+	// 出站 HTTP 固定包装 otelhttp（§15.3、§16.2）：为每次 MCP 请求创建
+	// CLIENT 子 Span 并仅向该已配置目标注入 W3C traceparent/tracestate；
+	// 不复制入站 Baggage、Cookie 或 Authorization。全局 Provider 未安装时
+	// Noop，请求行为不变。
+	client.Transport = otelhttp.NewTransport(baseTransport)
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) == 0 || !strings.EqualFold(request.URL.Host, via[0].URL.Host) {
 			return errors.New("mcp redirect to a different host is not allowed")
 		}
 		return nil
 	}
-	return &HTTPTransport{endpoint: endpoint, headers: headers, timeout: options.Timeout, client: client}, nil
+	return &HTTPTransport{
+		endpoint: endpoint, headers: headers, timeout: options.Timeout,
+		client: client, baseTransport: baseTransport,
+	}, nil
 }
 
 // validateEndpoint 校验并解析传输端点：必须是绝对的 HTTP(S) URL，
@@ -360,5 +377,7 @@ func (transport *HTTPTransport) Close(ctx context.Context) error {
 }
 
 func (transport *HTTPTransport) closeIdleConnections() {
-	transport.client.CloseIdleConnections()
+	if closer, ok := transport.baseTransport.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }

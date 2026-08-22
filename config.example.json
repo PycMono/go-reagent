@@ -46,7 +46,8 @@
       "contextWindowTokens": 131072,
       "pricing": {
         "input_usd_per_million_tokens": 0.15,
-        "output_usd_per_million_tokens": 0.60
+        "output_usd_per_million_tokens": 0.60,
+        "cache_read_usd_per_million_tokens": 0.015
       }
     },
     {
@@ -101,5 +102,33 @@
     "conn_timeout": 3,
     "log_level": 3,
     "slow_threshold": 500
+  },
+  "observability": {
+    "enabled": false,
+    "service_name": "go-reagent",
+    "environment": "development",
+    "otlp": {
+      "endpoint": "127.0.0.1:4317",
+      "protocol": "grpc",
+      "insecure": true,
+      "timeout_seconds": 5,
+      "max_queue_size": 2048,
+      "max_export_batch_size": 512
+    },
+    "tracing": {
+      "enabled": true,
+      "sampling_mode": "head",
+      "sample_ratio": 1.0
+    },
+    "metrics": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 9464,
+      "path": "/metrics",
+      "runtime_metrics": true
+    },
+    "content": {
+      "mode": "none"
+    }
   }
 }

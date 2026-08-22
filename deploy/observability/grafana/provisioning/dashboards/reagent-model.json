@@ -1,0 +1,48 @@
+{
+  "title": "Reagent Model",
+  "uid": "reagent-model",
+  "schemaVersion": 39,
+  "tags": ["reagent"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "请求 / 错误率",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum by (provider, model, outcome) (rate(reagent_model_requests_total[5m]))", "legendFormat": "{{provider}}/{{model}}/{{outcome}}"}
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "P95 时延与 TTFT",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, model) (rate(gen_ai_client_operation_duration_seconds_bucket[5m])))", "legendFormat": "duration {{model}}"},
+        {"expr": "histogram_quantile(0.95, sum by (le, model) (rate(reagent_model_ttft_seconds_bucket[5m])))", "legendFormat": "ttft {{model}}"}
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Token 消耗（分类）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [{"expr": "sum by (token_type) (rate(reagent_model_tokens_total[5m]))", "legendFormat": "{{token_type}}"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "成本（按 CostQuality）",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [{"expr": "sum by (cost_quality) (rate(reagent_model_cost_USD_total[5m]))", "legendFormat": "{{cost_quality}}"}]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Retry / Overflow",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "sum by (reason) (rate(reagent_model_retries_total[5m]))", "legendFormat": "retry {{reason}}"},
+        {"expr": "sum(rate(reagent_model_context_overflows_total[5m]))", "legendFormat": "overflow"}
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "缓存命中率",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [{"expr": "sum(rate(reagent_model_tokens_total{token_type=\"cache_read\"}[5m])) / sum(rate(reagent_model_tokens_total{token_type=\"input_total\"}[5m]))", "legendFormat": "cache hit ratio"}]
+    }
+  ]
+}

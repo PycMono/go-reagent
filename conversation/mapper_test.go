@@ -85,7 +85,7 @@ func TestInvocationDomainMappingPreservesUsage(t *testing.T) {
 		},
 	}}
 
-	got := invocationsToDomain(want, "run-1")
+	got := invocationsToDomain(want, "run-1", "")
 	if len(got) != 1 || got[0].Sequence != 2 || got[0].Phase != "action" ||
 		got[0].PlatformID != "zhipu" || got[0].CostUSD != 0.000036 || got[0].RunID != "run-1" {
 		t.Fatalf("mapped invocations = %#v", got)

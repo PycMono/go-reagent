@@ -84,7 +84,7 @@ func PruneToolResults(messages []ai.Message, opts PruneOptions) ([]ai.Message, P
 		result[index] = pruned
 		stats.PrunedMessages++
 	}
-	
+
 	stats.BytesAfter = contentBytes(result)
 	return result, stats
 }

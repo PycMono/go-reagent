@@ -22,6 +22,55 @@ type Config struct {
 	Redis           RedisConfig         `json:"redis" yaml:"redis" toml:"redis"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
 	SnowflakeNodeID int                 `json:"snowflake_node_id" yaml:"snowflake_node_id" toml:"snowflake_node_id"`
+	Observability   ObservabilityConfig `json:"observability" yaml:"observability" toml:"observability"`
+}
+
+// ObservabilityConfig 是可观测性配置（设计 §12）。Enabled 默认 false，
+// 为 false 时子配置一律忽略且不校验。
+type ObservabilityConfig struct {
+	Enabled     bool                       `json:"enabled" yaml:"enabled" toml:"enabled"`
+	ServiceName string                     `json:"service_name" yaml:"service_name" toml:"service_name"`
+	Environment string                     `json:"environment" yaml:"environment" toml:"environment"`
+	OTLP        ObservabilityOTLPConfig    `json:"otlp" yaml:"otlp" toml:"otlp"`
+	Tracing     ObservabilityTracingConfig `json:"tracing" yaml:"tracing" toml:"tracing"`
+	Metrics     ObservabilityMetricsConfig `json:"metrics" yaml:"metrics" toml:"metrics"`
+	Content     ObservabilityContentConfig `json:"content" yaml:"content" toml:"content"`
+}
+
+type ObservabilityOTLPConfig struct {
+	Endpoint           string `json:"endpoint" yaml:"endpoint" toml:"endpoint"`
+	Protocol           string `json:"protocol" yaml:"protocol" toml:"protocol"`
+	Insecure           bool   `json:"insecure" yaml:"insecure" toml:"insecure"`
+	TimeoutSeconds     int    `json:"timeout_seconds" yaml:"timeout_seconds" toml:"timeout_seconds"`
+	MaxQueueSize       int    `json:"max_queue_size" yaml:"max_queue_size" toml:"max_queue_size"`
+	MaxExportBatchSize int    `json:"max_export_batch_size" yaml:"max_export_batch_size" toml:"max_export_batch_size"`
+}
+
+type ObservabilityTracingConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled" toml:"enabled"`
+	// SamplingMode 只接受 head 或 tail（§13）。
+	SamplingMode string `json:"sampling_mode" yaml:"sampling_mode" toml:"sampling_mode"`
+	// SampleRatio 用指针区分“未配置”和显式 0：go-observability-sdk v1.0.1
+	// 会把 0 归一化为 1.0，因此显式 0 必须拒绝（§12）；nil 归一化为 1.0。
+	SampleRatio *float64 `json:"sample_ratio" yaml:"sample_ratio" toml:"sample_ratio"`
+	// TrustedUpstreams 是可信上游的 IP 或 CIDR 列表（§7）：仅这些来源的请求
+	// 可以保留 Remote Parent（traceparent/tracestate），其他公网请求先剥离
+	// Trace Context 再创建内部 root Span。缺省为空，即不信任任何上游。
+	TrustedUpstreams []string `json:"trusted_upstreams" yaml:"trusted_upstreams" toml:"trusted_upstreams"`
+}
+
+type ObservabilityMetricsConfig struct {
+	Enabled bool   `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Host    string `json:"host" yaml:"host" toml:"host"`
+	Port    int    `json:"port" yaml:"port" toml:"port"`
+	Path    string `json:"path" yaml:"path" toml:"path"`
+	// RuntimeMetrics 显式配置，不依赖 bool 零值；nil 归一化为 true（§12）。
+	RuntimeMetrics *bool `json:"runtime_metrics" yaml:"runtime_metrics" toml:"runtime_metrics"`
+}
+
+type ObservabilityContentConfig struct {
+	// Mode 本期仅接受 none（§11）；其他值启动失败。
+	Mode string `json:"mode" yaml:"mode" toml:"mode"`
 }
 
 type AgentConfig struct {

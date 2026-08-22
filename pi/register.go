@@ -76,10 +76,19 @@ func newProvider(config providers.Options) (ai.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return observability.NewCostTracker(next, config.ID, config.Model, observability.Pricing{
-		InputUSDPerMillionTokens:  config.Pricing.InputUSDPerMillionTokens,
-		OutputUSDPerMillionTokens: config.Pricing.OutputUSDPerMillionTokens,
+	tracker, err := observability.NewCostTracker(next, config.ID, config.Model, observability.Pricing{
+		InputUSDPerMillionTokens:      config.Pricing.InputUSDPerMillionTokens,
+		OutputUSDPerMillionTokens:     config.Pricing.OutputUSDPerMillionTokens,
+		CacheReadUSDPerMillionTokens:  config.Pricing.CacheReadUSDPerMillionTokens,
+		CacheWriteUSDPerMillionTokens: config.Pricing.CacheWriteUSDPerMillionTokens,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// 装饰顺序固定：Loop → TracingProvider → CostTracker → Raw Provider（§5）。
+	// TracingProvider 只消费标准化 Usage 和包内 Timing Snapshot；Telemetry
+	// 关闭时 Span/Metric 经 SDK 全局 Noop 空转，业务结果不变（OBS-006）。
+	return observability.NewTracingProvider(tracker, string(config.Protocol), config.ID, config.Model), nil
 }
 
 func newPromptComposer(workDir WorkDir) *harness.PromptComposer {
@@ -111,10 +120,13 @@ type loopParams struct {
 	// 值类型与装配层提供的 harness.CompactionConfig 精确匹配——fx 不做
 	// 值/指针隐式转换，类型不一致会让 optional 字段静默落空。
 	Compaction harness.CompactionConfig `optional:"true"`
+	// Platform 提供 Metrics 的 provider/model Label（与 Ledger 口径一致）。
+	Platform providers.Options
 }
 
 func newLoop(params loopParams) *Loop {
-	return NewLoopWithCompaction(params.Provider, params.Scheduler, bool(params.Enabled), params.Compaction)
+	return NewLoopWithCompaction(params.Provider, params.Scheduler, bool(params.Enabled), params.Compaction,
+		WithLoopProviderIdentity(params.Platform.ID, params.Platform.Model))
 }
 
 func newToolRoot(workDir WorkDir) tools.Root {

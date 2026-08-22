@@ -12,13 +12,13 @@ import (
 
 func governorUsage(input, output int64) ai.Usage {
 	return ai.Usage{
-		PlatformID:                    "test",
-		Model:                         "model",
-		InputTokens:                   input,
-		OutputTokens:                  output,
-		InputPriceUSDPerMillionTokens: 1,
+		PlatformID:                     "test",
+		Model:                          "model",
+		InputTokens:                    input,
+		OutputTokens:                   output,
+		InputPriceUSDPerMillionTokens:  1,
 		OutputPriceUSDPerMillionTokens: 1,
-		CostUSD:                       float64(input+output) / 1_000_000,
+		CostUSD:                        float64(input+output) / 1_000_000,
 	}
 }
 

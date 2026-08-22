@@ -4,14 +4,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
+	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 )
+
+func stableErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	}
+	var codeErr commonerrors.CodeError
+	if errors.As(err, &codeErr) {
+		return strconv.Itoa(codeErr.Code())
+	}
+	return "internal"
+}
 
 type runner struct {
 	runtime      pi.Runner
@@ -53,11 +71,19 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Report
 			return result, commonerrors.ErrInternal.Wrap(errors.New("conversation runner: created conversation was not found"))
 		}
 	}
-	history, err := r.repository.ListMessagesByConversationID(ctx, conversation.ID, r.historyLimit)
-	if err != nil {
-		return result, err
-	}
-	historyMessages, err := messagesToHistory(history)
+	var historyMessages []pi.Message
+	err = contexttracing.WithSpan(ctx, piobservability.SpanNameConversationLoadHistory, func(loadCtx context.Context) error {
+		history, err := r.repository.ListMessagesByConversationID(loadCtx, conversation.ID, r.historyLimit)
+		if err != nil {
+			return err
+		}
+		converted, err := messagesToHistory(history)
+		if err != nil {
+			return err
+		}
+		historyMessages = converted
+		return nil
+	}, contexttracing.WithErrorClassifier(stableErrorCode))
 	if err != nil {
 		return result, err
 	}
@@ -82,14 +108,26 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Report
 	messages := make([]ai.Message, 0, 1+len(runtimeResult.NewMessages))
 	messages = append(messages, cloneMessage(request.Input))
 	messages = append(messages, cloneMessages(runtimeResult.NewMessages)...)
-	persistErr := r.repository.AppendTurn(
-		ctx,
-		userID,
-		conversationID,
-		conversation.Version,
-		messagesToDomain(messages, request.RunID),
-		invocationsToDomain(runtimeResult.Invocations, request.RunID),
-	)
+	// §10.2：取消后仍须保存终态——使用脱离取消的 3 秒超时 Context 执行
+	// AppendTurn；该 Context 仅用于终态持久化。
+	persistCtx := ctx
+	cancelPersist := func() {}
+	if ctx.Err() != nil {
+		persistCtx, cancelPersist = context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	}
+	defer cancelPersist()
+	// persist_turn Span 中原子保存消息与 Invocation（§3）。TraceID 取当前
+	// conversation.run 的 SpanContext，无效时写 NULL（§10.1）。
+	persistErr := contexttracing.WithSpan(persistCtx, piobservability.SpanNameConversationPersistTurn, func(spanCtx context.Context) error {
+		return r.repository.AppendTurn(
+			spanCtx,
+			userID,
+			conversationID,
+			conversation.Version,
+			messagesToDomain(messages, request.RunID),
+			invocationsToDomain(runtimeResult.Invocations, request.RunID, contexttracing.TraceIDFromContext(ctx)),
+		)
+	}, contexttracing.WithErrorClassifier(stableErrorCode))
 	return runtimeResult, errors.Join(runErr, persistErr)
 }
 

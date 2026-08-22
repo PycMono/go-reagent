@@ -248,3 +248,80 @@ func TestCostTrackerErrorsDoNotLeakContent(t *testing.T) {
 		t.Fatalf("Stream().Result() error = %v", err)
 	}
 }
+
+// TestCostTrackerCachePricingExactVsEstimated 覆盖阶段 4（§9.1）：配置了
+// 缓存价格时分项可重算、标记 exact；Provider 上报缓存 Token 而价格未配置
+// 时标记 estimated，不得混入精确报表。
+func TestCostTrackerCachePricingExactVsEstimated(t *testing.T) {
+	cacheReadPrice := 0.1
+	cacheWritePrice := 1.5
+	usageWithCache := func() *ai.Message {
+		return &ai.Message{Role: ai.RoleAssistant, Usage: &ai.Usage{
+			InputTokens: 1100, OutputTokens: 220,
+			CacheReadTokens: 800, CacheWriteTokens: 200,
+		}}
+	}
+
+	// 配置缓存价格：exact，成本按分项公式计算。
+	tracker, err := NewCostTracker(providerFunc(func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+		return usageWithCache(), nil
+	}), "deepseek", "deepseek-chat", Pricing{
+		InputUSDPerMillionTokens: 1, OutputUSDPerMillionTokens: 2,
+		CacheReadUSDPerMillionTokens: &cacheReadPrice, CacheWriteUSDPerMillionTokens: &cacheWritePrice,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCost := (100.0*1 + 800.0*0.1 + 200.0*1.5 + 220.0*2) / 1e6
+	if result.Usage.CostQuality != ai.CostQualityExact {
+		t.Fatalf("cost quality = %q, want exact", result.Usage.CostQuality)
+	}
+	if result.Usage.CostUSD != wantCost {
+		t.Fatalf("cost = %v, want %v（normal_input=100）", result.Usage.CostUSD, wantCost)
+	}
+	if err := result.Usage.ValidateMetered(); err != nil {
+		t.Fatalf("exact usage 必须通过 §9.1 校验: %v", err)
+	}
+
+	// 未配置缓存价格：estimated。
+	trackerNoCachePricing, err := NewCostTracker(providerFunc(func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+		return usageWithCache(), nil
+	}), "deepseek", "deepseek-chat", Pricing{InputUSDPerMillionTokens: 1, OutputUSDPerMillionTokens: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimated, err := streamResult(trackerNoCachePricing.Stream(context.Background(), nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimated.Usage.CostQuality != ai.CostQualityEstimated {
+		t.Fatalf("cost quality = %q, want estimated", estimated.Usage.CostQuality)
+	}
+}
+
+// TestCostTrackerTTFTSnapshot 覆盖 §5：首个非空 Text Delta 的 Snapshot 进入
+// Usage.TTFTMS；纯 Tool Call 响应保持 nil。
+func TestCostTrackerTTFTSnapshot(t *testing.T) {
+	withText := &providerStream{
+		message: &ai.Message{Role: ai.RoleAssistant, Usage: &ai.Usage{}},
+	}
+	_ = withText
+	tracker, err := NewCostTracker(providerFunc(func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error) {
+		return &ai.Message{Role: ai.RoleAssistant, Usage: &ai.Usage{}}, nil
+	}), "test", "m", Pricing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// providerStream 的事件序列无 Text Delta：TTFTMS 必须为 nil。
+	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.TTFTMS != nil {
+		t.Fatalf("无 Text Delta 时 TTFTMS 必须为 nil，实际 %v", *result.Usage.TTFTMS)
+	}
+}

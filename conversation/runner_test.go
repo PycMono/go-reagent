@@ -99,7 +99,7 @@ func TestRunnerPersistsPartialMessagesOnRuntimeError(t *testing.T) {
 		t.Fatalf("Run() error = %v, want runtime error", err)
 	}
 	if !reflect.DeepEqual(result.NewMessages, []ai.Message{partial}) || store.appendCalls != 1 ||
-		len(store.appendedMessages) != 2 || !reflect.DeepEqual(store.appendedInvocations, invocationsToDomain([]pi.ModelInvocation{invocation}, "run")) {
+		len(store.appendedMessages) != 2 || !reflect.DeepEqual(store.appendedInvocations, invocationsToDomain([]pi.ModelInvocation{invocation}, "run", "")) {
 		t.Fatalf("result/messages/invocations = %#v, %#v, %#v", result, store.appendedMessages, store.appendedInvocations)
 	}
 }
@@ -129,7 +129,7 @@ func TestRunnerForwardsAndClonesUsageAndInvocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(store.appendedInvocations, invocationsToDomain(invocations, "run")) {
+	if !reflect.DeepEqual(store.appendedInvocations, invocationsToDomain(invocations, "run", "")) {
 		t.Fatalf("Invocations = %#v, want %#v", store.appendedInvocations, invocations)
 	}
 
@@ -158,7 +158,7 @@ func TestRunnerPersistsInvocationsWithoutMessagesOnBudgetError(t *testing.T) {
 		t.Fatalf("Run() error = %v, want runtime error", err)
 	}
 	if store.appendCalls != 1 || len(store.appendedMessages) != 1 ||
-		!reflect.DeepEqual(store.appendedInvocations, invocationsToDomain([]pi.ModelInvocation{invocation}, "run")) {
+		!reflect.DeepEqual(store.appendedInvocations, invocationsToDomain([]pi.ModelInvocation{invocation}, "run", "")) {
 		t.Fatalf("append/messages/invocations = %d, %#v, %#v", store.appendCalls, store.appendedMessages, store.appendedInvocations)
 	}
 }
@@ -367,6 +367,7 @@ type runnerStoreFake struct {
 	findCalls           int
 	createCalls         int
 	appendCalls         int
+	appendCtxErr        error
 	foundUserID         string
 	foundID             string
 	messageLimit        int
@@ -406,8 +407,9 @@ func (f *runnerStoreFake) Create(_ context.Context, conversation *conversationen
 	return f.createErr
 }
 
-func (f *runnerStoreFake) AppendTurn(_ context.Context, userID string, id string, expectedVersion uint64, messages []*conversationentity.Message, invocations []*conversationentity.ModelInvocation) error {
+func (f *runnerStoreFake) AppendTurn(ctx context.Context, userID string, id string, expectedVersion uint64, messages []*conversationentity.Message, invocations []*conversationentity.ModelInvocation) error {
 	f.appendCalls++
+	f.appendCtxErr = ctx.Err()
 	f.appendedUserID = userID
 	f.appendedID = id
 	f.expectedVersion = expectedVersion
