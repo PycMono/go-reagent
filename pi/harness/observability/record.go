@@ -2,9 +2,11 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 // 本文件集中记录 Agent 领域指标（设计 §8；SDK 设计 §15：领域语义由产生
@@ -204,4 +206,30 @@ func RecordCompactionDetail(ctx context.Context, reason CompactionReason, outcom
 		sdkmetrics.Histogram(ctx, MetricCompactionMessageReduction, ratio,
 			sdkmetrics.String(LabelReason, string(reason)))
 	}
+}
+
+// ---------- 错误分类 → Metrics Label ----------
+
+// OutcomeOf 把一次操作结果归类为 §8.2 的 outcome Label；
+// Context Cancel 与 Deadline 必须区分（§4.9）。
+func OutcomeOf(err error) RequestOutcome {
+	switch {
+	case err == nil:
+		return RequestOutcomeSuccess
+	case errors.Is(err, context.Canceled):
+		return RequestOutcomeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return RequestOutcomeDeadlineExceeded
+	default:
+		return RequestOutcomeError
+	}
+}
+
+// ErrorCodeLabel 返回 Metrics 的 error_code Label：无错误时为 none，
+// 其他情况取 pierrors 稳定错误码。
+func ErrorCodeLabel(err error) string {
+	if err == nil {
+		return ErrorCodeNone
+	}
+	return string(pierrors.ErrorCodeOf(err))
 }
