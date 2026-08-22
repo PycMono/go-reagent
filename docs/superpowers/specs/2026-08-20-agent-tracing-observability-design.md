@@ -392,7 +392,7 @@ Request Index 由每次 Run 的局部状态维护，不存入共享 `Agent`/`Loo
 
 ### 8.2 Model Metrics
 
-固定 `semantic-conventions-genai` 的 release 或 commit，并在 `attributes.go` 记录精确 revision；Development 名称统一封装。采用标准 `gen_ai.client.operation.duration`、`gen_ai.client.token.usage`，并补充：
+固定 `semantic-conventions-genai` 的 release 或 commit，并在 `semantics.go` 记录精确 revision；Development 名称统一封装。采用标准 `gen_ai.client.operation.duration`、`gen_ai.client.token.usage`，并补充：
 
 | 指标 | 类型 | Labels | 优先级 |
 |---|---|---|---|

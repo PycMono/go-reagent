@@ -267,7 +267,7 @@ func TestCostTrackerCachePricingExactVsEstimated(t *testing.T) {
 		return usageWithCache(), nil
 	}), "deepseek", "deepseek-chat", Pricing{
 		InputUSDPerMillionTokens: 1, OutputUSDPerMillionTokens: 2,
-		CacheReadUSDPerMillionTokens: &cacheReadPrice, CacheWriteUSDPerMillionTokens: &cacheWritePrice,
+		CacheReadUSDPerMillionTokens: cacheReadPrice, CacheWriteUSDPerMillionTokens: cacheWritePrice,
 	})
 	if err != nil {
 		t.Fatal(err)
