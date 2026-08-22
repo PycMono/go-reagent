@@ -50,9 +50,9 @@ type ObservabilityTracingConfig struct {
 	Enabled bool `json:"enabled" yaml:"enabled" toml:"enabled"`
 	// SamplingMode 只接受 head 或 tail（§13）。
 	SamplingMode string `json:"sampling_mode" yaml:"sampling_mode" toml:"sampling_mode"`
-	// SampleRatio 用指针区分“未配置”和显式 0：go-observability-sdk v1.0.1
-	// 会把 0 归一化为 1.0，因此显式 0 必须拒绝（§12）；nil 归一化为 1.0。
-	SampleRatio *float64 `json:"sample_ratio" yaml:"sample_ratio" toml:"sample_ratio"`
+	// SampleRatio 为 0 或未配置时归一化为 1.0（与 go-observability-sdk
+	// 一致）；需要 0% 采样请关闭 tracing.enabled。合法区间 (0,1]。
+	SampleRatio float64 `json:"sample_ratio" yaml:"sample_ratio" toml:"sample_ratio"`
 	// TrustedUpstreams 是可信上游的 IP 或 CIDR 列表（§7）：仅这些来源的请求
 	// 可以保留 Remote Parent（traceparent/tracestate），其他公网请求先剥离
 	// Trace Context 再创建内部 root Span。缺省为空，即不信任任何上游。
@@ -64,8 +64,9 @@ type ObservabilityMetricsConfig struct {
 	Host    string `json:"host" yaml:"host" toml:"host"`
 	Port    int    `json:"port" yaml:"port" toml:"port"`
 	Path    string `json:"path" yaml:"path" toml:"path"`
-	// RuntimeMetrics 显式配置，不依赖 bool 零值；nil 归一化为 true（§12）。
-	RuntimeMetrics *bool `json:"runtime_metrics" yaml:"runtime_metrics" toml:"runtime_metrics"`
+	// DisableRuntimeMetrics 显式关闭 Go Runtime Metrics；零值 false 即默认
+	// 启用（§12 本项目默认 true）。用反向字段而非指针区分“未配置”与显式关闭。
+	DisableRuntimeMetrics bool `json:"disable_runtime_metrics" yaml:"disable_runtime_metrics" toml:"disable_runtime_metrics"`
 }
 
 type ObservabilityContentConfig struct {

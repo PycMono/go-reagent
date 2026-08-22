@@ -72,7 +72,7 @@ func TestObservabilityEnabledAppliesDefaults(t *testing.T) {
 		t.Fatalf("max_export_batch_size = %d", observability.OTLP.MaxExportBatchSize)
 	case observability.Tracing.SamplingMode != "head":
 		t.Fatalf("sampling_mode = %q", observability.Tracing.SamplingMode)
-	case observability.Tracing.SampleRatio == nil || *observability.Tracing.SampleRatio != 1.0:
+	case observability.Tracing.SampleRatio != 1.0:
 		t.Fatalf("sample_ratio = %v", observability.Tracing.SampleRatio)
 	case observability.Metrics.Host != "127.0.0.1":
 		t.Fatalf("metrics.host = %q", observability.Metrics.Host)
@@ -80,8 +80,8 @@ func TestObservabilityEnabledAppliesDefaults(t *testing.T) {
 		t.Fatalf("metrics.port = %d", observability.Metrics.Port)
 	case observability.Metrics.Path != "/metrics":
 		t.Fatalf("metrics.path = %q", observability.Metrics.Path)
-	case observability.Metrics.RuntimeMetrics == nil || !*observability.Metrics.RuntimeMetrics:
-		t.Fatalf("runtime_metrics = %v", observability.Metrics.RuntimeMetrics)
+	case observability.Metrics.DisableRuntimeMetrics:
+		t.Fatal("runtime metrics 缺省必须启用")
 	case observability.Content.Mode != "none":
 		t.Fatalf("content.mode = %q", observability.Content.Mode)
 	}
@@ -103,7 +103,6 @@ func TestObservabilityRejectsInvalidValues(t *testing.T) {
 		want string
 	}{
 		{name: "missing service name", doc: `{"enabled":true,"tracing":{"enabled":false},"metrics":{"enabled":false}}`, want: "service_name"},
-		{name: "explicit zero sample ratio", doc: base(`,"sample_ratio":0`), want: "sample_ratio"},
 		{name: "sample ratio above one", doc: base(`,"sample_ratio":1.5`), want: "sample_ratio"},
 		{name: "negative sample ratio", doc: base(`,"sample_ratio":-0.1`), want: "sample_ratio"},
 		{name: "unknown sampling mode", doc: base(`,"sampling_mode":"sideways"`), want: "sampling_mode"},
@@ -150,6 +149,36 @@ func TestObservabilityRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("错误 %q 不包含 %q", err.Error(), test.want)
 			}
 		})
+	}
+}
+
+// 显式 0 与未配置一样归一化为 1.0（与 SDK 归一化一致，§12）；需要 0%
+// 采样时关闭 tracing.enabled。
+func TestObservabilitySampleRatioZeroNormalizesToOne(t *testing.T) {
+	config, err := loadObservability(t, `{
+		"enabled": true, "service_name": "go-reagent", "environment": "development",
+		"otlp": {"endpoint": "127.0.0.1:4317", "insecure": true},
+		"tracing": {"enabled": true, "sample_ratio": 0}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Observability.Tracing.SampleRatio != 1.0 {
+		t.Fatalf("sample_ratio = %v, want 1.0", config.Observability.Tracing.SampleRatio)
+	}
+}
+
+func TestObservabilityDisableRuntimeMetrics(t *testing.T) {
+	config, err := loadObservability(t, `{
+		"enabled": true, "service_name": "go-reagent",
+		"tracing": {"enabled": false},
+		"metrics": {"enabled": true, "disable_runtime_metrics": true}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.Observability.Metrics.DisableRuntimeMetrics {
+		t.Fatal("disable_runtime_metrics 必须可读")
 	}
 }
 

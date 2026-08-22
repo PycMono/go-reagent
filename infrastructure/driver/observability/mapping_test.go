@@ -12,7 +12,6 @@ import (
 
 func mappedConfig(t *testing.T, mutate func(*config.ObservabilityConfig)) config.ObservabilityConfig {
 	t.Helper()
-	ratio := 0.5
 	cfg := config.ObservabilityConfig{
 		Enabled:     true,
 		ServiceName: "go-reagent",
@@ -28,7 +27,7 @@ func mappedConfig(t *testing.T, mutate func(*config.ObservabilityConfig)) config
 		Tracing: config.ObservabilityTracingConfig{
 			Enabled:      true,
 			SamplingMode: "head",
-			SampleRatio:  &ratio,
+			SampleRatio:  0.5,
 		},
 		Metrics: config.ObservabilityMetricsConfig{
 			Enabled: true,
@@ -43,8 +42,8 @@ func mappedConfig(t *testing.T, mutate func(*config.ObservabilityConfig)) config
 	return cfg
 }
 
-func TestMapConfigMapsAllFields(t *testing.T) {
-	mapped := MapConfig(mappedConfig(t, nil), "1.2.3")
+func TestToObservabilityConfigMapsAllFields(t *testing.T) {
+	mapped := ToObservabilityConfig(mappedConfig(t, nil), "1.2.3")
 	switch {
 	case !mapped.Enabled || !mapped.Tracing.Enabled || !mapped.Metrics.Enabled:
 		t.Fatalf("Enabled 映射错误: %#v", mapped)
@@ -65,8 +64,8 @@ func TestMapConfigMapsAllFields(t *testing.T) {
 	}
 }
 
-func TestMapConfigDisabledPassthrough(t *testing.T) {
-	mapped := MapConfig(config.ObservabilityConfig{Enabled: false}, "")
+func TestToObservabilityConfigDisabledPassthrough(t *testing.T) {
+	mapped := ToObservabilityConfig(config.ObservabilityConfig{Enabled: false}, "")
 	if mapped.Enabled || mapped.Tracing.Enabled || mapped.Metrics.Enabled {
 		t.Fatalf("disabled 配置不应开启子系统: %#v", mapped)
 	}
@@ -75,7 +74,7 @@ func TestMapConfigDisabledPassthrough(t *testing.T) {
 // TestDisabledRuntimeIsFullyNoop 验证阶段 0 验收：关闭时无网络、无 Metrics
 // Listener、无兜底 ID，SDK 返回功能完整的 Noop Runtime。
 func TestDisabledRuntimeIsFullyNoop(t *testing.T) {
-	runtime, err := sdkobservability.New(context.Background(), MapConfig(config.ObservabilityConfig{Enabled: false}, ""))
+	runtime, err := sdkobservability.New(context.Background(), ToObservabilityConfig(config.ObservabilityConfig{Enabled: false}, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
