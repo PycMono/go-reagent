@@ -125,7 +125,7 @@
       "host": "127.0.0.1",
       "port": 9464,
       "path": "/metrics",
-      "runtime_metrics": true
+      "disable_runtime_metrics": false
     },
     "content": {
       "mode": "none"

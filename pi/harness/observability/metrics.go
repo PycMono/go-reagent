@@ -24,7 +24,6 @@ const (
 	MetricModelRetries          = "reagent.model.retries"
 	MetricModelContextOverflows = "reagent.model.context_overflows"
 
-	// OTel gen-ai 标准指标（§8.2，semconv genaiconv development）。
 	MetricGenAIClientOperationDuration = "gen_ai.client.operation.duration"
 	MetricGenAIClientTokenUsage        = "gen_ai.client.token.usage"
 
@@ -102,8 +101,7 @@ type MetricDefinition struct {
 	Priority    string // P0：阶段 0–3 上线；P1：先固定语义，阶段 5 启用记录
 }
 
-// DomainMetricDefinitions 返回 §8 全部领域指标定义；P0/P1 一并注册，
-// P1 的记录从阶段 5 启用。
+// DomainMetricDefinitions 返回全部领域指标定义；
 func DomainMetricDefinitions() []MetricDefinition {
 	return []MetricDefinition{
 		// Agent（§8.1）。
@@ -158,17 +156,7 @@ func DomainMetricDefinitions() []MetricDefinition {
 	}
 }
 
-// ---------- Label 基数红线（§8.5） ----------
-
-// 设计 §8.5 的禁止字段中，以下已由 go-observability-sdk 的默认禁止集合
-// 覆盖（见 metrics.DefaultForbiddenLabelKeys，拼写以 SDK 为准）：
-//
-//	run_id, conversation_id, trace_id, span_id, user_id, session_id,
-//	gen_ai.tool.call.id, file.path（文件路径）, command（命令文本）,
-//	prompt, error.message（错误正文）
-//
 // ForbiddenLabelKeys 只保留 SDK 未覆盖的项目增量，由 Runtime 经
-// WithForbiddenLabelKeys 追加；默认集合不可解除。
 var ForbiddenLabelKeys = []string{
 	"model_response", // Model Response
 }

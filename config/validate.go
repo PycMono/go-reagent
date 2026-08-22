@@ -132,22 +132,17 @@ func (config *ObservabilityTracingConfig) normalizeAndValidate() error {
 	if config.SamplingMode != "head" && config.SamplingMode != "tail" {
 		return errors.New("observability.tracing.sampling_mode 只能是 head 或 tail")
 	}
-	if config.SampleRatio == nil {
-		ratio := 1.0
-		config.SampleRatio = &ratio
-	} else {
-		ratio := *config.SampleRatio
-		if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
-			return errors.New("observability.tracing.sample_ratio 必须在 (0,1] 区间内")
-		}
-		// go-observability-sdk v1.0.1 会把 0 归一化为 1.0；需要 0% 采样时应关闭
-		// Tracing，不得用 0 表示（§12）。
-		if ratio == 0 {
-			return errors.New("observability.tracing.sample_ratio 不允许显式 0：需要 0% 采样请关闭 tracing")
-		}
-		if config.SamplingMode == "tail" && ratio != 1.0 {
-			return errors.New("observability.tracing.sampling_mode=tail 时 sample_ratio 必须为 1.0")
-		}
+	ratio := config.SampleRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return errors.New("observability.tracing.sample_ratio 必须在 (0,1] 区间内")
+	}
+	// 0 或未配置归一化为 1.0，与 go-observability-sdk 的归一化行为一致；
+	// 需要 0% 采样时应关闭 tracing.enabled，不得依赖 0（§12）。
+	if ratio == 0 {
+		config.SampleRatio = 1.0
+	}
+	if config.SamplingMode == "tail" && config.SampleRatio != 1.0 {
+		return errors.New("observability.tracing.sampling_mode=tail 时 sample_ratio 必须为 1.0")
 	}
 	for index, upstream := range config.TrustedUpstreams {
 		config.TrustedUpstreams[index] = strings.TrimSpace(upstream)
@@ -191,10 +186,6 @@ func (config *ObservabilityMetricsConfig) normalizeAndValidate() error {
 	if !strings.HasPrefix(config.Path, "/") || strings.Contains(config.Path, "//") ||
 		strings.ContainsAny(config.Path, "?#*") {
 		return errors.New("observability.metrics.path 必须以 / 开头且不能包含 query、fragment、通配符或重复斜杠")
-	}
-	if config.RuntimeMetrics == nil {
-		enabled := true
-		config.RuntimeMetrics = &enabled
 	}
 	return nil
 }

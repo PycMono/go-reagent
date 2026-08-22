@@ -610,7 +610,7 @@ run_id + trace_id → 结构化日志关联
     "service_name": "go-reagent",
     "environment": "development",
     "otlp": {
-      "endpoint": "http://127.0.0.1:4317",
+      "endpoint": "127.0.0.1:4317",
       "protocol": "grpc",
       "insecure": true,
       "timeout_seconds": 5,
@@ -638,13 +638,13 @@ run_id + trace_id → 结构化日志关联
 
 Metrics 使用独立内部端口。`observability.enabled` 默认 `false`，配置校验要求：
 
-- `protocol` 本期只能是 `grpc`；启用 Tracing 时 Endpoint 必须是合法 URL。
-- go-observability-sdk v1.0.1 会把 `sample_ratio=0` 归一化为 `1.0`，因此服务层当前只接受 `(0,1]`；需要 0% 时关闭 Tracing，不得用 `0` 表示。SDK 能区分“未配置”和显式 `0` 后，才可恢复 `[0,1]` 契约并增加回归测试。
+- `protocol` 本期只能是 `grpc`；启用 Tracing 时 Endpoint 必须是合法目标。OTLP gRPC Exporter 只接受 `host:port`；配置层自动剥掉误写的 `http(s)://` scheme。
+- `sample_ratio` 为 `0` 或未配置时归一化为 `1.0`，与 go-observability-sdk 的归一化行为一致；需要 0% 采样时关闭 `tracing.enabled`，不依赖 `0` 表达。合法区间 `(0,1]`，越界拒绝。
 - `sampling_mode=tail` 时 `sample_ratio` 必须为 `1.0`，防止应用先丢弃异常 Trace。
 - Queue、Batch、Timeout、Port 必须为正数，且 `max_export_batch_size <= max_queue_size`。
 - `insecure=true` 只允许 Loopback 或明确的开发环境；生产 OTLP 使用 TLS。
 - Metrics 监听默认绑定 `127.0.0.1:9464`；对集群网段开放由部署层 NetworkPolicy 控制。
-- `runtime_metrics` 显式配置，不依赖 go-observability-sdk v1.0.1 的 bool 零值；本项目默认 `true`。
+- Go Runtime Metrics 默认启用；`disable_runtime_metrics=true` 显式关闭。配置不使用指针字段：反向布尔零值即默认启用，采样率 `0` 归一化为 `1.0`。
 - OTLP 认证信息只允许从环境变量或 Secret Provider 注入，不能写入可提交的 JSON。
 
 OTel Resource 至少包含：
@@ -773,7 +773,7 @@ Tail 模式下应用不得先做低比例 Head Sampling。Head 未采样异常�
 - 所有 HTTP 服务与出站 Client 只使用 W3C；有父上下文时端到端 trace_id 不变，无父时由入口 SERVER root Span 生成；响应 `trace-id`、日志 `trace_id` 与 SpanContext 完全一致。
 - 标准全局 Noop 可保留合法父 TraceID，但无父请求不生成 root TraceID 或第二套 ID；关闭导出但仍需 TraceID 时，应用设置无 Exporter、`NeverSample` 的 SDK Provider。
 - 自建 Gin Engine 按 `Trace Context Boundary → Tracing → Metrics` 安装一次 Middleware；公网伪造 Parent 被忽略，可信上游 Parent 被续接，HTTP Metrics Exemplar 可关联当前 SERVER Span。
-- 服务层拒绝 `sample_ratio=0`；go-context-sdk 上报的 instrumentation scope version 与实际模块版本一致。
+- `sample_ratio=0` 归一化为 `1.0`；go-context-sdk 上报的 instrumentation scope version 与实际模块版本一致。
 - go-context-sdk 无私有 Provider、`Init`、自定义 Span、Request-ID 或 UUID；CI 持续验证依赖图无 `jaeger-client-go`/`opentracing-go`。
 
 ## 17. Replay 子系统
@@ -823,7 +823,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 
 | 阶段 | 交付 | 验收 |
 |---|---|---|
-| 0 SDK 基线与语义 | 将 go-observability-sdk v1.0.1 转为直接依赖，锁定 go-logger-sdk v1.0.6、go-gin-sdk v0.0.7 和修正 instrumentation scope 后的 go-context-sdk；映射 Observability 配置并固定 Span/Metric/枚举/View/内容/基数 | `sample_ratio=0` 在服务层失败；关闭时无网络、Metrics Listener 或兜底 ID；依赖图无 Jaeger/OpenTracing；非法配置在 Fx 启动前失败 |
+| 0 SDK 基线与语义 | 将 go-observability-sdk v1.0.1 转为直接依赖，锁定 go-logger-sdk v1.0.6、go-gin-sdk v0.0.7 和修正 instrumentation scope 后的 go-context-sdk；映射 Observability 配置并固定 Span/Metric/枚举/View/内容/基数 | `sample_ratio=0` 归一化为 `1.0` 且有回归测试；关闭时无网络、Metrics Listener 或兜底 ID；依赖图无 Jaeger/OpenTracing；非法配置在 Fx 启动前失败 |
 | 1 服务入口 | `infrastructure/driver/observability` 装配唯一 go-observability-sdk Runtime 及 Fx Shutdown；自建 Engine `infrastructure/driver/gingext/gingext.go` 按 `Trace Context Boundary → Tracing → Metrics` 安装 Middleware；Conversation/load/persist Span、日志关联与本地观测栈示例 | 公网伪造 Parent 被忽略且可信 Parent 被续接；HTTP Metrics/Exemplar 可抓取；响应头、日志与 Span 使用同一 TraceID；Collector 不可用不改变业务结果 |
 | 2 核心 Trace | Agent/Turn/Generate/Provider/Compaction Span、Retry Event；`pi/register.go` 装配为 `TracingProvider(CostTracker(RawProvider))`；CostTracker 单点 TTFT Snapshot；Tool Middleware/Queue Metric；MCP W3C；P0 Metrics | Span Tree/Event、并行、恢复、取消、Noop 全通过；自定义 Provider 缺少 `streamTimingReader` 时 Trace 本地兜底且不写 Usage/Ledger；初期 Head `1.0`，降采样前完成容量与风险确认 |
 | 3 Ledger 正确性 | Invocation Outcome/RequestIndex/TTFT；可信 Usage 先于契约校验入账；Domain/Migration/Mapper/3 秒终态持久化；三方对账 | 契约非法、预算、取消不丢 Usage；事务错误明确返回；Sampling `1.0` 时 Ledger 唯一定位 Span |
@@ -838,7 +838,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 | OBS-002 Metrics | 通过 go-observability-sdk Runtime 的 OTel Meter/Prometheus Exporter 暴露指标，覆盖 Run/Turn/模型/Token/缓存/成本/TTFT/Retry/Compaction/Tool，按 P0/P1 交付 | `/metrics` 可抓取；模型请求可区分 `canceled` 与 `deadline_exceeded`；HTTP Metrics 只由 Gin Middleware 记录一次；无高基数业务 Label；Dashboard/Rule 使用统一口径 | 8、12、18 |
 | OBS-003 Ledger | MySQL Ledger 是应用侧事实源；可信 Usage 先于语义校验进入 Invocation/Totals，并按现有事务和唯一约束持久化；CostTracker 独立于 Telemetry 产生 Latency/TTFT | 契约非法、预算、取消不丢 Usage；TTFT 区分 NULL/0；三方对账；事务失败明确返回；保留 Trace 可由 `trace_id + provider_request_index` 唯一定位，崩溃窗口有说明 | 5、9、10、19–20 |
 | OBS-004 Privacy | 默认不采集 Prompt、Thinking、Tool 参数/输出正文；Replay 独立且显式启用 | 敏感内容负向断言通过；非法 Content Mode 启动失败 | 11、17 |
-| OBS-005 Reliability | Telemetry Fail-open、Runtime 单一所有、队列有界、支持采样和确定性关闭；MySQL 错误不被吞掉 | Collector 不可达仍成功；`sample_ratio=0` 不被误当成全采样；Queue/Timeout 有界；ForceFlush；Race 通过；1,000 次基准 P95 额外时延 ≤5% | 12–13、19 |
+| OBS-005 Reliability | Telemetry Fail-open、Runtime 单一所有、队列有界、支持采样和确定性关闭；MySQL 错误不被吞掉 | Collector 不可达仍成功；`sample_ratio` 归一化与 SDK 行为一致；Queue/Timeout 有界；ForceFlush；Race 通过；1,000 次基准 P95 额外时延 ≤5% | 12–13、19 |
 | OBS-006 Disabled | 关闭时使用 Noop，不改变 Agent/Provider/Stream/Tool 的业务结果；厂商 Usage 仅在 Adapter 归一化 | Noop 等价；三类 Provider Fixture 通过；现有 Input/Output 契约保持业务语义 | 5–6、9、19 |
 | OBS-007 Boundary | `pi` 保持无状态，不拥有业务 ID、部署配置或 MySQL；业务关联使用父 Context，基础设施通过 OTel Provider 注入 | Package Boundary Test 通过；`pi` 不导入 Service/Infrastructure/Conversation/Persistence；直接 SDK Run 可观测 | 2–3、6–7 |
 | OBS-008 Interop | 跨服务仅使用 W3C；进程内载体为标准 OTel SpanContext/`trace.Span`；go-observability-sdk Runtime 是全局 Provider 唯一所有者；`trace_id` 是唯一技术关联 ID，日志与响应回执均读取当前 SpanContext；SDK 不定义 Span 包装或独立 Request-ID | 已装配服务组成连续 Trace 树；公网伪造 Parent 被忽略；响应 `trace-id` 与日志/Span 一致；Noop 不生成兜底 ID；依赖图持续无 Jaeger/OpenTracing；instrumentation scope version 正确 | 7、14、16、20 |

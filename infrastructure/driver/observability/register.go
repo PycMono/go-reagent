@@ -31,7 +31,7 @@ func NewRuntime(conf *config.Config) (*sdkobservability.Runtime, error) {
 	}
 	return sdkobservability.New(
 		context.Background(),
-		MapConfig(conf.Observability, serviceVersion()),
+		ToObservabilityConfig(conf.Observability, serviceVersion()),
 		sdkobservability.WithMetricDefinitions(definitions...),
 		sdkobservability.WithForbiddenLabelKeys(ForbiddenLabelKeys()...),
 		sdkobservability.WithErrorHandler(newRateLimitedErrorHandler(5*time.Second)),

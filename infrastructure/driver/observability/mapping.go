@@ -14,10 +14,10 @@ import (
 	"github.com/PycMono/go-reagent/config"
 )
 
-// MapConfig 把已通过校验的项目配置映射为 go-observability-sdk Config。
+// ToObservabilityConfig 把已通过校验的项目配置映射为 go-observability-sdk Config。
 // 配置非法时 config.Load 已在 Fx 启动前失败，本函数不再重复校验。
 // version 写入 Resource 的 service.version。
-func MapConfig(cfg config.ObservabilityConfig, version string) sdkobservability.Config {
+func ToObservabilityConfig(cfg config.ObservabilityConfig, version string) sdkobservability.Config {
 	mapped := sdkobservability.Config{
 		Enabled:     cfg.Enabled,
 		ServiceName: cfg.ServiceName,
@@ -32,7 +32,7 @@ func MapConfig(cfg config.ObservabilityConfig, version string) sdkobservability.
 		Enabled:            cfg.Tracing.Enabled,
 		Endpoint:           cfg.OTLP.Endpoint,
 		Insecure:           cfg.OTLP.Insecure,
-		SampleRatio:        sampleRatioValue(cfg.Tracing.SampleRatio),
+		SampleRatio:        cfg.Tracing.SampleRatio,
 		Timeout:            time.Duration(cfg.OTLP.TimeoutSeconds) * time.Second,
 		MaxQueueSize:       cfg.OTLP.MaxQueueSize,
 		MaxExportBatchSize: cfg.OTLP.MaxExportBatchSize,
@@ -42,21 +42,9 @@ func MapConfig(cfg config.ObservabilityConfig, version string) sdkobservability.
 		Host:           cfg.Metrics.Host,
 		Port:           strconv.Itoa(cfg.Metrics.Port),
 		Path:           cfg.Metrics.Path,
-		RuntimeMetrics: runtimeMetricsValue(cfg.Metrics.RuntimeMetrics),
+		RuntimeMetrics: !cfg.Metrics.DisableRuntimeMetrics,
 	}
 	return mapped
 }
 
-func sampleRatioValue(ratio *float64) float64 {
-	if ratio == nil {
-		return 1.0
-	}
-	return *ratio
-}
 
-func runtimeMetricsValue(enabled *bool) bool {
-	if enabled == nil {
-		return true
-	}
-	return *enabled
-}
