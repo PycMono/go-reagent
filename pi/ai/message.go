@@ -68,7 +68,7 @@ func (message *Message) ValidateThinking() error {
 	if err != nil {
 		return fmt.Errorf("response content: %w", err)
 	}
-	
+
 	if strings.TrimSpace(content) == "" {
 		return errors.New("response must contain a non-empty textual plan")
 	}

@@ -107,26 +107,55 @@ func historyTextContent(blocks []conversationentity.ContentBlock) (string, error
 	return content.String(), nil
 }
 
-func invocationsToDomain(invocations []pi.ModelInvocation, runID string) []*conversationentity.ModelInvocation {
+// invocationsToDomain 把 pi 的可信调用映射为台账实体（§10.1）。
+// traceID 取当前 conversation.run 的 SpanContext；无效（Telemetry 关闭）
+// 时传空串并写 NULL。新 Invocation 显式写入 RequestIndex、Outcome 和
+// CostQuality，不依赖数据库默认值；TTFT 只复制 Usage.TTFTMS（NULL/0 语义
+// 由指针保持）。
+func invocationsToDomain(invocations []pi.ModelInvocation, runID, traceID string) []*conversationentity.ModelInvocation {
 	if invocations == nil {
 		return nil
 	}
 	converted := make([]*conversationentity.ModelInvocation, len(invocations))
 	for index := range invocations {
 		usage := invocations[index].Usage
-		converted[index] = &conversationentity.ModelInvocation{
-			RunID:                          runID,
-			Sequence:                       invocations[index].Sequence,
-			Phase:                          conversationentity.InvocationPhase(invocations[index].Phase),
-			PlatformID:                     usage.PlatformID,
-			Model:                          usage.Model,
-			InputTokens:                    usage.InputTokens,
-			OutputTokens:                   usage.OutputTokens,
-			InputPriceUSDPerMillionTokens:  usage.InputPriceUSDPerMillionTokens,
-			OutputPriceUSDPerMillionTokens: usage.OutputPriceUSDPerMillionTokens,
-			CostUSD:                        usage.CostUSD,
-			LatencyMS:                      usage.LatencyMS,
+		item := &conversationentity.ModelInvocation{
+			RunID:                              runID,
+			Sequence:                           invocations[index].Sequence,
+			Phase:                              conversationentity.InvocationPhase(invocations[index].Phase),
+			PlatformID:                         usage.PlatformID,
+			Model:                              usage.Model,
+			InputTokens:                        usage.InputTokens,
+			OutputTokens:                       usage.OutputTokens,
+			InputPriceUSDPerMillionTokens:      usage.InputPriceUSDPerMillionTokens,
+			OutputPriceUSDPerMillionTokens:     usage.OutputPriceUSDPerMillionTokens,
+			CostUSD:                            usage.CostUSD,
+			LatencyMS:                          usage.LatencyMS,
+			Outcome:                            conversationentity.InvocationOutcome(invocations[index].Outcome),
+			CostQuality:                        string(usage.CostQuality),
+			TTFTMS:                             usage.TTFTMS,
+			CacheReadTokens:                    usage.CacheReadTokens,
+			CacheWriteTokens:                   usage.CacheWriteTokens,
+			ReasoningTokens:                    usage.ReasoningTokens,
+			CacheReadPriceUSDPerMillionTokens:  usage.CacheReadPriceUSDPerMillionTokens,
+			CacheWritePriceUSDPerMillionTokens: usage.CacheWritePriceUSDPerMillionTokens,
 		}
+		if traceID != "" {
+			item.TraceID = &traceID
+		}
+		if requestIndex := invocations[index].ProviderRequestIndex; requestIndex > 0 {
+			item.ProviderRequestIndex = &requestIndex
+		}
+		if finishReason := invocations[index].FinishReason; finishReason != "" {
+			item.FinishReason = &finishReason
+		}
+		if item.Outcome == "" {
+			item.Outcome = conversationentity.InvocationOutcomeAccepted
+		}
+		if item.CostQuality == "" {
+			item.CostQuality = "estimated"
+		}
+		converted[index] = item
 	}
 	return converted
 }

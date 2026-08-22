@@ -63,8 +63,8 @@ func TestPanicRecoveryMiddlewareConvertsPanicToGenericErrorResult(t *testing.T) 
 		t.Fatalf("Execute() = (%#v, %v)", result, err)
 	}
 	registrations := pi.DefaultMiddlewareRegistrations()
-	if registrations[0].Name != "panic_recovery" {
-		t.Fatalf("default recovery middleware = %q", registrations[0].Name)
+	if registrations[0].Name != "tracing" || registrations[1].Name != "panic_recovery" {
+		t.Fatalf("default middleware order = %q, %q", registrations[0].Name, registrations[1].Name)
 	}
 }
 

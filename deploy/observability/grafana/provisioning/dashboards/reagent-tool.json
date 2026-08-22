@@ -1,0 +1,30 @@
+{
+  "title": "Reagent Tool",
+  "uid": "reagent-tool",
+  "schemaVersion": 39,
+  "tags": ["reagent"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "调用与错误率",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum by (tool, outcome) (rate(reagent_tool_executions_total[5m]))", "legendFormat": "{{tool}}/{{outcome}}"}
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "P95 执行 / 排队时延",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, tool) (rate(reagent_tool_duration_seconds_bucket[5m])))", "legendFormat": "exec {{tool}}"},
+        {"expr": "histogram_quantile(0.95, sum by (le, tool) (rate(reagent_tool_queue_duration_seconds_bucket[5m])))", "legendFormat": "queue {{tool}}"}
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "稳定错误码",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [{"expr": "sum by (error_code) (rate(reagent_tool_executions_total{outcome=\"error\"}[5m]))", "legendFormat": "{{error_code}}"}]
+    }
+  ]
+}

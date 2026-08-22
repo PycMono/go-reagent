@@ -7,11 +7,13 @@ import (
 	"github.com/PycMono/go-reagent/infrastructure"
 	"github.com/PycMono/go-reagent/infrastructure/controller"
 	"github.com/PycMono/go-reagent/infrastructure/driver/gingext"
+	"github.com/PycMono/go-reagent/infrastructure/observability"
 	"go.uber.org/fx"
 )
 
 var Register = fx.Options(
 	infrastructure.Register,
+	observability.Register,
 	controller.Register,
 	fx.Provide(gingext.NewEngine, gingext.NewHTTPServer),
 	fx.Invoke(gingext.RegisterLifecycle),

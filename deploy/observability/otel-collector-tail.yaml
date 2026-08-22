@@ -1,0 +1,69 @@
+# Tail Sampling Collector 配置（设计 §13，运营阶段能力）。
+#
+# 应用侧配置 sampling_mode=tail 时 sample_ratio 必须为 1.0（应用 AlwaysOn），
+# 由 Collector 在 Root Span 结束后采样。以下阈值为初始值，属部署层配置，
+# 不进入应用配置。
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 100
+    policies:
+      # 100% 保留：错误、取消/超时、context overflow、契约非法、预算上限、
+      # 长时延、高成本、Tool 失败。
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: canceled-or-deadline
+        type: string_attribute
+        string_attribute:
+          key: reagent.termination.reason
+          values: [canceled, deadline_exceeded]
+      - name: context-overflow
+        type: string_attribute
+        string_attribute:
+          key: reagent.compaction.reason
+          values: [overflow]
+      - name: contract-invalid
+        type: string_attribute
+        string_attribute:
+          key: reagent.error.code
+          values: [contract_invalid]
+      - name: budget-limit
+        type: string_attribute
+        string_attribute:
+          key: reagent.termination.reason
+          values: [max_turns, max_cost, max_total_tokens, loop_detected]
+      - name: slow-runs
+        type: latency
+        latency: {threshold_ms: 30000}
+      - name: high-cost
+        type: numeric_attribute
+        numeric_attribute:
+          key: reagent.run.cost_usd
+          min_value: 1.0
+      # 普通成功 Run：10% 采样。
+      - name: baseline
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+
+  batch: {}
+
+exporters:
+  otlphttp:
+    endpoint: http://tempo:4318
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [otlphttp]

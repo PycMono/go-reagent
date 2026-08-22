@@ -1,0 +1,73 @@
+# 初始告警规则（设计 §18.1）。所有比率告警保留最小样本条件；
+# 成本预算阈值在生产由部署流水线渲染本文件注入，本地栈固定为 5 USD/小时。
+groups:
+  - name: reagent.agent
+    interval: 30s
+    rules:
+      - alert: ReagentRunFailureRateHigh
+        expr: |
+          sum(rate(reagent_agent_runs_total{termination_reason=~"error|canceled|deadline_exceeded"}[10m]))
+            / sum(rate(reagent_agent_runs_total[10m])) > 0.05
+          and sum(increase(reagent_agent_runs_total[10m])) >= 20
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Agent Run 失败率超过 5%（10 分钟窗口，样本 >= 20）"
+
+      - alert: ReagentProviderP95Slow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(gen_ai_client_operation_duration_seconds_bucket[15m]))) > 15
+          and sum(increase(gen_ai_client_operation_duration_seconds_count[15m])) >= 20
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Provider P95 时延超过 15s"
+
+      - alert: ReagentRateLimitedRatioHigh
+        expr: |
+          sum(rate(reagent_model_retries_total{reason="ai_rate_limited"}[10m]))
+            / sum(rate(reagent_model_requests_total[10m])) > 0.01
+          and sum(increase(reagent_model_requests_total[10m])) >= 20
+        for: 10m
+        labels: {severity: warning}
+
+      - alert: ReagentContextOverflowRatioHigh
+        expr: |
+          sum(rate(reagent_model_context_overflows_total[10m]))
+            / sum(rate(reagent_model_requests_total[10m])) > 0.02
+          and sum(increase(reagent_model_requests_total[10m])) >= 20
+        for: 10m
+        labels: {severity: warning}
+
+      - alert: ReagentToolErrorRateHigh
+        expr: |
+          sum(rate(reagent_tool_executions_total{outcome="error"}[10m]))
+            / sum(rate(reagent_tool_executions_total[10m])) > 0.10
+          and sum(increase(reagent_tool_executions_total[10m])) >= 20
+        for: 10m
+        labels: {severity: warning}
+
+      # 注意：Prometheus 规则文件不支持变量插值。本地栈固定为 5 USD/小时；
+      # 生产环境由部署流水线渲染本文件（如 envsubst/模板）注入
+      # model_cost_budget_usd 的实际值。
+      - alert: ReagentHourlyCostOverBudget
+        expr: |
+          sum(increase(reagent_model_cost_USD_total[1h])) > 5
+        labels: {severity: critical}
+        annotations:
+          summary: "1 小时模型成本超过部署预算"
+
+  - name: reagent.pipeline
+    interval: 30s
+    rules:
+      - alert: ReagentCollectorDroppingSpans
+        expr: sum(rate(otelcol_receiver_refused_spans_total[5m])) > 0
+        for: 5m
+        labels: {severity: critical}
+
+      - alert: ReagentMetricsScrapeFailing
+        expr: up{job="go-reagent"} == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Prometheus 连续 3 次抓取应用 Metrics Endpoint 失败"

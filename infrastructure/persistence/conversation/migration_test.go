@@ -112,3 +112,72 @@ func TestAgentProfileMigrationDefinesConversationProfile(t *testing.T) {
 		}
 	}
 }
+
+// TestInvocationLedgerTracingMigration 锁定阶段 3 迁移（设计 §10.1）：
+// 扩展现有表，不平行新建账本；旧行由列默认值覆盖。
+func TestInvocationLedgerTracingMigration(t *testing.T) {
+	content, err := os.ReadFile("../../../migrations/0005_invocation_ledger_tracing.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(content)
+	for _, want := range []string{
+		"ALTER TABLE agent_model_invocations",
+		"trace_id VARCHAR(32) NULL",
+		"provider_request_index INT UNSIGNED NULL",
+		"outcome VARCHAR(32) NOT NULL DEFAULT 'accepted'",
+		"cost_quality VARCHAR(16) NOT NULL DEFAULT 'estimated'",
+		"ttft_ms BIGINT UNSIGNED NULL",
+		"finish_reason VARCHAR(32) NULL",
+		"error_code VARCHAR(64) NULL",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration 0005 missing %q", want)
+		}
+	}
+	if strings.Contains(sql, "CREATE TABLE") {
+		t.Fatal("阶段 3 必须扩展现有表，不得平行新建账本")
+	}
+	// 当前没有按 TraceID 反查 MySQL 的路径，不建 trace_id 索引。
+	if strings.Contains(sql, "KEY") || strings.Contains(sql, "INDEX") {
+		t.Fatal("不得为 trace_id 建索引")
+	}
+
+	down, err := os.ReadFile("../../../migrations/0005_invocation_ledger_tracing.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"DROP COLUMN trace_id", "DROP COLUMN outcome", "DROP COLUMN ttft_ms"} {
+		if !strings.Contains(string(down), want) {
+			t.Fatalf("down migration 0005 missing %q", want)
+		}
+	}
+}
+
+// TestInvocationUsageEnhancementMigration 锁定阶段 4 迁移（设计 §10.1）。
+func TestInvocationUsageEnhancementMigration(t *testing.T) {
+	content, err := os.ReadFile("../../../migrations/0006_invocation_usage_enhancement.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(content)
+	for _, want := range []string{
+		"ALTER TABLE agent_model_invocations",
+		"cache_read_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"cache_write_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"reasoning_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"cache_read_price_usd_per_million_tokens DECIMAL(20,12) NOT NULL DEFAULT 0",
+		"cache_write_price_usd_per_million_tokens DECIMAL(20,12) NOT NULL DEFAULT 0",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration 0006 missing %q", want)
+		}
+	}
+	down, err := os.ReadFile("../../../migrations/0006_invocation_usage_enhancement.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(down), "DROP COLUMN cache_read_tokens") {
+		t.Fatal("down migration 0006 missing cache_read_tokens")
+	}
+}

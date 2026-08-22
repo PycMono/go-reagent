@@ -10,6 +10,7 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
 	openaisstream "github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 )
@@ -158,10 +159,7 @@ func (s *openAIStream) finish() error {
 		})
 	}
 	if s.usageSeen {
-		result.Usage = &ai.Usage{
-			InputTokens:  response.Usage.PromptTokens,
-			OutputTokens: response.Usage.CompletionTokens,
-		}
+		result.Usage = mapOpenAIUsage(response.Usage)
 	}
 	s.result = result
 	return nil
@@ -237,4 +235,46 @@ func toOpenAITools(definitions []ai.ToolDefinition) ([]openaisdk.ChatCompletionT
 		}))
 	}
 	return result, nil
+}
+
+// mapOpenAIUsage 按 §9.2 归一化 OpenAI 兼容协议的 Usage：
+// cached_tokens → CacheReadTokens；reasoning_tokens → ReasoningTokens；
+// InputTokens = prompt_tokens。DeepSeek 的 prompt_cache_hit_tokens 是非标
+// 字段，经 ExtraFields 读取；其 prompt_tokens 本身即 hit + miss 总量。
+// 字段缺失时对应分项为 0，总量与分项必须一致由 §9.1 校验兜底。
+func mapOpenAIUsage(usage openaisdk.CompletionUsage) *ai.Usage {
+	mapped := &ai.Usage{
+		InputTokens:  usage.PromptTokens,
+		OutputTokens: usage.CompletionTokens,
+	}
+	if usage.JSON.PromptTokensDetails.Valid() {
+		mapped.CacheReadTokens = usage.PromptTokensDetails.CachedTokens
+	}
+	if usage.JSON.CompletionTokensDetails.Valid() {
+		mapped.ReasoningTokens = usage.CompletionTokensDetails.ReasoningTokens
+	}
+	if hit := extraFieldInt64(usage.JSON.ExtraFields, "prompt_cache_hit_tokens"); hit > 0 {
+		mapped.CacheReadTokens = hit
+	}
+	return mapped
+}
+
+// extraFieldInt64 读取 Provider 非标 Usage 字段（如 DeepSeek 的
+// prompt_cache_hit_tokens）。ExtraFields 条目对未知字段标记为 invalid，
+// 因此不能用 Field.Valid()，只按 Raw() 判空并解析；缺失、null 或非数字
+// 时返回 0。
+func extraFieldInt64(fields map[string]respjson.Field, name string) int64 {
+	field, ok := fields[name]
+	if !ok {
+		return 0
+	}
+	raw := field.Raw()
+	if raw == "" || raw == "null" {
+		return 0
+	}
+	var value int64
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return 0
+	}
+	return value
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
 func compactTestMessages(groups int) []ai.Message {
@@ -230,10 +231,10 @@ func TestMaybeCompactProactiveL2ReplacesHistory(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1)
 
 	observed := 0
-	got, err := loop.maybeCompact(context.Background(), messages, nil, rt, func(ai.Usage) error {
+	got, err := loop.maybeCompact(context.Background(), messages, nil, rt, testObserveCompaction(func(ai.Usage) error {
 		observed++
 		return nil
-	})
+	}))
 	if err != nil {
 		t.Fatalf("maybeCompact() error = %v", err)
 	}
@@ -300,9 +301,9 @@ func TestMaybeCompactProactiveL2ObserverErrorIsFatal(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1)
 
 	observerErr := errors.New("budget exceeded")
-	_, err := loop.maybeCompact(context.Background(), messages, nil, rt, func(ai.Usage) error {
+	_, err := loop.maybeCompact(context.Background(), messages, nil, rt, testObserveCompaction(func(ai.Usage) error {
 		return observerErr
-	})
+	}))
 	if !errors.Is(err, observerErr) {
 		t.Fatalf("maybeCompact() error = %v, want observer error to terminate", err)
 	}
@@ -320,7 +321,7 @@ func TestGenerateReactiveL1RespectsEnablePrune(t *testing.T) {
 	messages := compactTestMessages(6)
 	rt := newCompactionRuntime(loop.compaction, 1)
 
-	result, err := loop.generate(context.Background(), messages, nil, nil, nil, rt)
+	result, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -350,7 +351,7 @@ func TestGenerateReactiveL1RetriesImmediatelyUnknownWindow(t *testing.T) {
 	messages := compactTestMessages(6)
 	rt := newCompactionRuntime(loop.compaction, 1)
 
-	_, err := loop.generate(context.Background(), messages, nil, nil, nil, rt)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -373,7 +374,7 @@ func TestGenerateReactiveKnownWindowRetriesBelowThreshold(t *testing.T) {
 	messages := compactTestMessages(10)
 	rt := newCompactionRuntime(loop.compaction, 1)
 
-	_, err := loop.generate(context.Background(), messages, nil, nil, nil, rt)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -400,7 +401,7 @@ func TestGenerateReactiveFallsBackToL1WhenL2HasNoRange(t *testing.T) {
 		{Name: "read", Description: strings.Repeat("s", 64*1024), InputSchema: map[string]any{"type": "object"}},
 	}
 
-	_, err := loop.generate(context.Background(), messages, bigTools, nil, nil, rt)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, bigTools, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -438,10 +439,10 @@ func TestGenerateReactiveRecordsUsageBeforeContentValidation(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1)
 
 	observed := 0
-	_, err := loop.generate(context.Background(), messages, nil, nil, func(ai.Usage) error {
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
 		observed++
 		return nil
-	}, rt)
+	}))
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -472,9 +473,9 @@ func TestGenerateReactiveObserverErrorIsFatal(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1)
 
 	budgetErr := errors.New("budget exceeded")
-	_, err := loop.generate(context.Background(), messages, nil, nil, func(ai.Usage) error {
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
 		return budgetErr
-	}, rt)
+	}))
 	if !errors.Is(err, budgetErr) {
 		t.Fatalf("generate() error = %v, want observer error", err)
 	}
@@ -530,5 +531,12 @@ func TestMaybeCompactDoesNotCommitStateWithoutTokenProgress(t *testing.T) {
 	}
 	if len(rt.state.CheckpointIndexes) != 0 {
 		t.Fatalf("CheckpointIndexes = %v, state must not commit without token progress", rt.state.CheckpointIndexes)
+	}
+}
+
+// testObserveCompaction 把旧式 Usage 回调包装为 invocationObserver。
+func testObserveCompaction(observe func(ai.Usage) error) invocationObserver {
+	return func(usage ai.Usage, _ uint32, _ string) (func(error), error) {
+		return func(error) {}, observe(usage)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/common/dto"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/common/vo"
@@ -16,6 +17,7 @@ import (
 	agentprofileentity "github.com/PycMono/go-reagent/domain/entity/agentprofile"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
 const (
@@ -69,7 +71,7 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 
 	events := make(chan vo.RunEventVO, runEventQueueSize)
 	events <- vo.RunEventVO{Type: vo.RunEventRunStarted, RunID: runID}
-	go s.executeRun(runCtx, key, userID, conversationID, runID, content, profileContext, events)
+	go s.executeRun(runCtx, key, userID, conversationID, runID, content, profile.Code, profileContext, events)
 	return &ActiveRun{ID: runID, Events: events}, nil
 }
 
@@ -95,25 +97,62 @@ func (s *Service) CancelRun(_ context.Context, userID, conversationID, runID str
 
 func (s *Service) executeRun(
 	ctx context.Context,
-	key, userID, conversationID, runID, content string,
+	key, userID, conversationID, runID, content, profileCode string,
 	profileContext []pi.ContextBlock,
 	events chan vo.RunEventVO,
 ) {
 	defer close(events)
 	defer s.releaseRun(key, runID)
-	reporter := newRunReporter(runID, events)
-	result, err := s.runner.Run(ctx, conversation.RunRequest{
-		UserID: userID, ConversationID: conversationID, RunID: runID,
-		Input:          ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
-		ResponsePolicy: responsePolicy,
-		Context:        profileContext,
-	}, reporter)
-	if err == nil {
-		err = s.repository.RenameIfUntitled(ctx, userID, conversationID, firstRunes(content, 60))
+	// conversation.run 业务 Span（§4.2）：业务标识只出现在本 Span，
+	// 不进入 pi.RunRequest；结束后写入终止原因和 RunTotals。
+	// 属性经 go-context-sdk 预设（KV/WithKV）写入，不直接拼 attribute；
+	// Span 状态与生命周期由 WithSpan 管理。
+	var result pi.RunResult
+	var terminationReason string
+	runErr := contexttracing.WithSpan(ctx, piobservability.SpanNameConversationRun, func(ctx context.Context) error {
+		ctx = contexttracing.WithKV(ctx,
+			contexttracing.KV(piobservability.AttrRunID, runID),
+			contexttracing.KV(piobservability.AttrGenAIConversationID, conversationID),
+			contexttracing.KV(piobservability.AttrProfileCode, profileCode),
+			contexttracing.KV(piobservability.AttrRunTransport, string(piobservability.TransportHTTPSSE)),
+			contexttracing.KV(piobservability.AttrPersistenceEnabled, true),
+		)
+		reporter := newRunReporter(runID, events)
+		var err error
+		result, err = s.runner.Run(ctx, conversation.RunRequest{
+			UserID: userID, ConversationID: conversationID, RunID: runID,
+			Input:          ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
+			ResponsePolicy: responsePolicy,
+			Context:        profileContext,
+		}, reporter)
+		// 终止原因与 RunTotals 无论成败都写入（§3）。
+		terminationReason = string(result.Termination.Reason)
+		if terminationReason != "" {
+			contexttracing.WithKV(ctx,
+				contexttracing.KV(piobservability.AttrTerminationReason, terminationReason),
+				contexttracing.KV(piobservability.AttrRunTurns, result.Termination.Totals.Turns),
+				contexttracing.KV(piobservability.AttrRunInvocations, int(result.Termination.Totals.Invocations)),
+				contexttracing.KV(piobservability.AttrRunTotalTokens, result.Termination.Totals.TotalTokens),
+				contexttracing.KV(piobservability.AttrRunCostUSD, result.Termination.Totals.CostUSD),
+			)
+		}
+		if err == nil {
+			err = s.repository.RenameIfUntitled(ctx, userID, conversationID, firstRunes(content, 60))
+		}
+		return err
+	}, contexttracing.WithErrorClassifier(func(error) string {
+		if terminationReason == "" {
+			return "error"
+		}
+		return terminationReason
+	}))
+	if terminationReason == "" {
+		terminationReason = "error"
 	}
-	if err != nil {
+	piobservability.RecordChatRun(ctx, profileCode, string(piobservability.TransportHTTPSSE), terminationReason)
+	if runErr != nil {
 		sendTerminalEvent(ctx, events, vo.RunEventVO{
-			Type: vo.RunEventRunFailed, RunID: runID, Error: runErrorVO(err, result.Termination),
+			Type: vo.RunEventRunFailed, RunID: runID, Error: runErrorVO(runErr, result.Termination),
 		})
 		return
 	}

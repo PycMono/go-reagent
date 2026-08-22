@@ -3,8 +3,10 @@ package pi
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
 // Scheduler 负责调度模型在一次回复中发起的多个工具调用，不负责定时任务。
@@ -35,6 +37,11 @@ func (s *Scheduler) Schedule(
 	observer ToolEventObserver,
 ) ([]ToolResult, error) {
 	parallelSafe := definitions.ParallelSafety()
+	knownTools := make(map[string]bool, len(parallelSafe))
+	for name := range parallelSafe {
+		knownTools[name] = true
+	}
+	mode := s.Mode(calls, definitions)
 	results := make([]ToolResult, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
@@ -46,7 +53,7 @@ func (s *Scheduler) Schedule(
 				end++
 			}
 		}
-		if err := s.executeWave(ctx, calls, results, start, end, observer); err != nil {
+		if err := s.executeWave(ctx, calls, results, start, end, observer, mode, knownTools); err != nil {
 			return nil, err
 		}
 		start = end
@@ -95,6 +102,8 @@ func (s *Scheduler) executeWave(
 	start int,
 	end int,
 	observer ToolEventObserver,
+	mode string,
+	knownTools map[string]bool,
 ) error {
 	limit := s.maxParallel
 	if limit <= 0 {
@@ -112,9 +121,13 @@ func (s *Scheduler) executeWave(
 		waitGroup.Add(1)
 		go func(index int, call ai.ToolCall) {
 			defer waitGroup.Done()
+			// 信号量等待只进入 queue_duration Histogram，不创建 Queue Span（§4.6）。
+			queuedAt := time.Now()
 			select {
 			case semaphore <- struct{}{}:
+				recordToolQueue(ctx, call, mode, knownTools, nil, time.Since(queuedAt))
 			case <-ctx.Done():
+				recordToolQueue(ctx, call, mode, knownTools, ctx.Err(), time.Since(queuedAt))
 				return
 			}
 			defer func() { <-semaphore }()
@@ -131,4 +144,20 @@ func (s *Scheduler) executeWave(
 		}
 	}
 	return ctx.Err()
+}
+
+// recordToolQueue 记录排队时延；未注册 Tool 的 Label 固定为 unknown（§4.6）。
+func recordToolQueue(
+	ctx context.Context,
+	call ai.ToolCall,
+	mode string,
+	knownTools map[string]bool,
+	err error,
+	wait time.Duration,
+) {
+	tool := call.Name
+	if !knownTools[call.Name] {
+		tool = "unknown"
+	}
+	observability.RecordToolQueueDuration(ctx, tool, observability.ExecutionMode(mode), err, wait)
 }

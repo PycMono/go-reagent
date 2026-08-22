@@ -12,9 +12,15 @@ import (
 )
 
 // Pricing is an immutable USD-per-million-token price snapshot.
+//
+// 缓存价格（阶段 4，§9.1）用指针区分“未配置”与显式 0：Provider 上报了
+// 缓存 Token 而对应价格未配置时，成本无法满足子集口径，CostTracker 将该次
+// 调用标记为 estimated。
 type Pricing struct {
-	InputUSDPerMillionTokens  float64
-	OutputUSDPerMillionTokens float64
+	InputUSDPerMillionTokens      float64
+	OutputUSDPerMillionTokens     float64
+	CacheReadUSDPerMillionTokens  *float64
+	CacheWriteUSDPerMillionTokens *float64
 }
 
 // Validate 校验价格快照是否落在账本支持的数值范围内。
@@ -25,7 +31,21 @@ func (p Pricing) Validate() error {
 	if !ai.ValidUsageDecimal(p.OutputUSDPerMillionTokens) {
 		return errors.New("model cost tracker: output price is outside the supported range")
 	}
+	if p.CacheReadUSDPerMillionTokens != nil && !ai.ValidUsageDecimal(*p.CacheReadUSDPerMillionTokens) {
+		return errors.New("model cost tracker: cache read price is outside the supported range")
+	}
+	if p.CacheWriteUSDPerMillionTokens != nil && !ai.ValidUsageDecimal(*p.CacheWriteUSDPerMillionTokens) {
+		return errors.New("model cost tracker: cache write price is outside the supported range")
+	}
 	return nil
+}
+
+// priceOrZero 把未配置的缓存价格按 0 处理（仅在无对应 Token 时进入公式）。
+func priceOrZero(price *float64) float64 {
+	if price == nil {
+		return 0
+	}
+	return *price
 }
 
 // CostTracker enriches every successful model response with trustworthy cost metrics.
@@ -83,6 +103,12 @@ type trackingStream struct {
 	resolved  bool
 	response  *ai.Message
 	err       error
+
+	// ttft 是首个非空 Text Delta 的 request-local Timing Snapshot（§5），
+	// 经包内私有 streamTimingReader 向 TracingProvider 暴露；纯 Tool Call
+	// 响应不观测。Span 整数毫秒、Histogram 秒、Ledger 共用同一 Snapshot。
+	ttft    time.Duration
+	hasTTFT bool
 }
 
 func (s *trackingStream) Next() bool {
@@ -90,7 +116,17 @@ func (s *trackingStream) Next() bool {
 		return false
 	}
 	s.current = s.next.Current()
+	if !s.hasTTFT && s.current.Type == ai.StreamEventTextDelta && s.current.TextDelta != "" {
+		s.ttft = s.tracker.now().Sub(s.startedAt)
+		s.hasTTFT = true
+	}
 	return true
+}
+
+// StreamTTFT 实现 streamTimingReader：返回首个非空 Text Delta 的延迟
+// Snapshot；未观测到时 ok=false。
+func (s *trackingStream) StreamTTFT() (time.Duration, bool) {
+	return s.ttft, s.hasTTFT
 }
 
 func (s *trackingStream) Current() ai.StreamEvent { return s.current }
@@ -102,6 +138,12 @@ func (s *trackingStream) Result() (*ai.Message, error) {
 	s.resolved = true
 	response, err := s.next.Result()
 	s.response, s.err = s.tracker.meter(s.ctx, s.startedAt, response, err)
+	// TTFT 与 Ledger 共用同一 Timing Snapshot（§5）：仅在成功且观测到
+	// 非空 Text Delta 时补齐；纯 Tool Call 保持 nil，不足 1ms 为 0。
+	if s.err == nil && s.response != nil && s.response.Usage != nil && s.hasTTFT {
+		ttftMS := s.ttft.Milliseconds()
+		s.response.Usage.TTFTMS = &ttftMS
+	}
 	return s.response, s.err
 }
 
@@ -149,8 +191,10 @@ func (t *CostTracker) meter(
 	usage := *response.Usage
 	usage.InputPriceUSDPerMillionTokens = t.pricing.InputUSDPerMillionTokens
 	usage.OutputPriceUSDPerMillionTokens = t.pricing.OutputUSDPerMillionTokens
-	cost := (float64(usage.InputTokens)*t.pricing.InputUSDPerMillionTokens +
-		float64(usage.OutputTokens)*t.pricing.OutputUSDPerMillionTokens) / 1_000_000
+	usage.CacheReadPriceUSDPerMillionTokens = priceOrZero(t.pricing.CacheReadUSDPerMillionTokens)
+	usage.CacheWritePriceUSDPerMillionTokens = priceOrZero(t.pricing.CacheWriteUSDPerMillionTokens)
+	// §9.1 成本公式：normal_input = input - cache_read - cache_write。
+	cost := ai.ExpectedCostUSD(usage)
 	if !ai.ValidUsageDecimal(cost) {
 		logsdk.Warn(ctx, "model invocation cost invalid",
 			logsdk.Any("component", "model_cost"),
@@ -165,6 +209,13 @@ func (t *CostTracker) meter(
 	usage.LatencyMS = latencyMS
 	usage.PlatformID = t.platformID
 	usage.Model = t.model
+	// §9.1：分项足以按配置价格重算时标记 exact；Provider 上报了缓存 Token
+	// 而对应价格未配置时口径无法满足，降级 estimated，不得混入精确报表。
+	usage.CostQuality = ai.CostQualityExact
+	if (usage.CacheReadTokens > 0 && t.pricing.CacheReadUSDPerMillionTokens == nil) ||
+		(usage.CacheWriteTokens > 0 && t.pricing.CacheWriteUSDPerMillionTokens == nil) {
+		usage.CostQuality = ai.CostQualityEstimated
+	}
 	result.Usage = &usage
 
 	logsdk.Info(ctx, "model invocation metered",

@@ -159,12 +159,22 @@ func (s *anthropicStream) finish() error {
 			})
 		}
 	}
-	result.Usage = &ai.Usage{
-		InputTokens:  s.message.Usage.InputTokens,
-		OutputTokens: s.message.Usage.OutputTokens,
-	}
+	result.Usage = mapAnthropicUsage(s.message.Usage)
 	s.result = result
 	return nil
+}
+
+// mapAnthropicUsage 按 §9.2 归一化 Anthropic Usage：
+// cache_read_input_tokens → CacheReadTokens；
+// cache_creation_input_tokens → CacheWriteTokens；
+// InputTokens = input + read + creation（总输入口径）。
+func mapAnthropicUsage(usage anthropicsdk.Usage) *ai.Usage {
+	return &ai.Usage{
+		InputTokens:      usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CacheReadTokens:  usage.CacheReadInputTokens,
+		CacheWriteTokens: usage.CacheCreationInputTokens,
+	}
 }
 
 func anthropicFinishReason(reason anthropicsdk.StopReason) ai.FinishReason {
