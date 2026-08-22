@@ -46,5 +46,3 @@ func ToObservabilityConfig(cfg config.ObservabilityConfig, version string) sdkob
 	}
 	return mapped
 }
-
-

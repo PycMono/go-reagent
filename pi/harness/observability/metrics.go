@@ -1,11 +1,13 @@
 package observability
 
+import sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
+
 // 本文件固定设计 §8 的指标定义语义：指标名称、Label Key、Histogram Bucket、
-// 领域 MetricDefinition 与 Label 基数红线。记录函数见 record.go。
+// 领域 Metric Definition 与 Label 基数红线。记录函数见 record.go。
 //
-// MetricDefinition 是 pi 私有的定义载体：pi 只依赖 OTel API 与
-// go-observability-sdk/metrics 的记录 API，Definition 的注册转换由
-// infrastructure/driver/observability 负责（OBS-007 边界）。
+// 定义与记录共用 go-observability-sdk/metrics 的类型（SDK 设计 §15：
+// 领域指标由产生事实的模块集中定义并记录，只依赖 observability/metrics），
+// 不存在并行结构转换层，Kind 翻译漂移无从发生。
 
 // ---------- Metrics 名称与 Label Key（§8） ----------
 
@@ -74,89 +76,74 @@ var (
 
 // ---------- 领域 Metric Definition ----------
 
-// MetricKind 是领域指标的 Instrument 类型。取值与
-// go-observability-sdk/metrics.Kind 对齐；由 infrastructure/driver/observability
-// 负责转换注册。
-type MetricKind string
-
-const (
-	MetricKindCounter   MetricKind = "counter"
-	MetricKindHistogram MetricKind = "histogram"
-	// MetricKindTimer 是经 sdkmetrics.Timer 记录的秒级时延指标；
-	// 与 SDK 的 KindTimer 对齐，Unit 必须为 s。记录侧的 API 形态
-	//（Timer vs Histogram）必须与定义的 Kind 一致，否则 Instrument
-	// 冻结后冲突记录被丢弃。
-	MetricKindTimer MetricKind = "timer"
-)
-
-// MetricDefinition 是领域指标的显式定义（§8），固定 Instrument 类型、
-// Unit、允许的 Label Key 集合与 Histogram Bucket。
-type MetricDefinition struct {
-	Name        string
-	Kind        MetricKind
-	Unit        string
-	Description string
-	Labels      []string
-	Buckets     []float64
-	Priority    string // P0：阶段 0–3 上线；P1：先固定语义，阶段 5 启用记录
-}
-
-// DomainMetricDefinitions 返回全部领域指标定义；
-func DomainMetricDefinitions() []MetricDefinition {
-	return []MetricDefinition{
+// DomainMetricDefinitions 返回 §8 全部领域指标定义（P0/P1 一并注册，
+// P1 的记录从阶段 5 启用），由 infrastructure/driver/observability 经
+// WithMetricDefinitions 原样注册到 Runtime。
+func DomainMetricDefinitions() []sdkmetrics.Definition {
+	return []sdkmetrics.Definition{
 		// Agent（§8.1）。
-		{Name: MetricAgentRuns, Kind: MetricKindCounter, Unit: "{run}",
-			Description: "Agent Run 总数", Labels: []string{LabelAgent, LabelTerminationReason}, Priority: "P0"},
-		{Name: MetricAgentRunDuration, Kind: MetricKindTimer, Unit: "s",
-			Description: "Agent Run 时延", Labels: []string{LabelAgent, LabelTerminationReason}, Buckets: BucketsRunDuration, Priority: "P0"},
-		{Name: MetricAgentRunTurns, Kind: MetricKindHistogram, Unit: "1",
-			Description: "每 Run Turn 数", Labels: []string{LabelAgent}, Buckets: BucketsTurns, Priority: "P1"},
-		{Name: MetricAgentRunInvocations, Kind: MetricKindHistogram, Unit: "1",
-			Description: "每 Run 模型调用数", Labels: []string{LabelAgent}, Buckets: BucketsInvocations, Priority: "P1"},
-		{Name: MetricChatRuns, Kind: MetricKindCounter, Unit: "{run}",
-			Description: "Chat 业务 Run 总数", Labels: []string{LabelProfile, LabelTransport, LabelTerminationReason}, Priority: "P1"},
+		{Name: MetricAgentRuns, Kind: sdkmetrics.KindCounter, Unit: "{run}",
+			Description: "Agent Run 总数", Labels: []string{LabelAgent, LabelTerminationReason}},
+		{Name: MetricAgentRunDuration, Kind: sdkmetrics.KindTimer, Unit: "s",
+			Description: "Agent Run 时延", Labels: []string{LabelAgent, LabelTerminationReason}, Buckets: BucketsRunDuration},
+		{Name: MetricAgentRunTurns, Kind: sdkmetrics.KindHistogram, Unit: "1",
+			Description: "每 Run Turn 数（P1）", Labels: []string{LabelAgent}, Buckets: BucketsTurns},
+		{Name: MetricAgentRunInvocations, Kind: sdkmetrics.KindHistogram, Unit: "1",
+			Description: "每 Run 模型调用数（P1）", Labels: []string{LabelAgent}, Buckets: BucketsInvocations},
+		{Name: MetricChatRuns, Kind: sdkmetrics.KindCounter, Unit: "{run}",
+			Description: "Chat 业务 Run 总数（P1）", Labels: []string{LabelProfile, LabelTransport, LabelTerminationReason}},
 
 		// Model（§8.2）。
-		{Name: MetricModelRequests, Kind: MetricKindCounter, Unit: "{request}",
-			Description: "物理模型请求数", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelOutcome, LabelErrorCode}, Priority: "P0"},
-		{Name: MetricModelInvocations, Kind: MetricKindCounter, Unit: "{invocation}",
-			Description: "可信 Usage 的模型调用数", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelAcceptance}, Priority: "P0"},
-		{Name: MetricModelCost, Kind: MetricKindCounter, Unit: "USD",
-			Description: "模型调用成本", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelCostQuality}, Priority: "P0"},
-		{Name: MetricModelTokens, Kind: MetricKindCounter, Unit: "{token}",
-			Description: "模型 Token 消耗", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelTokenType}, Priority: "P0"},
-		{Name: MetricModelTTFT, Kind: MetricKindTimer, Unit: "s",
-			Description: "首个非空 Text Delta 时延", Labels: []string{LabelProvider, LabelModel, LabelPhase}, Buckets: BucketsTTFT, Priority: "P1"},
-		{Name: MetricModelRetries, Kind: MetricKindCounter, Unit: "{retry}",
-			Description: "模型请求重试次数；reason 取 pierrors 稳定错误码", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelReason}, Priority: "P0"},
-		{Name: MetricModelContextOverflows, Kind: MetricKindCounter, Unit: "{overflow}",
-			Description: "Context Overflow 次数", Labels: []string{LabelProvider, LabelModel, LabelPhase}, Priority: "P0"},
-		{Name: MetricGenAIClientOperationDuration, Kind: MetricKindTimer, Unit: "s",
+		{Name: MetricModelRequests, Kind: sdkmetrics.KindCounter, Unit: "{request}",
+			Description: "物理模型请求数", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelOutcome, LabelErrorCode}},
+		{Name: MetricModelInvocations, Kind: sdkmetrics.KindCounter, Unit: "{invocation}",
+			Description: "可信 Usage 的模型调用数", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelAcceptance}},
+		{Name: MetricModelCost, Kind: sdkmetrics.KindCounter, Unit: "USD",
+			Description: "模型调用成本", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelCostQuality}},
+		{Name: MetricModelTokens, Kind: sdkmetrics.KindCounter, Unit: "{token}",
+			Description: "模型 Token 消耗", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelTokenType}},
+		{Name: MetricModelTTFT, Kind: sdkmetrics.KindTimer, Unit: "s",
+			Description: "首个非空 Text Delta 时延（P1）", Labels: []string{LabelProvider, LabelModel, LabelPhase}, Buckets: BucketsTTFT},
+		{Name: MetricModelRetries, Kind: sdkmetrics.KindCounter, Unit: "{retry}",
+			Description: "模型请求重试次数；reason 取 pierrors 稳定错误码", Labels: []string{LabelProvider, LabelModel, LabelPhase, LabelReason}},
+		{Name: MetricModelContextOverflows, Kind: sdkmetrics.KindCounter, Unit: "{overflow}",
+			Description: "Context Overflow 次数", Labels: []string{LabelProvider, LabelModel, LabelPhase}},
+		{Name: MetricGenAIClientOperationDuration, Kind: sdkmetrics.KindTimer, Unit: "s",
 			Description: "GenAI client 操作时延（semconv）",
-			Labels:      []string{AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAIRequestModel, AttrErrorType}, Buckets: BucketsGenAIOperationDuration, Priority: "P0"},
-		{Name: MetricGenAIClientTokenUsage, Kind: MetricKindHistogram, Unit: "{token}",
+			Labels:      []string{AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAIRequestModel, AttrErrorType}, Buckets: BucketsGenAIOperationDuration},
+		{Name: MetricGenAIClientTokenUsage, Kind: sdkmetrics.KindHistogram, Unit: "{token}",
 			Description: "GenAI 单次请求 Token 用量（semconv）",
-			Labels:      []string{AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAIRequestModel, "gen_ai.token.type"}, Buckets: BucketsGenAITokenUsage, Priority: "P0"},
+			Labels:      []string{AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAIRequestModel, "gen_ai.token.type"}, Buckets: BucketsGenAITokenUsage},
 
 		// Tool（§8.3）。
-		{Name: MetricToolExecutions, Kind: MetricKindCounter, Unit: "{execution}",
-			Description: "Tool 执行次数", Labels: []string{LabelTool, LabelOutcome, LabelErrorCode}, Priority: "P0"},
-		{Name: MetricToolDuration, Kind: MetricKindTimer, Unit: "s",
-			Description: "Tool 执行时延", Labels: []string{LabelTool, LabelOutcome}, Buckets: BucketsToolDuration, Priority: "P0"},
-		{Name: MetricToolQueueDuration, Kind: MetricKindTimer, Unit: "s",
-			Description: "Tool 信号量排队时延", Labels: []string{LabelTool, LabelExecutionMode, LabelOutcome}, Buckets: BucketsToolQueue, Priority: "P1"},
+		{Name: MetricToolExecutions, Kind: sdkmetrics.KindCounter, Unit: "{execution}",
+			Description: "Tool 执行次数", Labels: []string{LabelTool, LabelOutcome, LabelErrorCode}},
+		{Name: MetricToolDuration, Kind: sdkmetrics.KindTimer, Unit: "s",
+			Description: "Tool 执行时延", Labels: []string{LabelTool, LabelOutcome}, Buckets: BucketsToolDuration},
+		{Name: MetricToolQueueDuration, Kind: sdkmetrics.KindTimer, Unit: "s",
+			Description: "Tool 信号量排队时延（P1）", Labels: []string{LabelTool, LabelExecutionMode, LabelOutcome}, Buckets: BucketsToolQueue},
 
 		// Compaction（§8.4）。
-		{Name: MetricCompactions, Kind: MetricKindCounter, Unit: "{compaction}",
-			Description: "上下文压缩次数", Labels: []string{LabelReason, LabelOutcome}, Priority: "P0"},
-		{Name: MetricCompactionDuration, Kind: MetricKindTimer, Unit: "s",
-			Description: "上下文压缩时延", Labels: []string{LabelReason, LabelOutcome}, Buckets: BucketsCompactionDuration, Priority: "P1"},
-		{Name: MetricCompactionMessageReduction, Kind: MetricKindHistogram, Unit: "1",
-			Description: "压缩消息削减比例，取值 [0,1]", Labels: []string{LabelReason}, Buckets: BucketsReductionRatio, Priority: "P1"},
+		{Name: MetricCompactions, Kind: sdkmetrics.KindCounter, Unit: "{compaction}",
+			Description: "上下文压缩次数", Labels: []string{LabelReason, LabelOutcome}},
+		{Name: MetricCompactionDuration, Kind: sdkmetrics.KindTimer, Unit: "s",
+			Description: "上下文压缩时延（P1）", Labels: []string{LabelReason, LabelOutcome}, Buckets: BucketsCompactionDuration},
+		{Name: MetricCompactionMessageReduction, Kind: sdkmetrics.KindHistogram, Unit: "1",
+			Description: "压缩消息削减比例，取值 [0,1]（P1）", Labels: []string{LabelReason}, Buckets: BucketsReductionRatio},
 	}
 }
 
+// ---------- Label 基数红线（§8.5） ----------
+
+// 设计 §8.5 的禁止字段中，以下已由 go-observability-sdk 的默认禁止集合
+// 覆盖（见 metrics.DefaultForbiddenLabelKeys，拼写以 SDK 为准）：
+//
+//	run_id, conversation_id, trace_id, span_id, user_id, session_id,
+//	gen_ai.tool.call.id, file.path（文件路径）, command（命令文本）,
+//	prompt, error.message（错误正文）
+//
 // ForbiddenLabelKeys 只保留 SDK 未覆盖的项目增量，由 Runtime 经
+// WithForbiddenLabelKeys 追加；默认集合不可解除。
 var ForbiddenLabelKeys = []string{
 	"model_response", // Model Response
 }
