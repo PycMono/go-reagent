@@ -7,8 +7,8 @@ github.com/PycMono/go-cache-sdk v1.0.3 h1:PKjJlfjpvXnWNhNtZJStZt7fbPhbZMPRF3arOr
 github.com/PycMono/go-cache-sdk v1.0.3/go.mod h1:CcBmbTnrEaFg8tS8x0PmWpPwgZDUVUAoeV3HypbE4EM=
 github.com/PycMono/go-context-sdk v1.0.4 h1:yKgqoKvnsxcGmEbcDLdlHvshEOSVJw3noZJN0g6fN4w=
 github.com/PycMono/go-context-sdk v1.0.4/go.mod h1:xKHrk6uiNgIGDAfySn6LiWRfaflzqtGrjuSmJCA9+3k=
-github.com/PycMono/go-gin-sdk v0.0.8 h1:07bCmi21ckz63M0yu6o8ivoMsKaUfG1HZjPJ+5rflHo=
-github.com/PycMono/go-gin-sdk v0.0.8/go.mod h1:jN01+xhdnuMG1S4AzcAlV5H+GpMsjZoei7/yddJTTac=
+github.com/PycMono/go-gin-sdk v0.0.9 h1:3rUM/FTVq+XBMGBQwwAlUlF/NOH8jjXEyWA2wJTPlIM=
+github.com/PycMono/go-gin-sdk v0.0.9/go.mod h1:jN01+xhdnuMG1S4AzcAlV5H+GpMsjZoei7/yddJTTac=
 github.com/PycMono/go-logger-sdk v1.0.6 h1:7+vm4VE7p5Xjc1yXBh9wZCiWeTTGOlgi95gQoKnMuuw=
 github.com/PycMono/go-logger-sdk v1.0.6/go.mod h1:3o05mUmfEc72yKdGuTIUPcPJ1938BRa5KW7FfL9KKsA=
 github.com/PycMono/go-mysql-sdk v1.0.2 h1:1wGLTD9YMpuS8vIizOgvt29sAvaw9NI0h7HKBTwf9rU=

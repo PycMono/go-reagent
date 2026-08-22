@@ -6,7 +6,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/PycMono/go-cache-sdk v1.0.3
 	github.com/PycMono/go-context-sdk v1.0.4
-	github.com/PycMono/go-gin-sdk v0.0.8
+	github.com/PycMono/go-gin-sdk v0.0.9
 	github.com/PycMono/go-logger-sdk v1.0.6
 	github.com/PycMono/go-mysql-sdk v1.0.2
 	github.com/PycMono/go-observability-sdk v1.0.1

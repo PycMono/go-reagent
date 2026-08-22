@@ -321,7 +321,7 @@ Loop → TracingProvider → CostTracker → Raw Provider
 生命周期规则：
 
 - `TracingProvider.Stream` 创建 Span；`CostTracker.Stream` 在调用 Raw Provider 前记录 `startedAt`。
-- `trackingStream.Next` 在首个非空 Text Delta 记录 request-local TTFT Snapshot；`tracingStream.Next` 统计 Chunk，并将同一 Snapshot 写入 Span 和可选 Histogram。`Next=false` 不结束 Span。
+- `CostTrackerStream.Next` 在首个非空 Text Delta 记录 request-local TTFT Snapshot；`tracingStream.Next` 统计 Chunk，并将同一 Snapshot 写入 Span 和可选 Histogram。`Next=false` 不结束 Span。
 - `Result` 取得 CostTracker 补齐的 Usage 后写 Span/Metric 并结束 Span。
 - `Close` 始终关闭下层 Stream；未调用 `Result` 时标记 abandoned/canceled 并结束 Span。
 - 使用 `sync.Once` 保证正常完成、错误、取消、超时、提前 Close 和重复 Result 均只结束一次。
@@ -756,7 +756,7 @@ Tail 模式下应用不得先做低比例 Head Sampling。Head 未采样异常�
 1. Propagator：仅 W3C（traceparent/tracestate），不解析也不注入 B3
 2. Span 归属：一律使用标准 OTel `trace.Span`；不定义 SDK Span 包装类型，不引用 opentracing/jaeger
 3. 日志字段：trace_id/span_id 由 logger SDK 自动注入，禁止手拼
-4. TraceID 回执：唯一技术关联 ID 为当前 OTel SpanContext 的 TraceID；有父则续用，无父时由应用设置的全局 SDK Provider 创建 root Span。SERVER Span 创建后、响应提交前将有效值以 32 位小写十六进制写入 `trace-id`，CORS 将其加入 `Access-Control-Expose-Headers`；Noop 可保留合法父 TraceID，但无父请求不生成兜底 ID；不存在 `request-id`、`request_id` 或 `request.id`
+4. TraceID 回执：唯一技术关联 ID 为当前 OTel SpanContext 的 TraceID；有父则续用，无父时由应用设置的全局 SDK Provider 创建 root Span。SERVER Span 创建后、响应提交前将有效值以 32 位小写十六进制写入 `trace-id` 响应头，CORS 将其加入 `Access-Control-Expose-Headers`；统一 JSON envelope（go-gin-sdk HTTPJSONBody）顶层同时携带 `trace_id` 字段（omitempty，与响应头同源）；Noop 可保留合法父 TraceID，但无父请求不生成兜底 ID；不存在 `request-id`、`request_id` 或 `request.id`
 5. 信任边界：公网入口在 Tracing 前剥离不可信 Trace Context；只有配置的可信网关或上游可续接 Remote Parent。TraceID 不参与鉴权、幂等或业务身份
 6. 禁止传播：account-id/API Key/Cookie 不进入 Trace Header 或 Baggage
 7. 后端：统一 OTLP → Tempo；服务身份经 Resource service.name 区分

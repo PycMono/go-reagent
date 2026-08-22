@@ -12,6 +12,8 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
+var _ ai.Stream = (*CostTrackerStream)(nil)
+
 type providerFunc func(context.Context, []ai.Message, []ai.ToolDefinition) (*ai.Message, error)
 
 func (f providerFunc) Stream(ctx context.Context, messages []ai.Message, tools []ai.ToolDefinition) ai.Stream {

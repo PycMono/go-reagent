@@ -3,6 +3,7 @@ package errors
 import (
 	stderrors "errors"
 	"fmt"
+	"net/http"
 	"testing"
 )
 
@@ -52,5 +53,29 @@ func TestCommonErrorWrapPreservesIdentityAndCause(t *testing.T) {
 	}
 	if _, ok := AsSysError(wrapper); !ok {
 		t.Fatal("wrapped corrupt-message error must remain a system error")
+	}
+}
+
+// TestHTTPStatusForCode 锁定错误码 → HTTP 状态映射表（响应层
+// ginsdk.Send 的 statusFor 参数）。
+func TestHTTPStatusForCode(t *testing.T) {
+	tests := []struct {
+		code int
+		want int
+	}{
+		{ErrInvalidParam.Code(), http.StatusBadRequest},
+		{ErrUnauthorized.Code(), http.StatusUnauthorized},
+		{ErrForbidden.Code(), http.StatusForbidden},
+		{ErrUserNotFound.Code(), http.StatusNotFound},
+		{ErrNotFound.Code(), http.StatusNotFound},
+		{ErrConflict.Code(), http.StatusConflict},
+		{ErrRateLimited.Code(), http.StatusTooManyRequests},
+		{ErrInternal.Code(), http.StatusInternalServerError},
+		{-1, http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		if got := HTTPStatusForCode(test.code); got != test.want {
+			t.Errorf("HTTPStatusForCode(%d) = %d, want %d", test.code, got, test.want)
+		}
 	}
 }

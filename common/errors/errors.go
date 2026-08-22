@@ -3,6 +3,7 @@ package errors
 import (
 	stderrors "errors"
 	"fmt"
+	"net/http"
 )
 
 // CodeError is an error with a stable application error code.
@@ -100,3 +101,24 @@ var (
 	ErrRateLimited  = NewBizError(10008, "rate limited")
 	ErrInternal     = NewSysError(10009, "internal server error")
 )
+
+// HTTPStatusForCode 是本项目错误码 → HTTP 状态的统一映射，供响应层
+// （ginsdk.Send 的 statusFor 参数）使用。
+func HTTPStatusForCode(code int) int {
+	switch code {
+	case ErrInvalidParam.Code():
+		return http.StatusBadRequest
+	case ErrUnauthorized.Code():
+		return http.StatusUnauthorized
+	case ErrForbidden.Code():
+		return http.StatusForbidden
+	case ErrUserNotFound.Code(), ErrNotFound.Code():
+		return http.StatusNotFound
+	case ErrConflict.Code():
+		return http.StatusConflict
+	case ErrRateLimited.Code():
+		return http.StatusTooManyRequests
+	default:
+		return http.StatusInternalServerError
+	}
+}
