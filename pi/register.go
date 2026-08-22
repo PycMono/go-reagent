@@ -76,12 +76,7 @@ func newProvider(config providers.Options) (ai.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	tracker, err := observability.NewCostTracker(next, config.ID, config.Model, observability.Pricing{
-		InputUSDPerMillionTokens:      config.Pricing.InputUSDPerMillionTokens,
-		OutputUSDPerMillionTokens:     config.Pricing.OutputUSDPerMillionTokens,
-		CacheReadUSDPerMillionTokens:  config.Pricing.CacheReadUSDPerMillionTokens,
-		CacheWriteUSDPerMillionTokens: config.Pricing.CacheWriteUSDPerMillionTokens,
-	})
+	tracker, err := observability.NewCostTracker(next, config.ID, config.Model, *config.Pricing)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,7 @@ func TestOptionsNormalizeAndValidateNormalizesFields(t *testing.T) {
 		BaseURL:  " https://example.com/v1/ ",
 		APIKey:   " secret ",
 		Model:    " model ",
+		Pricing:  &providers.Pricing{},
 	}
 
 	if err := opts.NormalizeAndValidate(); err != nil {

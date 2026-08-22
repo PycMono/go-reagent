@@ -8,45 +8,15 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
-// Pricing is an immutable USD-per-million-token price snapshot.
-//
-// 缓存价格（阶段 4，§9.1）用指针区分“未配置”与显式 0：Provider 上报了
-// 缓存 Token 而对应价格未配置时，成本无法满足子集口径，CostTracker 将该次
-// 调用标记为 estimated。
-type Pricing struct {
-	InputUSDPerMillionTokens      float64
-	OutputUSDPerMillionTokens     float64
-	CacheReadUSDPerMillionTokens  *float64
-	CacheWriteUSDPerMillionTokens *float64
-}
-
-// Validate 校验价格快照是否落在账本支持的数值范围内。
-func (p Pricing) Validate() error {
-	if !ai.ValidUsageDecimal(p.InputUSDPerMillionTokens) {
-		return errors.New("model cost tracker: input price is outside the supported range")
-	}
-	if !ai.ValidUsageDecimal(p.OutputUSDPerMillionTokens) {
-		return errors.New("model cost tracker: output price is outside the supported range")
-	}
-	if p.CacheReadUSDPerMillionTokens != nil && !ai.ValidUsageDecimal(*p.CacheReadUSDPerMillionTokens) {
-		return errors.New("model cost tracker: cache read price is outside the supported range")
-	}
-	if p.CacheWriteUSDPerMillionTokens != nil && !ai.ValidUsageDecimal(*p.CacheWriteUSDPerMillionTokens) {
-		return errors.New("model cost tracker: cache write price is outside the supported range")
-	}
-	return nil
-}
-
-// priceOrZero 把未配置的缓存价格按 0 处理（仅在无对应 Token 时进入公式）。
-func priceOrZero(price *float64) float64 {
-	if price == nil {
-		return 0
-	}
-	return *price
-}
+// Pricing 即 providers.Pricing（类型别名）：价格结构与校验统一由
+// pi/ai/providers 的 Options/Pricing 拥有，CostTracker 不再复制定义。
+// 缓存价格为 0 的语义：Provider 上报缓存 Token 而对应价格为 0（未配置或
+// 免费无法区分）时，该次调用保守标记 estimated，不冒充精确成本（§9.1）。
+type Pricing = providers.Pricing
 
 // CostTracker enriches every successful model response with trustworthy cost metrics.
 type CostTracker struct {
@@ -191,8 +161,8 @@ func (t *CostTracker) meter(
 	usage := *response.Usage
 	usage.InputPriceUSDPerMillionTokens = t.pricing.InputUSDPerMillionTokens
 	usage.OutputPriceUSDPerMillionTokens = t.pricing.OutputUSDPerMillionTokens
-	usage.CacheReadPriceUSDPerMillionTokens = priceOrZero(t.pricing.CacheReadUSDPerMillionTokens)
-	usage.CacheWritePriceUSDPerMillionTokens = priceOrZero(t.pricing.CacheWriteUSDPerMillionTokens)
+	usage.CacheReadPriceUSDPerMillionTokens = t.pricing.CacheReadUSDPerMillionTokens
+	usage.CacheWritePriceUSDPerMillionTokens = t.pricing.CacheWriteUSDPerMillionTokens
 	// §9.1 成本公式：normal_input = input - cache_read - cache_write。
 	cost := ai.ExpectedCostUSD(usage)
 	if !ai.ValidUsageDecimal(cost) {
@@ -210,10 +180,11 @@ func (t *CostTracker) meter(
 	usage.PlatformID = t.platformID
 	usage.Model = t.model
 	// §9.1：分项足以按配置价格重算时标记 exact；Provider 上报了缓存 Token
-	// 而对应价格未配置时口径无法满足，降级 estimated，不得混入精确报表。
+	// 而对应价格为 0（未配置与免费无法区分）时保守降级 estimated，
+	// 不得混入精确报表。
 	usage.CostQuality = ai.CostQualityExact
-	if (usage.CacheReadTokens > 0 && t.pricing.CacheReadUSDPerMillionTokens == nil) ||
-		(usage.CacheWriteTokens > 0 && t.pricing.CacheWriteUSDPerMillionTokens == nil) {
+	if (usage.CacheReadTokens > 0 && t.pricing.CacheReadUSDPerMillionTokens == 0) ||
+		(usage.CacheWriteTokens > 0 && t.pricing.CacheWriteUSDPerMillionTokens == 0) {
 		usage.CostQuality = ai.CostQualityEstimated
 	}
 	result.Usage = &usage

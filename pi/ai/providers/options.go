@@ -2,6 +2,7 @@ package providers
 
 import (
 	"errors"
+	"github.com/PycMono/go-reagent/pi/ai"
 	"strings"
 )
 
@@ -30,10 +31,28 @@ type Options struct {
 // 缓存价格（阶段 4）用指针区分“未配置”与显式 0：Provider 上报缓存 Token
 // 而未配置对应价格时，该次调用成本只能标记为 estimated（§9.1）。
 type Pricing struct {
-	InputUSDPerMillionTokens      float64  `json:"input_usd_per_million_tokens" yaml:"input_usd_per_million_tokens" toml:"input_usd_per_million_tokens"`
-	OutputUSDPerMillionTokens     float64  `json:"output_usd_per_million_tokens" yaml:"output_usd_per_million_tokens" toml:"output_usd_per_million_tokens"`
-	CacheReadUSDPerMillionTokens  *float64 `json:"cache_read_usd_per_million_tokens,omitempty" yaml:"cache_read_usd_per_million_tokens" toml:"cache_read_usd_per_million_tokens"`
-	CacheWriteUSDPerMillionTokens *float64 `json:"cache_write_usd_per_million_tokens,omitempty" yaml:"cache_write_usd_per_million_tokens" toml:"cache_write_usd_per_million_tokens"`
+	InputUSDPerMillionTokens      float64 `json:"input_usd_per_million_tokens" yaml:"input_usd_per_million_tokens" toml:"input_usd_per_million_tokens"`
+	OutputUSDPerMillionTokens     float64 `json:"output_usd_per_million_tokens" yaml:"output_usd_per_million_tokens" toml:"output_usd_per_million_tokens"`
+	CacheReadUSDPerMillionTokens  float64 `json:"cache_read_usd_per_million_tokens,omitempty" yaml:"cache_read_usd_per_million_tokens" toml:"cache_read_usd_per_million_tokens"`
+	CacheWriteUSDPerMillionTokens float64 `json:"cache_write_usd_per_million_tokens,omitempty" yaml:"cache_write_usd_per_million_tokens" toml:"cache_write_usd_per_million_tokens"`
+}
+
+// Validate 校验全部价格落在账本支持的数值范围内（有限、非负、DECIMAL(20,12)）。
+// 价格校验集中在这里，不散落到 CostTracker 等使用方。
+func (p Pricing) Validate() error {
+	if !ai.ValidUsageDecimal(p.InputUSDPerMillionTokens) {
+		return errors.New("pricing: input price is outside the supported range")
+	}
+	if !ai.ValidUsageDecimal(p.OutputUSDPerMillionTokens) {
+		return errors.New("pricing: output price is outside the supported range")
+	}
+	if !ai.ValidUsageDecimal(p.CacheReadUSDPerMillionTokens) {
+		return errors.New("pricing: cache read price is outside the supported range")
+	}
+	if !ai.ValidUsageDecimal(p.CacheWriteUSDPerMillionTokens) {
+		return errors.New("pricing: cache write price is outside the supported range")
+	}
+	return nil
 }
 
 // NormalizeAndValidate canonicalizes and validates the fields required to create a provider.
@@ -55,5 +74,8 @@ func (opts *Options) NormalizeAndValidate() error {
 	if opts.ContextWindowTokens < 0 {
 		return errors.New("contextWindowTokens 不能为负数")
 	}
-	return nil
+	if opts.Pricing == nil {
+		return errors.New("pricing 不能为空")
+	}
+	return opts.Pricing.Validate()
 }
