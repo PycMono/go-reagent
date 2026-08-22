@@ -1,11 +1,15 @@
 package observability
 
-// pi 的 Span 与 Retry Event 辅助函数。
+// 本文件是 pi 的 Span 辅助层：把 OTel 底层 API（codes/trace/AddEvent）
+// 包装成项目语义，业务文件（loop/recovery/agent/compaction）不直接触碰
+// otel/trace 类型。
 //
-// Span 创建统一走 go-context-sdk/tracing 的 StartSpan（SDK 迁移设计：
-// StartSpan 是唯一 Span 创建 Helper，统一 instrumentation scope）；
-// 属性补充统一走 KV/WithKV。全局 Provider 未安装时全部安全 Noop，
-// 因此 pi 不需要自持有的门面、开关判断或 Fx 注入。
+// - ClassifyError/ErrorFields：错误 → 稳定错误码（WithSpan 分类器与属性）
+// - SpanError：流式 Span（TracingProvider，§5）的错误收尾；函数作用域
+//   Span 一律走 contexttracing.WithSpan + ClassifyError
+// - RecordRetry*：§4.8 Retry Wait 三事件写入 Generate Span
+//
+// Metrics 的错误分类 Label 推导（OutcomeOf/ErrorCodeLabel）见 record.go。
 
 import (
 	"context"
@@ -53,30 +57,6 @@ func SpanError(span trace.Span, err error) {
 	}
 	span.SetStatus(codes.Error, ClassifyError(err))
 	span.SetAttributes(ErrorFields(err)...)
-}
-
-// OutcomeOf 把一次操作结果归类为 §8.2 的 outcome Label；
-// Context Cancel 与 Deadline 必须区分（§4.9）。
-func OutcomeOf(err error) RequestOutcome {
-	switch {
-	case err == nil:
-		return RequestOutcomeSuccess
-	case errors.Is(err, context.Canceled):
-		return RequestOutcomeCanceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return RequestOutcomeDeadlineExceeded
-	default:
-		return RequestOutcomeError
-	}
-}
-
-// ErrorCodeLabel 返回 Metrics 的 error_code Label：无错误时为 none，
-// 其他情况取 pierrors 稳定错误码。
-func ErrorCodeLabel(err error) string {
-	if err == nil {
-		return ErrorCodeNone
-	}
-	return string(pierrors.ErrorCodeOf(err))
 }
 
 // ---------- Retry Wait Event（§4.8） ----------
