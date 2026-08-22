@@ -7,7 +7,7 @@ import (
 	"github.com/PycMono/go-reagent/infrastructure"
 	"github.com/PycMono/go-reagent/infrastructure/controller"
 	"github.com/PycMono/go-reagent/infrastructure/driver/gingext"
-	"github.com/PycMono/go-reagent/infrastructure/observability"
+	"github.com/PycMono/go-reagent/infrastructure/driver/observability"
 	"go.uber.org/fx"
 )
 

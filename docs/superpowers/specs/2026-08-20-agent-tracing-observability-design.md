@@ -122,7 +122,7 @@ flowchart TB
 
 - `pi` 使用 OTel API 和项目语义门面产生 Span/Metric，不依赖 Collector、Tempo、Prometheus、Grafana 或 MySQL。
 - `go-observability-sdk` Runtime 创建 TracerProvider、MeterProvider、Exporter、Resource、W3C Propagator 和 Metrics Listener，并保证全局对象只有一个所有者。
-- `infrastructure/observability` 映射项目配置、注册领域 Metrics Definition、适配项目错误并将 Runtime 接入 Fx 生命周期，不重复创建上述基础设施。
+- `infrastructure/driver/observability` 映射项目配置、注册领域 Metrics Definition、适配项目错误并将 Runtime 接入 Fx 生命周期，不重复创建上述基础设施。
 - Conversation 层创建带业务 ID 的 `conversation.run` Span，并持久化 `RunResult.Invocations`。
 - OTel 故障 Fail-open；MySQL Ledger 仍遵循现有业务持久化错误语义，不与 Exporter 故障混为一类。
 
@@ -338,7 +338,7 @@ type streamTimingReader interface {
 
 ## 6. Telemetry 包边界
 
-`pi/harness/observability` 包含语义常量（Span/属性/枚举/Metric 名与 Bucket）、Span 辅助函数、GenerationHint、TracingProvider、领域 Metrics 记录函数、ContentPolicy 常量与 CostTracker。`go-observability-sdk` 提供通用 Runtime 与包级 Metrics 默认 Manager；`infrastructure/observability` 只负责配置映射、领域 Definition 转换注册、项目错误适配、Fx 注册与 Runtime 生命周期。
+`pi/harness/observability` 包含语义常量（Span/属性/枚举/Metric 名与 Bucket）、Span 辅助函数、GenerationHint、TracingProvider、领域 Metrics 记录函数、ContentPolicy 常量与 CostTracker。`go-observability-sdk` 提供通用 Runtime 与包级 Metrics 默认 Manager；`infrastructure/driver/observability` 只负责配置映射、领域 Definition 转换注册、项目错误适配、Fx 注册与 Runtime 生命周期。
 
 实现要点（与 go-observability-sdk / go-context-sdk 终态对齐）：
 
@@ -824,7 +824,7 @@ Prometheus 对应用 Metrics Endpoint 连续 3 次抓取失败
 | 阶段 | 交付 | 验收 |
 |---|---|---|
 | 0 SDK 基线与语义 | 将 go-observability-sdk v1.0.1 转为直接依赖，锁定 go-logger-sdk v1.0.6、go-gin-sdk v0.0.7 和修正 instrumentation scope 后的 go-context-sdk；映射 Observability 配置并固定 Span/Metric/枚举/View/内容/基数 | `sample_ratio=0` 在服务层失败；关闭时无网络、Metrics Listener 或兜底 ID；依赖图无 Jaeger/OpenTracing；非法配置在 Fx 启动前失败 |
-| 1 服务入口 | `infrastructure/observability` 装配唯一 go-observability-sdk Runtime 及 Fx Shutdown；自建 Engine `infrastructure/driver/gingext/gingext.go` 按 `Trace Context Boundary → Tracing → Metrics` 安装 Middleware；Conversation/load/persist Span、日志关联与本地观测栈示例 | 公网伪造 Parent 被忽略且可信 Parent 被续接；HTTP Metrics/Exemplar 可抓取；响应头、日志与 Span 使用同一 TraceID；Collector 不可用不改变业务结果 |
+| 1 服务入口 | `infrastructure/driver/observability` 装配唯一 go-observability-sdk Runtime 及 Fx Shutdown；自建 Engine `infrastructure/driver/gingext/gingext.go` 按 `Trace Context Boundary → Tracing → Metrics` 安装 Middleware；Conversation/load/persist Span、日志关联与本地观测栈示例 | 公网伪造 Parent 被忽略且可信 Parent 被续接；HTTP Metrics/Exemplar 可抓取；响应头、日志与 Span 使用同一 TraceID；Collector 不可用不改变业务结果 |
 | 2 核心 Trace | Agent/Turn/Generate/Provider/Compaction Span、Retry Event；`pi/register.go` 装配为 `TracingProvider(CostTracker(RawProvider))`；CostTracker 单点 TTFT Snapshot；Tool Middleware/Queue Metric；MCP W3C；P0 Metrics | Span Tree/Event、并行、恢复、取消、Noop 全通过；自定义 Provider 缺少 `streamTimingReader` 时 Trace 本地兜底且不写 Usage/Ledger；初期 Head `1.0`，降采样前完成容量与风险确认 |
 | 3 Ledger 正确性 | Invocation Outcome/RequestIndex/TTFT；可信 Usage 先于契约校验入账；Domain/Migration/Mapper/3 秒终态持久化；三方对账 | 契约非法、预算、取消不丢 Usage；事务错误明确返回；Sampling `1.0` 时 Ledger 唯一定位 Span |
 | 4 Usage 增强 | 三类 Provider Cache/Reasoning 归一化，扩展 Pricing、Usage、Migration、Dashboard，区分 Exact/Estimated | Fixture 覆盖总量、分项、公式、非法响应和成本质量；现有调用点编译通过且业务语义不变 |

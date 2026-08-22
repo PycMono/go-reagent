@@ -87,11 +87,13 @@ func newRateLimitedErrorHandler(interval time.Duration) sdkobservability.ErrorHa
 			suppressed.Add(1)
 			return
 		}
+
 		dropped := suppressed.Swap(0)
 		fields := logsdk.Any("error", err.Error())
 		if dropped > 0 {
 			fields["suppressed_count"] = dropped
 		}
+
 		logsdk.Warn(ctx, "observability runtime error", fields)
 	}
 }
