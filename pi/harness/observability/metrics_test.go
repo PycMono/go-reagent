@@ -88,11 +88,8 @@ func TestDomainDefinitionsReferenceValidNames(t *testing.T) {
 			t.Fatalf("指标名 %q 重复", name)
 		}
 		seen[name] = struct{}{}
-		if definition.Kind == MetricKindHistogram && len(definition.Buckets) == 0 {
+		if definition.Kind == sdkmetrics.KindHistogram && len(definition.Buckets) == 0 {
 			t.Fatalf("Histogram %q 缺少 Bucket", name)
-		}
-		if definition.Priority != "P0" && definition.Priority != "P1" {
-			t.Fatalf("指标 %q 优先级必须是 P0/P1", name)
 		}
 		forbidden := make(map[string]struct{}, len(ForbiddenLabelKeys))
 		for _, key := range ForbiddenLabelKeys {
@@ -250,7 +247,7 @@ func TestCompactionReductionRatioClamped(t *testing.T) {
 }
 
 // TestRecordAPIShapeMatchesDefinitionKind 防止记录侧的 SDK API 形态
-//（Timer/Histogram/Counter）与 Definition 的 Kind 漂移——SDK 的 Instrument
+// （Timer/Histogram/Counter）与 Definition 的 Kind 漂移——SDK 的 Instrument
 // 缓存首次创建即冻结类型，不一致的记录会被丢弃（kind conflict）。
 func TestRecordAPIShapeMatchesDefinitionKind(t *testing.T) {
 	adaptor := installMetrics(t)
@@ -271,13 +268,13 @@ func TestRecordAPIShapeMatchesDefinitionKind(t *testing.T) {
 	RecordCompaction(ctx, CompactionReasonOverflow, nil)
 	RecordCompactionDetail(ctx, CompactionReasonOverflow, nil, time.Second, 10, 4)
 
-	kindByName := make(map[string]MetricKind)
+	kindByName := make(map[string]sdkmetrics.Kind)
 	for _, definition := range DomainMetricDefinitions() {
 		kindByName[definition.Name] = definition.Kind
 	}
 	// sdkmetrics API 形态 → 定义 Kind 的映射。
-	apiKind := map[string]MetricKind{
-		"counter": MetricKindCounter, "timer": MetricKindTimer, "histogram": MetricKindHistogram,
+	apiKind := map[string]sdkmetrics.Kind{
+		"counter": sdkmetrics.KindCounter, "timer": sdkmetrics.KindTimer, "histogram": sdkmetrics.KindHistogram,
 	}
 	if len(adaptor.entries) == 0 {
 		t.Fatal("没有任何记录")

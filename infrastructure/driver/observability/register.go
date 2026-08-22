@@ -10,6 +10,7 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	sdkobservability "github.com/PycMono/go-observability-sdk"
 	"github.com/PycMono/go-reagent/config"
+	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 	"go.uber.org/fx"
 )
 
@@ -25,15 +26,13 @@ var Register = fx.Options(
 // 私有 Prometheus Registry 与 Metrics Listener 均由 SDK Runtime 拥有，
 // 服务层不得再建第二套。
 func NewRuntime(conf *config.Config) (*sdkobservability.Runtime, error) {
-	definitions, err := DomainDefinitions()
-	if err != nil {
-		return nil, err
-	}
 	return sdkobservability.New(
 		context.Background(),
 		ToObservabilityConfig(conf.Observability, serviceVersion()),
-		sdkobservability.WithMetricDefinitions(definitions...),
-		sdkobservability.WithForbiddenLabelKeys(ForbiddenLabelKeys()...),
+		// 领域指标定义与基数红线由 pi 语义层（pi/harness/observability）
+		// 集中定义，此处原样注册，无转换层。
+		sdkobservability.WithMetricDefinitions(piobservability.DomainMetricDefinitions()...),
+		sdkobservability.WithForbiddenLabelKeys(piobservability.ForbiddenLabelKeys...),
 		sdkobservability.WithErrorHandler(newRateLimitedErrorHandler(5*time.Second)),
 	)
 }

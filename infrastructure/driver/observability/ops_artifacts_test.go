@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 	"gopkg.in/yaml.v3"
 )
@@ -14,7 +15,7 @@ import (
 // opsSeriesPrefixes 把 Definition 正向翻译为 Prometheus 序列名前缀
 // （UnderscoreEscapingWithSuffixes：点转下划线；单位 s→seconds、USD 保留、
 // {…} 注解丢弃；Counter 追加 _total；Histogram 数据点追加 _bucket/_count/_sum）。
-func opsSeriesPrefixes(definitions []piobservability.MetricDefinition) []string {
+func opsSeriesPrefixes(definitions []sdkmetrics.Definition) []string {
 	unitSuffix := func(unit string) string {
 		switch {
 		case unit == "s":
@@ -30,7 +31,7 @@ func opsSeriesPrefixes(definitions []piobservability.MetricDefinition) []string 
 	prefixes := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
 		base := strings.ReplaceAll(definition.Name, ".", "_") + unitSuffix(definition.Unit)
-		if definition.Kind == piobservability.MetricKindCounter {
+		if definition.Kind == sdkmetrics.KindCounter {
 			base += "_total"
 		}
 		prefixes = append(prefixes, base)
