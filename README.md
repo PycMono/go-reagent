@@ -123,7 +123,7 @@ Skill 也可以放在 `.agents/skills/` 或 `.claw/skills/`。每次 `Run` 开�
 
 仓库根目录的 `AGENTS.md` 和 `skills/repository-development/SKILL.md` 只服务 go-reagent 仓库开发，不进入浏览器聊天 Agent 的上下文。产品默认使用 `workspaces/chat`；根 AGENTS/Skills 是所有聊天助手共享的基础层，会话绑定的 Agent Profile 再叠加角色 AGENTS 和专属 Skills，无需修改 Runtime 核心或训练模型权重。
 
-默认 Chat Workspace 提供通用、写作、学习、健康、法律、汽车、职场和育儿八个 Agent Profile，以及天气、写作、决策和学习讲解四个通用 Skill；每个 Profile 另有自己的专属 Skills。Profile 创建后固定在会话上，Run 时由服务端读取，不能由客户端中途切换。Web 本地工具为 `calculate`、`get_current_time` 和 `read`；当前时间由本地工具无网络生成。天气、实时价格、新闻和网页资料等公网当前信息统一通过 Exa MCP 工具 `web_search_exa`/`web_fetch_exa` 查询，Exa 失败或证据不足时明确无法确认，不回退到其他公网数据源或模型记忆。Web 不提供提醒、长期记忆、在线训练或 Coding 工具。
+默认 Chat Workspace 提供通用、写作、学习、健康、法律、汽车、职场和育儿八个 Agent Profile，以及天气、写作、决策和学习讲解四个通用 Skill；每个 Profile 另有自己的专属 Skills。Profile 创建后固定在会话上，Run 时由服务端读取，不能由客户端中途切换。Web 本地工具为 `get_current_time` 和 `read`；当前时间由本地工具无网络生成。天气、实时价格、新闻和网页资料等公网当前信息统一通过 Exa MCP 工具 `web_search_exa`/`web_fetch_exa` 查询，Exa 失败或证据不足时明确无法确认，不回退到其他公网数据源或模型记忆。Web 不提供提醒、长期记忆、在线训练或 Coding 工具。
 
 ## 项目布局
 
@@ -147,15 +147,15 @@ go-reagent/
 │   │   ├── skills/            # Skill 发现与加载
 │   │   └── tools/             # 六个默认工具和进程监督器
 │   ├── mcp/                   # MCP 客户端、HTTP 传输与工具扩展
-│   └── test/                  # 根 pi 公共 API 与包边界测试
-├── config/                    # 业务配置、平台列表与 Configor 加载
+│   └── notifier.go            # Notifier 通知端口与最终回复桥接
+├── config/                    # 业务配置、全部配置校验与 Configor 加载
 ├── domain/                    # 业务实体与 Repository 接口
-├── infrastructure/           # MySQL 驱动和持久化实现
-├── application/              # Web 应用装配与聊天用例
+├── infrastructure/           # Redis/MySQL/MCP/Gin 等驱动、持久化、中间件与通知通道
+│   └── notice/               # pi.Notifier 通道实现（企业微信，可扩展飞书）
+├── application/              # 聊天用例与本地 Chat 工具
 ├── conversation/             # 会话业务编排
-├── transport/                # 可复用的 Terminal 与 WeCom 适配器
 ├── cmd/
-│   ├── server/               # 唯一产品 Agent 入口
+│   ├── server/               # 唯一产品 Agent 入口与组合根
 │   └── ping/                 # 独立 HTTP ping 示例
 ├── workspaces/chat/          # 浏览器聊天 Agent 的默认 Workspace
 │   └── profiles/             # 会话级 Agent Profile Catalog、AGENTS 与专属 Skills
@@ -172,8 +172,7 @@ go-reagent/
 pi/ai <- pi/harness <- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers
-application/web -> config + conversation + infrastructure + pi
-cmd/server -> application/web
+cmd/server -> config + conversation + infrastructure + pi
 ```
 
 `pi/ai` 定义模型与 Tool 的底层协议；根 `pi` 是唯一 Agent Core；`pi/harness` 提供默认 Workspace 能力，并由 `pi/register.go` 组装。业务配置、会话存储和消息渠道不会进入 SDK `Run` 路径。详见 [SDK 架构](docs/sdk-architecture.md)。
@@ -227,9 +226,9 @@ chmod 600 config.json
     "db": 0,
     "pool_size": 5
   },
-  "bot": {
+  "notice": {
     "wecom": {
-      "webhookURL": ""
+      "webhook_url": ""
     }
   }
 }
@@ -307,7 +306,7 @@ pi.CoreRegister + 业务 Tool Providers      -> 行业 Agent
 pi.Register                               -> 完整 Coding 工具兼容图
 ```
 
-浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister + Chat Tool Providers + MCP 扩展`，传入 `ThinkingEnabled(false)`，当前准确暴露本地工具 `calculate`、`get_current_time`、`read`，以及通过 MCP 接入的 Exa 工具 `web_search_exa`、`web_fetch_exa`。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
+浏览器产品使用 `CoreRegister + ReadOnlyToolsRegister + Chat Tool Providers + MCP 扩展`，传入 `ThinkingEnabled(false)`，当前准确暴露本地工具 `get_current_time`、`read`，以及通过 MCP 接入的 Exa 工具 `web_search_exa`、`web_fetch_exa`。Fx 生命周期统一管理 Provider、Workspace、HTTP Server 和其他资源。
 
 ### 日志输出
 
@@ -329,7 +328,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 - `ToolDefinition.ParallelSafe` 默认是 `false`，未声明和未知工具按独占方式执行。
 - 完整 SDK Coding 图中只有 `read` 标记为并发安全，其余五个 Coding 工具保持独占执行。
-- Web Chat 图中的 `calculate`、`get_current_time` 和 `read` 标记为并发安全；Exa 等 MCP 工具按独占方式执行。
+- Web Chat 图中的 `get_current_time` 和 `read` 标记为并发安全；Exa 等 MCP 工具按独占方式执行。
 - 连续的安全工具组成一个波次，默认最多同时执行 4 个；`MaxParallelTools <= 0` 时退化为串行。
 - 独占工具会等待前一安全波完成，并阻止后一波提前启动。
 - Observation 始终按模型原始 Tool Call 顺序回传，与工具实际完成顺序无关。
@@ -337,7 +336,7 @@ pi.Register                               -> 完整 Coding 工具兼容图
 
 ### 完整 SDK 工具协议
 
-兼容聚合 `pi.Register` 注册下列六个 Coding 工具名称。Web 产品只复用其中的 `read`，另外显式注册 `calculate`、`get_current_time` 两个本地 Chat 工具，并通过 MCP 扩展接入 Exa 检索工具：
+兼容聚合 `pi.Register` 注册下列六个 Coding 工具名称。Web 产品只复用其中的 `read`，另外显式注册 `get_current_time` 本地 Chat 工具，并通过 MCP 扩展接入 Exa 检索工具：
 
 | 工具 | 参数字段 |
 | --- | --- |
@@ -413,8 +412,8 @@ go test ./...
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
-- 通过 Reporter 广播统一 Agent Event；增量更新只到 Terminal，不进入模型历史或 WeCom。
-- 支持配置化企业微信群机器人 Webhook，将工具开始、失败和最终回复发送为 Markdown 通知。
+- 通过 Reporter 订阅统一 Agent Event（SSE 实时推送浏览器）；`pi.Notifier` 通知端口由 pi 内部桥接识别最终回复并扇出到外部通道，通道实现方无需理解事件模型。
+- 支持配置化企业微信群机器人 Webhook，将每次 Run 的最终回复发送为 Markdown 群通知。
 - 基于 Uber Fx 的可组合 Core、只读工具和完整 Coding 工具注册图。
 - 模型生成错误和空响应防护，并保留官方 SDK 错误解包链。
 - 工具调用 ID 的整批前置校验。
@@ -439,5 +438,5 @@ go test ./...
 - [x] 在浏览器聊天中增加 MySQL 会话持久化。
 - [x] 增加 MCP 客户端扩展与 Exa 公网检索通道。
 - [ ] 增加飞书等外部消息渠道适配。
-- [x] 增加企业微信群机器人单向生命周期通知。
+- [x] 增加企业微信群机器人单向回复通知（`pi.Notifier` 端口 + notice 通道）。
 - [ ] 增加企业微信和飞书的双向消息接入。
