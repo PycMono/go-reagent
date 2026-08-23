@@ -5,6 +5,7 @@ import (
 
 	ginsdk "github.com/PycMono/go-gin-sdk"
 	sdkmiddleware "github.com/PycMono/go-gin-sdk/middleware"
+	"github.com/PycMono/go-gin-sdk/session"
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/config"
 	mw "github.com/PycMono/go-reagent/infrastructure/middleware"
@@ -13,24 +14,24 @@ import (
 
 // NewEngine initializes the local Web server's security and recovery chain.
 //
-// 可观测性链按设计 §16.4 安装一次：Trace Context Boundary → Tracing →
-// Metrics。Telemetry 关闭时全局 Provider 为 Noop，Span 不产生导出，
-// 业务行为不变；Metrics 中间件写入 Runtime 的 Noop Manager。
-func NewEngine(conf *config.Config) (*gin.Engine, error) {
-	boundary, err := mw.TraceContextBoundary(conf.Observability.Tracing.TrustedUpstreams)
-	if err != nil {
-		return nil, err
-	}
+// 可观测性链按设计 §16.4 安装一次：Tracing → Metrics。Telemetry 关闭时全局
+// Provider 为 Noop，Span 不产生导出，业务行为不变；Metrics 中间件写入
+// Runtime 的 Noop Manager。
+func NewEngine(conf *config.Config, sessions *session.Manager) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(boundary)
 	router.Use(sdkmiddleware.Tracing())
 	router.Use(sdkmiddleware.Metrics())
 	router.Use(requestLogger())
-	router.Use(mw.SameOrigin())
-	router.Use(mw.Visitor(conf))
-	return router, nil
+	router.Use(mw.Visitor(conf, sessions))
+	return router
+}
+
+// NewSessionManager 创建访客会话管理器；节点号范围已由 config.Load 校验。
+// 依赖 go-cache-sdk 的 Redis 客户端（redis driver 以 ClientName "cache" 初始化）。
+func NewSessionManager(conf *config.Config) *session.Manager {
+	return session.NewManager(int64(conf.SnowflakeNodeID))
 }
 
 func NewHTTPServer(router *gin.Engine, conf *config.Config) *ginsdk.HTTPServer {

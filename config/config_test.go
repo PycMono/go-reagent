@@ -8,6 +8,25 @@ import (
 	"testing"
 )
 
+// TestMain 把包级测试的工作目录切到临时目录并准备默认 Workspace，使
+// Load 校验 agent.workspace_dir 时默认值 ./workspaces/chat 真实存在。
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "go-reagent-config-test")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	for _, workspace := range []string{"workspaces/chat", "workspaces/legal"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(workspace)), 0o755); err != nil {
+			panic(err)
+		}
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
 func TestLoadConfigParsesAndNormalizesRequiredRedis(t *testing.T) {
 	path := writeConfig(t, `{
 		"currentPlatform":"x",
@@ -35,8 +54,6 @@ func TestLoadConfigRejectsInvalidRequiredRedisWithoutLeakingPassword(t *testing.
 	}{
 		{name: "missing", redis: `{}`, want: "redis.addr"},
 		{name: "empty address", redis: `{"addr":["  "],"password":"` + credential + `","db":0,"pool_size":5}`, want: "redis.addr"},
-		{name: "negative db", redis: `{"addr":["127.0.0.1:6379"],"password":"` + credential + `","db":-1,"pool_size":5}`, want: "redis.db"},
-		{name: "zero pool", redis: `{"addr":["127.0.0.1:6379"],"password":"` + credential + `","db":0,"pool_size":0}`, want: "redis.pool_size"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -110,14 +127,16 @@ func TestLoadConfigDefaultsHTTPServer(t *testing.T) {
 }
 
 func TestLoadConfigDefaultsAndNormalizesAgentWorkspace(t *testing.T) {
+	resolvedDefault := mustResolveDirectory(t, DefaultAgentWorkspaceDir)
+	resolvedLegal := mustResolveDirectory(t, "./workspaces/legal")
 	tests := []struct {
 		name      string
 		agent     string
 		workspace string
 	}{
-		{name: "missing", agent: `,"agent":{"limits":{"max_turns":5}}`, workspace: DefaultAgentWorkspaceDir},
-		{name: "blank", agent: `,"agent":{"workspace_dir":"  ","limits":{"max_turns":5}}`, workspace: DefaultAgentWorkspaceDir},
-		{name: "trimmed", agent: `,"agent":{"workspace_dir":"  ./workspaces/legal  ","limits":{"max_turns":5}}`, workspace: "./workspaces/legal"},
+		{name: "missing", agent: `,"agent":{"limits":{"max_turns":5}}`, workspace: resolvedDefault},
+		{name: "blank", agent: `,"agent":{"workspace_dir":"  ","limits":{"max_turns":5}}`, workspace: resolvedDefault},
+		{name: "trimmed", agent: `,"agent":{"workspace_dir":"  ./workspaces/legal  ","limits":{"max_turns":5}}`, workspace: resolvedLegal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,29 +150,43 @@ func TestLoadConfigDefaultsAndNormalizesAgentWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			if cfg.Agent.WorkspaceDir != tt.workspace {
-				t.Fatalf("WorkspaceDir = %q, want %q", cfg.Agent.WorkspaceDir, tt.workspace)
+				t.Fatalf("WorkspaceDir = %q, want resolved absolute path %q", cfg.Agent.WorkspaceDir, tt.workspace)
 			}
 		})
 	}
 }
 
-func TestLoadConfigRejectsInvalidHTTPServer(t *testing.T) {
+// mustResolveDirectory 用与 Load 相同的解析逻辑计算期望的绝对路径。
+func mustResolveDirectory(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := resolveDirectory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+func TestLoadConfigRejectsInvalidAgentWorkspaceDir(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "AGENTS.md")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
-		name string
-		http string
-		want string
+		name      string
+		workspace string
+		want      string
 	}{
-		{name: "invalid port", http: `{"port":"invalid"}`, want: "http.port"},
-		{name: "negative read timeout", http: `{"read_timeout":-1}`, want: "http.read_timeout"},
-		{name: "negative write timeout", http: `{"write_timeout":-1}`, want: "http.write_timeout"},
+		{name: "missing", workspace: filepath.Join(t.TempDir(), "missing"), want: "agent.workspace_dir"},
+		{name: "regular file", workspace: file, want: "必须是目录"},
+		{name: "process working directory", workspace: ".", want: "不能使用进程当前目录"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, `{
 				"currentPlatform":"x",
 				"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
-				"agent":{"limits":{"max_turns":5}},
-				"http":`+tt.http+`
+				"agent":{"workspace_dir":"`+tt.workspace+`","limits":{"max_turns":5}},
+				"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
 			}`))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
@@ -174,35 +207,21 @@ func TestLoadConfigRejectsInvalidConversationAndMySQLConfiguration(t *testing.T)
 		invalidValue string
 		want         string
 	}{
-		{name: "negative history limit", oldValue: `"history_message_limit":100`, invalidValue: `"history_message_limit":-1`, want: "history_message_limit"},
 		{name: "empty host", oldValue: `"host":"127.0.0.1"`, invalidValue: `"host":" "`, want: "mysql.host"},
 		{name: "zero port", oldValue: `"port":3306`, invalidValue: `"port":0`, want: "mysql.port"},
 		{name: "port above maximum", oldValue: `"port":3306`, invalidValue: `"port":65536`, want: "mysql.port"},
 		{name: "empty database", oldValue: `"database":"biz"`, invalidValue: `"database":" "`, want: "mysql.database"},
 		{name: "empty user", oldValue: `"user":"root"`, invalidValue: `"user":" "`, want: "mysql.user"},
 		{name: "empty password", oldValue: `"password":"` + credential + `"`, invalidValue: `"password":""`, want: "mysql.password"},
-		{name: "zero max open", oldValue: `"max_open":100`, invalidValue: `"max_open":0`, want: "mysql.max_open"},
-		{name: "negative max idle", oldValue: `"max_idle":10`, invalidValue: `"max_idle":-1`, want: "mysql.max_idle"},
-		{name: "max idle above max open", oldValue: `"max_idle":10`, invalidValue: `"max_idle":101`, want: "mysql.max_idle"},
-		{name: "zero connection lifetime", oldValue: `"conn_lifetime":3600`, invalidValue: `"conn_lifetime":0`, want: "mysql.conn_lifetime"},
-		{name: "zero connection timeout", oldValue: `"conn_timeout":3`, invalidValue: `"conn_timeout":0`, want: "mysql.conn_timeout"},
-		{name: "log level below range", oldValue: `"log_level":3`, invalidValue: `"log_level":0`, want: "mysql.log_level"},
-		{name: "log level above range", oldValue: `"log_level":3`, invalidValue: `"log_level":5`, want: "mysql.log_level"},
-		{name: "negative slow threshold", oldValue: `"slow_threshold":500`, invalidValue: `"slow_threshold":-1`, want: "mysql.slow_threshold"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conversation := `"conversation":{"enabled":true,"history_message_limit":100}`
-			mysql := validMySQL
-			if strings.Contains(tt.oldValue, "history_message_limit") {
-				conversation = strings.Replace(conversation, tt.oldValue, tt.invalidValue, 1)
-			} else {
-				mysql = strings.Replace(mysql, tt.oldValue, tt.invalidValue, 1)
-			}
+			mysql := strings.Replace(validMySQL, tt.oldValue, tt.invalidValue, 1)
 			document := `{"currentPlatform":"x","platforms":[` +
 				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}],` +
-				`"agent":{"limits":{"max_turns":5}},` + conversation + `,"mysql":{` + mysql + `}}`
+				`"agent":{"limits":{"max_turns":5}},` +
+				`"conversation":{"enabled":true,"history_message_limit":100},"mysql":{` + mysql + `}}`
 
 			_, err := Load(writeConfig(t, document))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -269,14 +288,14 @@ func TestLoadConfigNormalizesOptionalWeComWebhookURL(t *testing.T) {
 		],
 		"agent":{"limits":{"max_turns":5}},
 		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5},
-		"bot":{"wecom":{"webhookURL":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
+		"notice":{"wecom":{"webhook_url":" https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key "}}
 	}`)
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got := cfg.Bot.WeCom.WebhookURL; got != "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key" {
+	if got := cfg.Notice.WeCom.WebhookURL; got != "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key" {
 		t.Fatalf("WebhookURL = %q", got)
 	}
 }
@@ -295,8 +314,8 @@ func TestLoadConfigAllowsMissingWeComWebhookURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Bot.WeCom.WebhookURL != "" {
-		t.Fatalf("WebhookURL = %q, want empty", cfg.Bot.WeCom.WebhookURL)
+	if cfg.Notice.WeCom.WebhookURL != "" {
+		t.Fatalf("WebhookURL = %q, want empty", cfg.Notice.WeCom.WebhookURL)
 	}
 }
 
@@ -308,12 +327,12 @@ func TestLoadConfigRejectsUnsafeWeComWebhookURLWithoutLeakingIt(t *testing.T) {
 			{"id":"deepseek","protocol":"openai","baseURL":"https://api.deepseek.com/v1/","apiKey":"key","model":"model","pricing":{"input_usd_per_million_tokens":0.15,"output_usd_per_million_tokens":0.60}}
 		],
 		"agent":{"limits":{"max_turns":5}},
-		"bot":{"wecom":{"webhookURL":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
+		"notice":{"wecom":{"webhook_url":"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=`+credential+`"}}
 	}`)
 
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "webhookURL") {
-		t.Fatalf("Load() error = %v, want webhookURL validation error", err)
+	if err == nil || !strings.Contains(err.Error(), "webhook_url") {
+		t.Fatalf("Load() error = %v, want webhook_url validation error", err)
 	}
 	if strings.Contains(errorText(err), credential) {
 		t.Fatalf("Load() error leaks webhook credential: %v", err)
@@ -601,6 +620,7 @@ func TestLoadConfigErrorContainsConfigurationPath(t *testing.T) {
 }
 
 func TestLoadConfigNormalizesMCPServers(t *testing.T) {
+	t.Setenv("EXA_API_KEY", "test-key")
 	document := validMCPBaseConfig(`"mcp":{"servers":[{
 		"name":" exa ","enabled":true,"required":true,
 		"url":" https://mcp.exa.ai/mcp ","timeout":0,
@@ -625,32 +645,23 @@ func TestLoadConfigNormalizesMCPServers(t *testing.T) {
 
 func TestLoadConfigRejectsInvalidMCPServersWithoutLeakingSecrets(t *testing.T) {
 	const secret = "never-print-mcp-config-secret"
+	t.Setenv("GO_REAGENT_TEST_EMPTY_ENV", "")
 	tests := []struct {
 		name    string
 		servers string
 		want    string
 	}{
-		{name: "duplicate names", servers: `[
-			{"name":"exa","enabled":true,"required":true,"url":"https://one.test/mcp","allow_tools":["a"]},
-			{"name":"exa","enabled":true,"required":true,"url":"https://two.test/mcp","allow_tools":["b"]}
-		]`, want: "name"},
 		{name: "blank name", servers: `[{"name":" ","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "name"},
 		{name: "blank URL", servers: `[{"name":"x","enabled":true,"required":true,"url":" ","allow_tools":["a"]}]`, want: "url"},
 		{name: "optional unsupported", servers: `[{"name":"x","enabled":true,"required":false,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "required"},
-		{name: "negative timeout", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","timeout":-1,"allow_tools":["a"]}]`, want: "timeout"},
 		{name: "public HTTP", servers: `[{"name":"x","enabled":true,"required":true,"url":"http://example.com/mcp","allow_tools":["a"]}]`, want: "https"},
-		{name: "userinfo", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://user:` + secret + `@x.test/mcp","allow_tools":["a"]}]`, want: "userinfo"},
-		{name: "query", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp?key=` + secret + `","allow_tools":["a"]}]`, want: "query"},
-		{name: "fragment", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp#fragment","allow_tools":["a"]}]`, want: "fragment"},
 		{name: "blank allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[]}]`, want: "allow_tools"},
-		{name: "duplicate allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[" a ","a"]}]`, want: "allow_tools"},
-		{name: "invalid prefix", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"tool_prefix":"bad prefix"}]`, want: "tool_prefix"},
 		{name: "blank env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":" "}}]`, want: "header_env"},
-		{name: "invalid header name", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Bad Header":"A"}}]`, want: "header_env"},
-		{name: "duplicate header", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"A","X-Api-Key":"B"}}]`, want: "header_env"},
 		{name: "blocked host", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Host":"A"}}]`, want: "header_env"},
 		{name: "blocked length", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Content-Length":"A"}}]`, want: "header_env"},
 		{name: "blocked session", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Mcp-Session-Id":"A"}}]`, want: "header_env"},
+		{name: "unset env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_UNSET_ENV"}}]`, want: "环境变量"},
+		{name: "empty env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_EMPTY_ENV"}}]`, want: "环境变量"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

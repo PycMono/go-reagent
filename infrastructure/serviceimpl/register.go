@@ -7,7 +7,7 @@ import (
 )
 
 var Register = fx.Options(
-	fx.Provide(func(cfg *config.Config) (repository.IIDService, error) {
+	fx.Provide(func(cfg *config.Config) repository.IIDService {
 		return NewIDService(int64(cfg.SnowflakeNodeID))
 	}),
 )

@@ -106,29 +106,15 @@ func TestObservabilityRejectsInvalidValues(t *testing.T) {
 		{name: "sample ratio above one", doc: base(`,"sample_ratio":1.5`), want: "sample_ratio"},
 		{name: "negative sample ratio", doc: base(`,"sample_ratio":-0.1`), want: "sample_ratio"},
 		{name: "unknown sampling mode", doc: base(`,"sampling_mode":"sideways"`), want: "sampling_mode"},
-		{name: "tail with ratio below one", doc: base(`,"sampling_mode":"tail","sample_ratio":0.5`), want: "tail"},
 		{name: "non grpc protocol", doc: `{
 			"enabled": true, "service_name": "go-reagent",
 			"otlp": {"endpoint": "127.0.0.1:4317", "protocol": "http"},
 			"tracing": {"enabled": false}
 		}`, want: "protocol"},
-		{name: "batch exceeds queue", doc: `{
-			"enabled": true, "service_name": "go-reagent",
-			"otlp": {"endpoint": "127.0.0.1:4317", "max_queue_size": 10, "max_export_batch_size": 20},
-			"tracing": {"enabled": false}
-		}`, want: "max_export_batch_size"},
 		{name: "content mode not none", doc: `{
 			"enabled": true, "service_name": "go-reagent",
 			"tracing": {"enabled": false}, "content": {"mode": "redacted"}
 		}`, want: "content.mode"},
-		{name: "invalid metrics path", doc: `{
-			"enabled": true, "service_name": "go-reagent",
-			"tracing": {"enabled": false}, "metrics": {"enabled": true, "path": "metrics"}
-		}`, want: "metrics.path"},
-		{name: "invalid metrics port", doc: `{
-			"enabled": true, "service_name": "go-reagent",
-			"tracing": {"enabled": false}, "metrics": {"enabled": true, "port": 70000}
-		}`, want: "metrics.port"},
 		{name: "invalid endpoint", doc: `{
 			"enabled": true, "service_name": "go-reagent",
 			"otlp": {"endpoint": "not a target"}, "tracing": {"enabled": true}

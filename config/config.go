@@ -17,7 +17,7 @@ type Config struct {
 	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`
 	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	MCP             MCPConfig           `json:"mcp" yaml:"mcp" toml:"mcp"`
-	Bot             BotConfig           `json:"bot" yaml:"bot" toml:"bot"`
+	Notice          NoticeConfig        `json:"notice" yaml:"notice" toml:"notice"`
 	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
 	Redis           RedisConfig         `json:"redis" yaml:"redis" toml:"redis"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
@@ -53,10 +53,6 @@ type ObservabilityTracingConfig struct {
 	// SampleRatio 为 0 或未配置时归一化为 1.0（与 go-observability-sdk
 	// 一致）；需要 0% 采样请关闭 tracing.enabled。合法区间 (0,1]。
 	SampleRatio float64 `json:"sample_ratio" yaml:"sample_ratio" toml:"sample_ratio"`
-	// TrustedUpstreams 是可信上游的 IP 或 CIDR 列表（§7）：仅这些来源的请求
-	// 可以保留 Remote Parent（traceparent/tracestate），其他公网请求先剥离
-	// Trace Context 再创建内部 root Span。缺省为空，即不信任任何上游。
-	TrustedUpstreams []string `json:"trusted_upstreams" yaml:"trusted_upstreams" toml:"trusted_upstreams"`
 }
 
 type ObservabilityMetricsConfig struct {
@@ -130,10 +126,11 @@ type MySQLConfig struct {
 	SlowThreshold int    `json:"slow_threshold" yaml:"slow_threshold" toml:"slow_threshold"`
 }
 
-type BotConfig struct {
-	WeCom WeComConfig `json:"wecom" yaml:"wecom" toml:"wecom"`
+// NoticeConfig 是外部通知通道配置；通道 webhook 为空表示该通道关闭。
+type NoticeConfig struct {
+	WeCom NoticeWeComConfig `json:"wecom" yaml:"wecom" toml:"wecom"`
 }
 
-type WeComConfig struct {
-	WebhookURL string `json:"webhookURL" yaml:"webhookURL" toml:"webhookURL"`
+type NoticeWeComConfig struct {
+	WebhookURL string `json:"webhook_url" yaml:"webhook_url" toml:"webhook_url"`
 }

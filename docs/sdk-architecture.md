@@ -8,8 +8,7 @@ go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Co
 pi/ai <- pi/harness <- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers
-application/web -> config + conversation + infrastructure + pi
-cmd/server -> application/web
+cmd/server -> config + conversation + infrastructure + pi
 ```
 
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
@@ -17,8 +16,8 @@ cmd/server -> application/web
 - `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、Middleware、Reporter 和事件，并通过 `register.go` 组装默认 Harness。
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
 - `pi/test`：根 `pi` 的集中式公开 API、运行循环和包边界测试；各 Harness 子包的白盒测试仍与实现放在同一包。
-- `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载。
-- `application/web`：浏览器聊天应用装配；`application/service/chat`：Conversation 用例。
+- `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`）。
+- `cmd/server`：唯一进程入口与组合根，直接组合 `pi`、基础设施、Conversation 业务和 Gin；`application/service/chat`：Conversation 用例。
 
 `pi/ai` 不依赖根 `pi` 或业务包；`pi/harness` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
@@ -168,7 +167,7 @@ Workspace 由调用方以 `pi.WorkDir` 显式提供。每次 Run 都会重新读
 
 ## Web Chat 与会话存储
 
-唯一产品 Agent 入口 `cmd/server` 通过 `application/web.Register` 组合 `pi`、基础设施、Conversation 业务和 Gin：
+唯一产品 Agent 入口 `cmd/server` 作为组合根直接组合 `pi`、基础设施、Conversation 业务和 Gin：
 
 ```text
 Cookie User -> Conversation -> List Messages -> pi.Runner.Run -> AppendTurn -> SSE

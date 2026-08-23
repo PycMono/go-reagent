@@ -1,8 +1,6 @@
 package serviceimpl
 
 import (
-	"fmt"
-
 	"github.com/bwmarrin/snowflake"
 )
 
@@ -10,12 +8,11 @@ type IDService struct {
 	node *snowflake.Node
 }
 
-func NewIDService(workerID int64) (*IDService, error) {
-	node, err := snowflake.NewNode(workerID)
-	if err != nil {
-		return nil, fmt.Errorf("create snowflake node: %w", err)
-	}
-	return &IDService{node: node}, nil
+// NewIDService 的 workerID 取值范围 [0,1023] 已由 config.Load 校验，
+// snowflake.NewNode 的错误不可达。
+func NewIDService(workerID int64) *IDService {
+	node, _ := snowflake.NewNode(workerID)
+	return &IDService{node: node}
 }
 
 func (service *IDService) NextID() string {

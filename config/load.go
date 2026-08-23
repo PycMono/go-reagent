@@ -5,7 +5,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/jinzhu/configor"
 )
 
@@ -33,4 +35,17 @@ func NewFromEnvironment() (*Config, error) {
 // NewPlatform returns the selected model platform for Pi's Fx graph.
 func NewPlatform(config *Config) (providers.Options, error) {
 	return config.CurrentPlatformOptions()
+}
+
+// NewWorkDir 返回 Load 已解析并校验过的 Agent Workspace 绝对路径。
+func NewWorkDir(config *Config) pi.WorkDir {
+	return pi.WorkDir(config.Agent.WorkspaceDir)
+}
+
+// NewCompactionConfig 把业务开关与平台模型容量组合为 Agent 压缩配置。
+func NewCompactionConfig(config *Config, platform providers.Options) harness.CompactionConfig {
+	return harness.CompactionConfig{
+		ContextWindowTokens: platform.ContextWindowTokens,
+		EnablePrune:         config.Agent.EnableContextPrune,
+	}
 }

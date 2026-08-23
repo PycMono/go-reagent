@@ -1,4 +1,4 @@
-package web
+package main
 
 import (
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
@@ -6,7 +6,9 @@ import (
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
+	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
 	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
+	"github.com/PycMono/go-reagent/infrastructure/notice"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
 )
@@ -16,13 +18,14 @@ var Register = fx.Options(
 	infrastructureweb.Register,
 	conversation.Register,
 	chatservice.Register,
+	mcpdriver.Register,
+	notice.Register,
 	fx.Provide(
 		config.NewFromEnvironment,
 		config.NewPlatform,
-		NewChatWorkDir,
-		NewChatCompactionConfig,
+		config.NewWorkDir,
+		config.NewCompactionConfig,
 		agentprofiledriver.NewCatalog,
-		RegisterMCPExtensions,
 	),
 )
 

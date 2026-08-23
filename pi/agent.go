@@ -22,11 +22,13 @@ type Agent struct {
 	builder     *harness.ContextBuilder
 	loop        *Loop
 	toolRuntime ToolRuntime
+	notifiers   []Notifier
 }
 
-// New 根据下层运行依赖创建 Agent。
-func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime) *Agent {
-	return &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime}
+// New 根据下层运行依赖创建 Agent；notifiers 为可选的外部通知通道
+// （group:"agent_notifiers"），空切片表示无通知。
+func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime, notifiers ...Notifier) *Agent {
+	return &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: notifiers}
 }
 
 // Run 校验并执行一次相互隔离的请求。
@@ -88,6 +90,14 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) 
 		governor := newRunGovernor(request.Limits)
 		if reporter == nil {
 			reporter = nopReporter{}
+		}
+		if len(a.notifiers) > 0 {
+			// 通知桥接排在调用方 Reporter 之后：SSE 等实时订阅优先，
+			// 通道 panic 由 MultiReporter/notifySafely 双层兜底。
+			reporter = NewMultiReporter([]ReporterRegistration{
+				{Name: "caller", Order: 0, Reporter: reporter},
+				{Name: "notifiers", Order: 100, Reporter: &notifyBridge{notifiers: a.notifiers}},
+			})
 		}
 		loopResult, runErr := a.loop.runDetailed(ctx, runContext, reporter, governor)
 		result.NewMessages = loopResult.newMessages

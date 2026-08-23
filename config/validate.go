@@ -2,36 +2,33 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
 const defaultMCPTimeoutSeconds = 60
 
-var mcpNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
 func (config *Config) normalizeAndValidate() error {
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
 		return err
 	}
-	config.Agent.normalize()
-	if err := config.Agent.validate(); err != nil {
+	if err := config.Agent.normalizeAndValidate(); err != nil {
 		return err
 	}
 	if err := config.MCP.normalizeAndValidate(); err != nil {
 		return err
 	}
-	if err := config.HTTP.normalizeAndValidate(); err != nil {
-		return err
-	}
+	config.HTTP.normalize()
 	if config.SnowflakeNodeID < 0 || config.SnowflakeNodeID > 1023 {
 		return errors.New("snowflake_node_id 必须在 0 到 1023 之间")
 	}
-	if err := config.Bot.normalizeAndValidate(); err != nil {
+	if err := config.Notice.normalizeAndValidate(); err != nil {
 		return err
 	}
 	if err := config.Conversation.normalizeAndValidate(&config.MySQL); err != nil {
@@ -115,12 +112,6 @@ func (config *ObservabilityOTLPConfig) normalizeAndValidate() error {
 	if config.MaxExportBatchSize == 0 {
 		config.MaxExportBatchSize = defaultObservabilityMaxExportBatchSize
 	}
-	if config.TimeoutSeconds < 0 || config.MaxQueueSize < 0 || config.MaxExportBatchSize < 0 {
-		return errors.New("observability.otlp 的 timeout_seconds、max_queue_size、max_export_batch_size 必须为正数")
-	}
-	if config.MaxExportBatchSize > config.MaxQueueSize {
-		return errors.New("observability.otlp.max_export_batch_size 不能大于 max_queue_size")
-	}
 	return nil
 }
 
@@ -141,30 +132,6 @@ func (config *ObservabilityTracingConfig) normalizeAndValidate() error {
 	if ratio == 0 {
 		config.SampleRatio = 1.0
 	}
-	if config.SamplingMode == "tail" && config.SampleRatio != 1.0 {
-		return errors.New("observability.tracing.sampling_mode=tail 时 sample_ratio 必须为 1.0")
-	}
-	for index, upstream := range config.TrustedUpstreams {
-		config.TrustedUpstreams[index] = strings.TrimSpace(upstream)
-		if err := parseTrustedUpstream(config.TrustedUpstreams[index]); err != nil {
-			return errors.New("observability.tracing.trusted_upstreams 必须是合法的 IP 或 CIDR")
-		}
-	}
-	return nil
-}
-
-// parseTrustedUpstream 接受单个 IP 或 CIDR。
-func parseTrustedUpstream(value string) error {
-	if value == "" {
-		return errors.New("empty upstream")
-	}
-	if strings.Contains(value, "/") {
-		_, _, err := net.ParseCIDR(value)
-		return err
-	}
-	if ip := net.ParseIP(value); ip == nil {
-		return errors.New("invalid IP")
-	}
 	return nil
 }
 
@@ -176,16 +143,9 @@ func (config *ObservabilityMetricsConfig) normalizeAndValidate() error {
 	if config.Port == 0 {
 		config.Port = defaultObservabilityMetricsPort
 	}
-	if config.Port < 1 || config.Port > 65535 {
-		return errors.New("observability.metrics.port 必须在 1 到 65535 之间")
-	}
 	config.Path = strings.TrimSpace(config.Path)
 	if config.Path == "" {
 		config.Path = defaultObservabilityMetricsPath
-	}
-	if !strings.HasPrefix(config.Path, "/") || strings.Contains(config.Path, "//") ||
-		strings.ContainsAny(config.Path, "?#*") {
-		return errors.New("observability.metrics.path 必须以 / 开头且不能包含 query、fragment、通配符或重复斜杠")
 	}
 	return nil
 }
@@ -239,20 +199,15 @@ func isObservabilityNonProduction(environment string) bool {
 }
 
 func (config *MCPConfig) normalizeAndValidate() error {
-	seenNames := make(map[string]struct{})
 	for index := range config.Servers {
 		server := &config.Servers[index]
 		if !server.Enabled {
 			continue
 		}
 		server.Name = strings.TrimSpace(server.Name)
-		if server.Name == "" || !mcpNamePattern.MatchString(server.Name) {
-			return errors.New("mcp.servers.name 必须是有效名称")
+		if server.Name == "" {
+			return errors.New("mcp.servers.name 不能为空")
 		}
-		if _, exists := seenNames[server.Name]; exists {
-			return errors.New("mcp.servers.name 不能重复")
-		}
-		seenNames[server.Name] = struct{}{}
 		if !server.Required {
 			return errors.New("mcp.servers.required 一期必须为 true")
 		}
@@ -269,15 +224,7 @@ func (server *MCPServerConfig) normalizeAndValidate() error {
 	if err != nil || parsed.Host == "" {
 		return errors.New("mcp.servers.url 必须是绝对 URL")
 	}
-	if parsed.User != nil {
-		return errors.New("mcp.servers.url 不能包含 userinfo")
-	}
-	if parsed.RawQuery != "" {
-		return errors.New("mcp.servers.url 不能包含 query")
-	}
-	if parsed.Fragment != "" {
-		return errors.New("mcp.servers.url 不能包含 fragment")
-	}
+	// SSRF 边界：非 loopback 地址必须使用 https。
 	switch strings.ToLower(parsed.Scheme) {
 	case "https":
 	case "http":
@@ -289,9 +236,6 @@ func (server *MCPServerConfig) normalizeAndValidate() error {
 	default:
 		return errors.New("mcp.servers.url 必须使用 http 或 https")
 	}
-	if server.Timeout < 0 {
-		return errors.New("mcp.servers.timeout 不能小于 0")
-	}
 	if server.Timeout == 0 {
 		server.Timeout = defaultMCPTimeoutSeconds
 	}
@@ -302,9 +246,6 @@ func (server *MCPServerConfig) normalizeAndValidate() error {
 		return err
 	}
 	server.ToolPrefix = strings.TrimSpace(server.ToolPrefix)
-	if server.ToolPrefix != "" && !mcpNamePattern.MatchString(server.ToolPrefix) {
-		return errors.New("mcp.servers.tool_prefix 必须是有效工具名前缀")
-	}
 	return nil
 }
 
@@ -316,67 +257,94 @@ func (server *MCPServerConfig) normalizeHeaders() error {
 	for rawName, rawEnv := range server.HeaderEnv {
 		trimmedName := strings.TrimSpace(rawName)
 		envName := strings.TrimSpace(rawEnv)
-		if !validMCPHeaderName(trimmedName) || envName == "" {
+		if trimmedName == "" || envName == "" {
 			return errors.New("mcp.servers.header_env 名称和值不能为空")
 		}
 		name := http.CanonicalHeaderKey(trimmedName)
 		if _, denied := blocked[http.CanonicalHeaderKey(name)]; denied {
 			return errors.New("mcp.servers.header_env 不能覆盖协议控制 Header")
 		}
-		if _, exists := normalized[name]; exists {
-			return errors.New("mcp.servers.header_env 不能包含重复 Header")
-		}
 		normalized[name] = envName
+	}
+	// 结构校验全部通过后，再检查引用的环境变量存在且非空（fail-fast：
+	// 启动期暴露部署遗漏，而不是首个 MCP 请求才失败）。
+	for _, envName := range normalized {
+		if value, exists := os.LookupEnv(envName); !exists || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("mcp.servers.header_env 引用的环境变量 %q 未设置或为空", envName)
+		}
 	}
 	server.HeaderEnv = normalized
 	return nil
-}
-
-func validMCPHeaderName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for index := 0; index < len(name); index++ {
-		character := name[index]
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character))) {
-			return false
-		}
-	}
-	return true
 }
 
 func (server *MCPServerConfig) normalizeAllowedTools() error {
 	if len(server.AllowTools) == 0 {
 		return errors.New("mcp.servers.allow_tools 不能为空")
 	}
-	seen := make(map[string]struct{}, len(server.AllowTools))
-	normalized := make([]string, 0, len(server.AllowTools))
-	for _, rawName := range server.AllowTools {
-		name := strings.TrimSpace(rawName)
-		if name == "" || !mcpNamePattern.MatchString(name) {
-			return errors.New("mcp.servers.allow_tools 包含无效工具名")
-		}
-		if _, exists := seen[name]; exists {
-			return errors.New("mcp.servers.allow_tools 不能重复")
-		}
-		seen[name] = struct{}{}
-		normalized = append(normalized, name)
+	for index := range server.AllowTools {
+		server.AllowTools[index] = strings.TrimSpace(server.AllowTools[index])
 	}
-	server.AllowTools = normalized
 	return nil
 }
 
-func (config *AgentConfig) normalize() {
+func (config *AgentConfig) normalizeAndValidate() error {
 	config.WorkspaceDir = strings.TrimSpace(config.WorkspaceDir)
 	if config.WorkspaceDir == "" {
 		config.WorkspaceDir = DefaultAgentWorkspaceDir
 	}
+	resolved, err := resolveAgentWorkspaceDir(config.WorkspaceDir)
+	if err != nil {
+		return err
+	}
+	// 把解析后的绝对路径写回配置，下游装配层不再做任何解析与校验。
+	config.WorkspaceDir = resolved
+	return config.validateLimits()
 }
 
-// validate 拒绝非法额度和全零安全策略。bundled service 不允许裸奔；
+// resolveAgentWorkspaceDir 校验 Workspace 目录必须存在、是目录、且不是
+// 进程当前目录（防止 Agent 工具直接读写服务自身工作目录），返回解析后的
+// 绝对路径。
+func resolveAgentWorkspaceDir(path string) (string, error) {
+	resolved, err := resolveDirectory(path)
+	if err != nil {
+		return "", fmt.Errorf("agent.workspace_dir %q 无效: %w", path, err)
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("agent.workspace_dir: 获取进程当前目录失败: %w", err)
+	}
+	resolvedWorkingDir, err := resolveDirectory(workingDir)
+	if err != nil {
+		return "", fmt.Errorf("agent.workspace_dir: 解析进程当前目录失败: %w", err)
+	}
+	if resolved == resolvedWorkingDir {
+		return "", fmt.Errorf("agent.workspace_dir %q 不能使用进程当前目录", path)
+	}
+	return resolved, nil
+}
+
+func resolveDirectory(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("解析绝对路径: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("解析真实路径: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("必须是目录")
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// validateLimits 拒绝非法额度和全零安全策略。bundled service 不允许裸奔；
 // SDK 调用方自行决定 Limits，config 只约束本服务。
-func (config *AgentConfig) validate() error {
+func (config *AgentConfig) validateLimits() error {
 	limits := config.Limits
 	switch {
 	case limits.MaxTurns < 0:
@@ -391,7 +359,8 @@ func (config *AgentConfig) validate() error {
 	return nil
 }
 
-func (config *HTTPConfig) normalizeAndValidate() error {
+// normalize 只填默认值；端口是否可监听由启动期 listen 报错，config 不预判。
+func (config *HTTPConfig) normalize() {
 	config.Host = strings.TrimSpace(config.Host)
 	if config.Host == "" {
 		config.Host = "127.0.0.1"
@@ -400,27 +369,14 @@ func (config *HTTPConfig) normalizeAndValidate() error {
 	if config.Port == "" {
 		config.Port = "8080"
 	}
-	if _, err := net.LookupPort("tcp", config.Port); err != nil {
-		return errors.New("http.port 必须是有效端口")
-	}
-	if config.ReadTimeout < 0 {
-		return errors.New("http.read_timeout 不能小于 0")
-	}
 	if config.ReadTimeout == 0 {
 		config.ReadTimeout = 30
 	}
-	if config.WriteTimeout < 0 {
-		return errors.New("http.write_timeout 不能小于 0")
-	}
-	return nil
 }
 
 func (config *ConversationConfig) normalizeAndValidate(mysql *MySQLConfig) error {
 	if config.HistoryMessageLimit == 0 {
 		config.HistoryMessageLimit = DefaultHistoryMessageLimit
-	}
-	if config.HistoryMessageLimit < 1 {
-		return errors.New("conversation.history_message_limit 必须大于 0")
 	}
 	if !config.Enabled {
 		return nil
@@ -428,6 +384,8 @@ func (config *ConversationConfig) normalizeAndValidate(mysql *MySQLConfig) error
 	return mysql.normalizeAndValidate()
 }
 
+// normalizeAndValidate 只保证地址可用；db、pool_size 等数值边界交给
+// go-redis 的默认值与连接期报错。
 func (config *RedisConfig) normalizeAndValidate() error {
 	if len(config.Addr) == 0 {
 		return errors.New("redis.addr 不能为空")
@@ -438,15 +396,11 @@ func (config *RedisConfig) normalizeAndValidate() error {
 			return errors.New("redis.addr 不能包含空地址")
 		}
 	}
-	if config.DB < 0 {
-		return errors.New("redis.db 不能小于 0")
-	}
-	if config.PoolSize < 1 {
-		return errors.New("redis.pool_size 必须大于 0")
-	}
 	return nil
 }
 
+// normalizeAndValidate 只校验连接必填项；连接池、日志等数值边界交给
+// 驱动/gorm 的默认值与运行期报错。
 func (config *MySQLConfig) normalizeAndValidate() error {
 	config.Host = strings.TrimSpace(config.Host)
 	config.Database = strings.TrimSpace(config.Database)
@@ -462,31 +416,19 @@ func (config *MySQLConfig) normalizeAndValidate() error {
 		return errors.New("mysql.user 不能为空")
 	case config.Password == "":
 		return errors.New("mysql.password 不能为空")
-	case config.MaxOpen < 1:
-		return errors.New("mysql.max_open 必须大于 0")
-	case config.MaxIdle < 0 || config.MaxIdle > config.MaxOpen:
-		return errors.New("mysql.max_idle 必须在 0 到 mysql.max_open 之间")
-	case config.ConnLifetime < 1:
-		return errors.New("mysql.conn_lifetime 必须大于 0")
-	case config.ConnTimeout < 1:
-		return errors.New("mysql.conn_timeout 必须大于 0")
-	case config.LogLevel < 1 || config.LogLevel > 4:
-		return errors.New("mysql.log_level 必须在 1 到 4 之间")
-	case config.SlowThreshold < 0:
-		return errors.New("mysql.slow_threshold 不能小于 0")
 	default:
 		return nil
 	}
 }
 
-func (config *BotConfig) normalizeAndValidate() error {
+func (config *NoticeConfig) normalizeAndValidate() error {
 	config.WeCom.WebhookURL = strings.TrimSpace(config.WeCom.WebhookURL)
 	if config.WeCom.WebhookURL == "" {
 		return nil
 	}
 	parsed, err := url.Parse(config.WeCom.WebhookURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return errors.New("bot.wecom.webhookURL 必须是带 Host 的 HTTPS URL")
+		return errors.New("notice.wecom.webhook_url 必须是带 Host 的 HTTPS URL")
 	}
 	return nil
 }
