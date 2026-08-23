@@ -2,7 +2,6 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"runtime/debug"
 	"sync/atomic"
 	"time"
@@ -14,12 +13,11 @@ import (
 	"go.uber.org/fx"
 )
 
-// Register 装配进程唯一的 go-observability-sdk Runtime 并接入 Fx 生命周期
-// （设计 §12）：OnStart 安装全局对象并启动 Metrics Listener，OnStop 先
-// ForceFlush 再 Shutdown。配置非法时 NewRuntime 失败，Fx 启动即中止。
+// Register 装配进程唯一的 go-observability-sdk Runtime（设计 §12）。配置非法时
+// NewRuntime 失败，Fx 启动即中止。进程级生命周期（InstallGlobal → Start →
+// ForceFlush → Shutdown 的顺序约束）由 cmd/server 入口集中管理。
 var Register = fx.Options(
 	fx.Provide(NewRuntime),
-	fx.Invoke(RegisterLifecycle),
 )
 
 // NewRuntime 创建唯一 Runtime：Resource、Provider、Exporter、W3C Propagator、
@@ -35,22 +33,6 @@ func NewRuntime(conf *config.Config) (*sdkobservability.Runtime, error) {
 		sdkobservability.WithForbiddenLabelKeys(piobservability.ForbiddenLabelKeys...),
 		sdkobservability.WithErrorHandler(newRateLimitedErrorHandler(5*time.Second)),
 	)
-}
-
-// RegisterLifecycle 把 Runtime 生命周期挂到 Fx：InstallGlobal 必须先于
-// Start，保证 Provider 与 Metrics Endpoint 指向同一 Runtime。
-func RegisterLifecycle(lifecycle fx.Lifecycle, runtime *sdkobservability.Runtime) {
-	lifecycle.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			if err := runtime.InstallGlobal(); err != nil {
-				return err
-			}
-			return runtime.Start(ctx)
-		},
-		OnStop: func(ctx context.Context) error {
-			return errors.Join(runtime.ForceFlush(ctx), runtime.Shutdown(ctx))
-		},
-	})
 }
 
 // serviceVersion 取 Go Build Info 的模块版本或 VCS revision，缺省 "dev"。

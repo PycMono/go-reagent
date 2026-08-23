@@ -31,7 +31,7 @@ func TestRegisterProvidesLocalChatTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"calculate", "get_current_time"}
+	want := []string{"get_current_time"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}

@@ -73,7 +73,7 @@ CONFIG_PATH=./config.json go run ./cmd/server
 
 打开 <http://127.0.0.1:8080>。健康检查地址为 <http://127.0.0.1:8080/health>。
 
-Go Templates、CSS 和 JavaScript 通过 `go:embed` 编译进 server 二进制。部署已构建二进制时不需要携带 `frontend/` 目录，也不需要 Node 服务或前端构建步骤。Web Agent 默认注册 `calculate`、`get_current_time`、`get_weather` 和受 Workspace 边界保护的 `read`。天气数据来自 Open-Meteo，无需 API Key；重名地点会返回候选并先请用户确认，不会默认选择第一个。
+Go Templates、CSS 和 JavaScript 通过 `go:embed` 编译进 server 二进制。部署已构建二进制时不需要携带 `frontend/` 目录，也不需要 Node 服务或前端构建步骤。Web Agent 默认注册 `get_current_time` 和受 Workspace 边界保护的 `read`；公网信息（搜索、网页抓取、天气）经 MCP 的 Exa 工具提供，由 Workspace 的 Skill 引导使用。
 
 Web 不提供网页搜索、提醒、长期记忆、在线训练或 Coding 工具，也不会获得 `write`、`edit`、`apply_patch`、`exec` 或 `process`。知识库、课程、订单等行业能力仍应在业务 Fx 图中显式注册对应的真实 `ai.Tool`。
 

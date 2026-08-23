@@ -73,9 +73,9 @@
       }
     }
   ],
-  "bot": {
+  "notice": {
     "wecom": {
-      "webhookURL": ""
+      "webhook_url": ""
     }
   },
   "conversation": {

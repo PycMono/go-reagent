@@ -44,9 +44,6 @@ func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepos
 
 func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
 	result := pi.RunResult{}
-	if r.historyLimit < 1 {
-		return result, errors.New("conversation runner: history limit must be positive")
-	}
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("conversation runner: run canceled: %w", err)
 	}

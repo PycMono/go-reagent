@@ -30,9 +30,23 @@ var CoreRegister = fx.Options(
 		newFXToolRuntime,
 		newScheduler,
 		newLoop,
-		fx.Annotate(New, fx.As(fx.Self()), fx.As(new(Runner))),
+		fx.Annotate(newAgent, fx.As(fx.Self()), fx.As(new(Runner))),
 	),
 )
+
+type agentParams struct {
+	fx.In
+	Builder     *harness.ContextBuilder
+	Loop        *Loop
+	ToolRuntime ToolRuntime
+	Notifiers   []Notifier `group:"agent_notifiers"`
+}
+
+// newAgent 聚合 agent_notifiers 组的外部通知通道（企业微信/飞书等）；
+// 组为空时 Agent 不包装通知桥接，零开销。
+func newAgent(params agentParams) *Agent {
+	return New(params.Builder, params.Loop, params.ToolRuntime, params.Notifiers...)
+}
 
 // ReadOnlyToolsRegister provides the Workspace-scoped read tool.
 var ReadOnlyToolsRegister = fx.Options(

@@ -268,26 +268,13 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 	}
 }
 
-func TestRunnerValidatesHistoryLimitAndCancellation(t *testing.T) {
+func TestRunnerRejectsCanceledContext(t *testing.T) {
 	request := validConversationRunRequest()
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	tests := []struct {
-		name   string
-		ctx    context.Context
-		runner Runner
-		want   error
-	}{
-		{name: "invalid history limit", ctx: context.Background(), runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 0, pi.RunLimits{})},
-		{name: "canceled context", ctx: canceled, runner: NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100, pi.RunLimits{}), want: context.Canceled},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.runner.Run(tt.ctx, request, nil)
-			if err == nil || (tt.want != nil && !errors.Is(err, tt.want)) {
-				t.Fatalf("Run() error = %v, want %v", err, tt.want)
-			}
-		})
+	_, err := NewRunner(&runnerRuntimeFake{}, &runnerStoreFake{}, 100, pi.RunLimits{}).Run(canceled, request, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want %v", err, context.Canceled)
 	}
 }
 

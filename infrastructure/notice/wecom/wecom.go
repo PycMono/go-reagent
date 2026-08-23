@@ -1,68 +1,52 @@
-package transport
+// Package wecom 是企业微信群机器人通知通道，实现 pi.Notifier。
+// 群机器人是无 SDK 的 webhook 模型：POST markdown 到带 key 的 URL。
+package wecom
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi"
-	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 const (
-	weComMarkdownMaxBytes = 4096
-	truncationMarker      = "... (已截断)"
+	markdownMaxBytes = 4096 // 企业微信 markdown 正文上限
+	truncationMarker = "... (已截断)"
 )
 
-// WeComReporter sends Agent lifecycle events to an enterprise WeChat group robot.
-type WeComReporter struct {
+type Notifier struct {
 	webhookURL string
 	client     *http.Client
 }
 
-// NewWeComReporter creates an outbound-only enterprise WeChat Reporter.
-func NewWeComReporter(webhookURL string, client *http.Client) (*WeComReporter, error) {
-	webhookURL = strings.TrimSpace(webhookURL)
-	parsed, err := url.Parse(webhookURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, errors.New("wecom reporter: webhook URL must be an absolute HTTP/HTTPS URL")
-	}
+// New 创建企业微信群机器人通道。webhookURL 的合法性由 config.Load 保证
+// （HTTPS 绝对 URL），这里不再校验。
+func New(webhookURL string, client *http.Client) *Notifier {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-
-	return &WeComReporter{webhookURL: webhookURL, client: client}, nil
+	return &Notifier{webhookURL: webhookURL, client: client}
 }
 
-func (r *WeComReporter) Report(ctx context.Context, event pi.AgentEvent) {
-	switch event.Type {
-	case pi.AgentEventMessageEnd:
-		if event.Message == nil || event.Message.Role != ai.RoleAssistant || len(event.Message.ToolCalls) != 0 {
-			return
-		}
-		r.send(ctx, eventText(event.Message.Content))
-	}
-}
-
-func (r *WeComReporter) send(ctx context.Context, content string) {
-	if err := r.sendMarkdown(ctx, truncateUTF8(content, weComMarkdownMaxBytes)); err != nil {
+// Notify 实现 pi.Notifier：把最终回复以 markdown 发到群机器人。
+// 通知是旁路：失败只记日志，不重试、不影响 run。
+func (n *Notifier) Notify(ctx context.Context, notification pi.Notification) {
+	if err := n.send(ctx, truncateUTF8(notification.Text, markdownMaxBytes)); err != nil {
 		logsdk.Error(ctx, "企业微信群通知发送失败",
-			logsdk.Any("component", "wecom_reporter"),
+			logsdk.Any("component", "wecom_notifier"),
 			logsdk.Err(err),
 		)
 	}
 }
 
-func (r *WeComReporter) sendMarkdown(ctx context.Context, content string) error {
+func (n *Notifier) send(ctx context.Context, content string) error {
 	payload := struct {
 		MsgType  string `json:"msgtype"`
 		Markdown struct {
@@ -75,13 +59,13 @@ func (r *WeComReporter) sendMarkdown(ctx context.Context, content string) error 
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.webhookURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 
-	response, err := r.client.Do(request)
+	response, err := n.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
@@ -105,6 +89,7 @@ func (r *WeComReporter) sendMarkdown(ctx context.Context, content string) error 
 	return nil
 }
 
+// truncateUTF8 按字节截断且不切断多字节字符。
 func truncateUTF8(content string, maxBytes int) string {
 	if len(content) <= maxBytes {
 		return content
@@ -117,12 +102,4 @@ func truncateUTF8(content string, maxBytes int) string {
 		limit--
 	}
 	return content[:limit] + truncationMarker
-}
-
-func eventText(content []ai.ContentBlock) string {
-	text, err := ai.TextContent(content)
-	if err != nil {
-		return ""
-	}
-	return text
 }
