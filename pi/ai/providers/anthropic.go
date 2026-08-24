@@ -85,33 +85,10 @@ func (s *anthropicStream) Next() bool {
 			return s.fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", err))
 		}
 		switch current := event.AsAny().(type) {
-		case anthropicsdk.ContentBlockStartEvent:
-			if current.ContentBlock.Type == "tool_use" {
-				s.current = ai.StreamEvent{
-					Type: ai.StreamEventToolCallDelta,
-					ToolCallDelta: &ai.ToolCallDelta{
-						Index: int(current.Index), IDDelta: current.ContentBlock.ID, NameDelta: current.ContentBlock.Name,
-					},
-				}
-				return true
-			}
 		case anthropicsdk.ContentBlockDeltaEvent:
-			switch delta := current.Delta.AsAny().(type) {
-			case anthropicsdk.TextDelta:
-				if delta.Text != "" {
-					s.current = ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: delta.Text}
-					return true
-				}
-			case anthropicsdk.InputJSONDelta:
-				if delta.PartialJSON != "" {
-					s.current = ai.StreamEvent{
-						Type: ai.StreamEventToolCallDelta,
-						ToolCallDelta: &ai.ToolCallDelta{
-							Index: int(current.Index), ArgumentsDelta: delta.PartialJSON,
-						},
-					}
-					return true
-				}
+			if delta, ok := current.Delta.AsAny().(anthropicsdk.TextDelta); ok && delta.Text != "" {
+				s.current = ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: delta.Text}
+				return true
 			}
 		case anthropicsdk.MessageStopEvent:
 			if err := s.finish(); err != nil {

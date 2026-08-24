@@ -332,7 +332,7 @@ type runnerRuntimeFake struct {
 	run     func(pi.RunRequest)
 }
 
-func (f *runnerRuntimeFake) Run(_ context.Context, request pi.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
+func (f *runnerRuntimeFake) Run(_ context.Context, request pi.RunRequest, _ pi.EventListener) (pi.RunResult, error) {
 	f.calls++
 	f.request = request
 	if f.run != nil {

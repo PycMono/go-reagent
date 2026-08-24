@@ -101,15 +101,6 @@ func (s *openAIStream) Next() bool {
 					Type: ai.StreamEventTextDelta, TextDelta: choice.Delta.Content,
 				})
 			}
-			for _, call := range choice.Delta.ToolCalls {
-				s.pending = append(s.pending, ai.StreamEvent{
-					Type: ai.StreamEventToolCallDelta,
-					ToolCallDelta: &ai.ToolCallDelta{
-						Index: int(call.Index), IDDelta: call.ID,
-						NameDelta: call.Function.Name, ArgumentsDelta: call.Function.Arguments,
-					},
-				})
-			}
 		}
 		if len(s.pending) > 0 {
 			s.current = s.pending[0]

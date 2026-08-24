@@ -137,10 +137,10 @@ func TestTracingProviderSuccessSpan(t *testing.T) {
 		AttrGenerationPhase:        "action",
 		AttrProviderAttempt:        int64(2),
 		AttrProviderRequestIndex:   int64(3),
-		AttrGenAIUsageInputTokens:  int64(10),
-		AttrGenAIUsageOutputTokens: int64(5),
+		"gen_ai.usage.input_tokens":  int64(10),
+		"gen_ai.usage.output_tokens": int64(5),
 		AttrStreamChunkCount:       int64(4),
-		AttrGenAIResponseFinishRsn: []string{"stop"},
+		"gen_ai.response.finish_reasons": []string{"stop"},
 	} {
 		got := spanAttr(span, key)
 		if got == nil {
@@ -184,7 +184,7 @@ func TestTracingProviderFailureSpanKeepsNoUsage(t *testing.T) {
 		spanAttr(span, AttrReagentErrorCode) != string(pierrors.ErrorCodeAITransient) {
 		t.Fatalf("错误分类属性缺失: %v", span.Attributes)
 	}
-	if spanAttr(span, AttrGenAIUsageInputTokens) != nil || spanAttr(span, AttrInvocationCostUSD) != nil {
+	if spanAttr(span, "gen_ai.usage.input_tokens") != nil || spanAttr(span, AttrInvocationCostUSD) != nil {
 		t.Fatal("失败请求不得写 Token/成本")
 	}
 }
@@ -235,7 +235,7 @@ func TestTracingProviderMissingHintUsesDefaults(t *testing.T) {
 func TestTracingProviderPureToolCallOmitsTTFT(t *testing.T) {
 	exporter := installTracer(t)
 	stream := &fakeRawStream{
-		events: []ai.StreamEvent{{Type: ai.StreamEventToolCallDelta}, {Type: ai.StreamEventDone}},
+		events: []ai.StreamEvent{{Type: ai.StreamEventDone}},
 		result: meteredMessage(""),
 	}
 	provider, _ := newTestChain(stream)

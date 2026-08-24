@@ -92,7 +92,7 @@ type runState struct {
 func (l *Loop) runDetailed(
 	ctx context.Context,
 	runContext harness.Context,
-	reporter Reporter,
+	listener EventListener,
 	governor *runGovernor,
 ) (loopResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -135,7 +135,7 @@ func (l *Loop) runDetailed(
 			return finish(err)
 		}
 
-		done, err := l.runTurn(ctx, state, governor, reporter, compactionRt, observeCompaction)
+		done, err := l.runTurn(ctx, state, governor, listener, compactionRt, observeCompaction)
 		if done || err != nil {
 			return finish(err)
 		}
@@ -200,7 +200,7 @@ func (l *Loop) runTurn(
 	ctx context.Context,
 	state *runState,
 	governor *runGovernor,
-	reporter Reporter,
+	listener EventListener,
 	rt *compactionRuntime,
 	observeCompaction invocationObserver,
 ) (done bool, err error) {
@@ -211,7 +211,7 @@ func (l *Loop) runTurn(
 
 	err = contexttracing.WithSpan(ctx, observability.SpanNameTurn, func(ctx context.Context) error {
 		var turnErr error
-		done, turnErr = l.runTurnIn(ctx, turnCount, state, governor, reporter, rt, observeCompaction)
+		done, turnErr = l.runTurnIn(ctx, turnCount, state, governor, listener, rt, observeCompaction)
 		return turnErr
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
 	return done, err
@@ -223,7 +223,7 @@ func (l *Loop) runTurnIn(
 	turnCount int,
 	state *runState,
 	governor *runGovernor,
-	reporter Reporter,
+	listener EventListener,
 	rt *compactionRuntime,
 	observeCompaction invocationObserver,
 ) (done bool, err error) {
@@ -236,7 +236,7 @@ func (l *Loop) runTurnIn(
 	)
 
 	if l.enableThinking {
-		reporter.Report(ctx, NewThinkingEvent())
+		listener.OnEvent(ctx, NewThinkingEvent())
 		compactedHistory, compactErr := l.maybeCompact(ctx, state.contextHistory, nil, rt, observeCompaction)
 		if compactErr != nil {
 			return true, fmt.Errorf("thinking 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "thinking", compactErr))
@@ -276,7 +276,7 @@ func (l *Loop) runTurnIn(
 	if err := ctx.Err(); err != nil {
 		return true, fmt.Errorf("Agent 运行已取消: %w", err)
 	}
-	reporter.Report(ctx, NewMessageStartEvent())
+	listener.OnEvent(ctx, NewMessageStartEvent())
 
 	compactedHistory, compactErr := l.maybeCompact(ctx, state.contextHistory, state.availableTools, rt, observeCompaction)
 	if compactErr != nil {
@@ -284,7 +284,7 @@ func (l *Loop) runTurnIn(
 	}
 	state.contextHistory = compactedHistory
 	generated, genErr := l.generateWithSpan(ctx, observability.GenerationPhaseAction, state.contextHistory, state.availableTools, func(block ai.ContentBlock) {
-		reporter.Report(ctx, NewMessageUpdateEvent(block))
+		listener.OnEvent(ctx, NewMessageUpdateEvent(block))
 	}, observeCompaction, rt)
 	if genErr != nil {
 		return true, fmt.Errorf("Action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", genErr))
@@ -310,14 +310,14 @@ func (l *Loop) runTurnIn(
 		if len(actionResp.ToolCalls) == 0 {
 			state.contextHistory = append(state.contextHistory, *actionResp)
 			state.newMessages = append(state.newMessages, *actionResp)
-			reporter.Report(ctx, NewMessageEndEvent(*actionResp))
+			listener.OnEvent(ctx, NewMessageEndEvent(*actionResp))
 		}
 		return true, actionBudgetErr
 	}
 
 	state.contextHistory = append(state.contextHistory, *actionResp)
 	state.newMessages = append(state.newMessages, *actionResp)
-	reporter.Report(ctx, NewMessageEndEvent(*actionResp))
+	listener.OnEvent(ctx, NewMessageEndEvent(*actionResp))
 
 	if len(actionResp.ToolCalls) == 0 {
 		return true, nil
@@ -338,7 +338,7 @@ func (l *Loop) runTurnIn(
 		logsdk.Any("execution_mode", mode),
 	)
 	observer := func(ctx context.Context, event ToolEvent) {
-		reporter.Report(ctx, NewAgentToolEvent(event))
+		listener.OnEvent(ctx, NewAgentToolEvent(event))
 	}
 
 	results, scheduleErr := l.scheduler.Schedule(ctx, actionResp.ToolCalls, state.availableTools, observer)

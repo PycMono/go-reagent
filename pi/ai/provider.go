@@ -20,24 +20,14 @@ type Stream interface {
 type StreamEventType string
 
 const (
-	StreamEventStart         StreamEventType = "start"
-	StreamEventTextDelta     StreamEventType = "text_delta"
-	StreamEventToolCallDelta StreamEventType = "tool_call_delta"
-	StreamEventDone          StreamEventType = "done"
-	StreamEventError         StreamEventType = "error"
+	StreamEventStart     StreamEventType = "start"
+	StreamEventTextDelta StreamEventType = "text_delta"
+	StreamEventDone      StreamEventType = "done"
+	StreamEventError     StreamEventType = "error"
 )
-
-// ToolCallDelta 表示工具调用在模型流中的一个增量片段。
-type ToolCallDelta struct {
-	Index          int
-	IDDelta        string
-	NameDelta      string
-	ArgumentsDelta string
-}
 
 // StreamEvent 是与具体模型 SDK 无关的模型响应事件。
 type StreamEvent struct {
-	Type          StreamEventType
-	TextDelta     string
-	ToolCallDelta *ToolCallDelta
+	Type      StreamEventType
+	TextDelta string
 }

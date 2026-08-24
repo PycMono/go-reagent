@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,45 +41,120 @@ func newNotifyingAgent(t *testing.T, provider ai.Provider, notifiers ...Notifier
 	return New(builder, loop, toolRuntime, notifiers...)
 }
 
-func TestNotifierReceivesOnlyFinalAssistantText(t *testing.T) {
-	final := actionMessage("最终回复")
-	provider := &scriptedProvider{streams: []*scriptedStream{textDeltaStream(final)}}
+func TestNotifierSilentOnCompletedRun(t *testing.T) {
+	provider := &scriptedProvider{streams: []*scriptedStream{textDeltaStream(actionMessage("正常回复"))}}
 	notifier := &recordingNotifier{}
 	agent := newNotifyingAgent(t, provider, notifier)
 
 	if _, err := agent.Run(context.Background(), runInput(), nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(notifier.notifications) != 1 || notifier.notifications[0].Text != "最终回复" {
-		t.Fatalf("notifications = %#v, want one final text", notifier.notifications)
+	if len(notifier.notifications) != 0 {
+		t.Fatalf("正常完成的 run 不应告警：notifications = %#v", notifier.notifications)
 	}
 }
 
-func TestNotifierSkipsToolCallMessagesAndEmptyText(t *testing.T) {
-	toolCall := ai.ToolCall{ID: "call-1", Name: "echo", Arguments: []byte(`{"a":1}`)}
+func TestNotifierAlertsOnRunError(t *testing.T) {
+	provider := &scriptedProvider{streams: []*scriptedStream{{err: errors.New("provider down")}}}
 	notifier := &recordingNotifier{}
+	agent := newNotifyingAgent(t, provider, notifier)
 
-	bridge := &notifyBridge{notifiers: []Notifier{notifier}}
-	bridge.Report(context.Background(), NewMessageEndEvent(*actionMessage("工具回合", toolCall)))
-	bridge.Report(context.Background(), NewMessageEndEvent(*actionMessage("  ")))
-	bridge.Report(context.Background(), NewThinkingEvent())
-	bridge.Report(context.Background(), AgentEvent{Type: AgentEventMessageEnd})
+	if _, err := agent.Run(context.Background(), runInput(), nil); err == nil {
+		t.Fatal("Run() error = nil, want provider failure")
+	}
+	if len(notifier.notifications) != 1 || notifier.notifications[0].Kind != NotificationRunError {
+		t.Fatalf("notifications = %#v, want one run_error", notifier.notifications)
+	}
+}
 
-	if len(notifier.notifications) != 0 {
-		t.Fatalf("notifications = %#v, want none", notifier.notifications)
+// prepare 阶段失败（如 workspace 缺少 AGENTS.md）走 loop 之前的提前返回
+// 路径，同样必须告警。
+func TestNotifierAlertsOnPrepareFailure(t *testing.T) {
+	workDir := t.TempDir() // 不写 AGENTS.md，prepare 必然失败
+	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: DefaultMiddlewareRegistrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
+	provider := &scriptedProvider{}
+	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
+	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), false, WithLoopProviderIdentity("test", "fake"))
+	notifier := &recordingNotifier{}
+	agent := New(builder, loop, toolRuntime, notifier)
+
+	if _, err := agent.Run(context.Background(), runInput(), nil); err == nil {
+		t.Fatal("Run() error = nil, want prepare failure")
+	}
+	if provider.calls != 0 {
+		t.Fatalf("prepare 失败不应触达 Provider，calls = %d", provider.calls)
+	}
+	if len(notifier.notifications) != 1 || notifier.notifications[0].Kind != NotificationRunError {
+		t.Fatalf("notifications = %#v, want one run_error", notifier.notifications)
+	}
+}
+
+func TestNotifierAlertsOnBudgetTermination(t *testing.T) {
+	toolCall := ai.ToolCall{ID: "call-1", Name: "echo", Arguments: []byte(`{"a":1}`)}
+	looping := actionMessage("继续", toolCall)
+	provider := &scriptedProvider{streams: []*scriptedStream{
+		textDeltaStream(looping), textDeltaStream(looping),
+	}}
+	notifier := &recordingNotifier{}
+	agent := newNotifyingAgent(t, provider, notifier)
+
+	request := runInput()
+	request.Limits = RunLimits{MaxTurns: 1}
+	if _, err := agent.Run(context.Background(), request, nil); err == nil {
+		t.Fatal("Run() error = nil, want run limit exceeded")
+	}
+	if len(notifier.notifications) != 1 || notifier.notifications[0].Kind != NotificationRunLimit {
+		t.Fatalf("notifications = %#v, want one run_limit", notifier.notifications)
+	}
+}
+
+func TestNotifierAlertsOnToolError(t *testing.T) {
+	listener := &alertListener{notifiers: []Notifier{&recordingNotifier{}}}
+	recorder := listener.notifiers[0].(*recordingNotifier)
+
+	listener.OnEvent(context.Background(), NewMessageEndEvent(*actionMessage("正常回复")))
+	listener.OnEvent(context.Background(), NewAgentToolEvent(NewToolEnd(
+		ai.ToolCall{ID: "c1", Name: "read"},
+		ToolResult{ToolCallID: "c1", ToolName: "read", IsError: false},
+	)))
+	if len(recorder.notifications) != 0 {
+		t.Fatalf("非失败事件不应告警：%#v", recorder.notifications)
+	}
+
+	listener.OnEvent(context.Background(), NewAgentToolEvent(NewToolEnd(
+		ai.ToolCall{ID: "c2", Name: "read"},
+		ToolResult{ToolCallID: "c2", ToolName: "read", IsError: true, ErrorCode: "tool_invalid_arguments"},
+	)))
+	if len(recorder.notifications) != 1 || recorder.notifications[0].Kind != NotificationToolError {
+		t.Fatalf("notifications = %#v, want one tool_error", recorder.notifications)
+	}
+	if got := recorder.notifications[0].Summary; got == "" || !containsAll(got, "read", "tool_invalid_arguments") {
+		t.Fatalf("Summary = %q, want tool name and error code", got)
 	}
 }
 
 func TestNotifierPanicDoesNotAffectRun(t *testing.T) {
-	final := actionMessage("ok")
-	provider := &scriptedProvider{streams: []*scriptedStream{textDeltaStream(final)}}
+	provider := &scriptedProvider{streams: []*scriptedStream{{err: errors.New("provider down")}}}
 	recorder := &recordingNotifier{}
 	agent := newNotifyingAgent(t, provider, panicNotifier{}, recorder)
 
-	if _, err := agent.Run(context.Background(), runInput(), nil); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if _, err := agent.Run(context.Background(), runInput(), nil); err == nil {
+		t.Fatal("Run() error = nil")
 	}
-	if len(recorder.notifications) != 1 || !strings.Contains(recorder.notifications[0].Text, "ok") {
+	if len(recorder.notifications) != 1 {
 		t.Fatalf("panic 不应影响后续 Notifier：notifications = %#v", recorder.notifications)
 	}
+}
+
+func containsAll(value string, fragments ...string) bool {
+	for _, fragment := range fragments {
+		if !strings.Contains(value, fragment) {
+			return false
+		}
+	}
+	return true
 }

@@ -92,10 +92,10 @@ func (f *controllerRepo) Delete(_ context.Context, userID, conversationID string
 	return f.deleteErr
 }
 
-type controllerRunner func(context.Context, conversation.RunRequest, pi.Reporter) (pi.RunResult, error)
+type controllerRunner func(context.Context, conversation.RunRequest, pi.EventListener) (pi.RunResult, error)
 
-func (f controllerRunner) Run(ctx context.Context, request conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
-	return f(ctx, request, reporter)
+func (f controllerRunner) Run(ctx context.Context, request conversation.RunRequest, listener pi.EventListener) (pi.RunResult, error) {
+	return f(ctx, request, listener)
 }
 
 func testRouter(service *chatservice.Service) *gin.Engine {
@@ -188,12 +188,12 @@ func TestControllerRejectsMalformedInput(t *testing.T) {
 
 func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 	repo := &controllerRepo{found: true}
-	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
-		reporter.Report(ctx, pi.NewThinkingEvent())
-		reporter.Report(ctx, pi.NewMessageStartEvent())
-		reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("do")))
-		reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("ne")))
-		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
+	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, listener pi.EventListener) (pi.RunResult, error) {
+		listener.OnEvent(ctx, pi.NewThinkingEvent())
+		listener.OnEvent(ctx, pi.NewMessageStartEvent())
+		listener.OnEvent(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("do")))
+		listener.OnEvent(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("ne")))
+		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("done")}}))
 		return pi.RunResult{}, nil
 	})
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})
@@ -227,29 +227,29 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 
 func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 	repo := &controllerRepo{found: true}
-	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, listener pi.EventListener) (pi.RunResult, error) {
 		skillCall := ai.ToolCall{
 			ID: "call-skill", Name: "read", Arguments: []byte(`{"path":"skills/writing-assistance/SKILL.md"}`),
 		}
-		reporter.Report(ctx, pi.NewMessageStartEvent())
-		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{skillCall}}))
-		reporter.Report(ctx, pi.NewToolStartEvent(skillCall))
-		reporter.Report(ctx, pi.NewToolEndEvent(skillCall, pi.ToolResult{
+		listener.OnEvent(ctx, pi.NewMessageStartEvent())
+		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{skillCall}}))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolStart(skillCall)))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolEnd(skillCall, pi.ToolResult{
 			ToolCallID: skillCall.ID, ToolName: skillCall.Name,
 			Content: []ai.ContentBlock{ai.TextBlock("private skill instructions")},
-		}))
+		})))
 
 		fileCall := ai.ToolCall{ID: "call-file", Name: "read", Arguments: []byte(`{"path":"README.md"}`)}
-		reporter.Report(ctx, pi.NewMessageStartEvent())
-		reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{fileCall}}))
-		reporter.Report(ctx, pi.NewToolStartEvent(fileCall))
-		reporter.Report(ctx, pi.NewToolUpdateEvent(fileCall, ai.ToolUpdate{
+		listener.OnEvent(ctx, pi.NewMessageStartEvent())
+		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{fileCall}}))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolStart(fileCall)))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolUpdate(fileCall, ai.ToolUpdate{
 			Content: []ai.ContentBlock{ai.TextBlock("private streamed file body")}, Details: "private details",
-		}))
-		reporter.Report(ctx, pi.NewToolEndEvent(fileCall, pi.ToolResult{
+		})))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolEnd(fileCall, pi.ToolResult{
 			ToolCallID: fileCall.ID, ToolName: fileCall.Name,
 			Content: []ai.ContentBlock{ai.TextBlock("private file body")},
-		}))
+		})))
 		return pi.RunResult{}, nil
 	})
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})
@@ -274,7 +274,7 @@ func TestCancelRunForwardsPathAndBusinessIdentity(t *testing.T) {
 	repo := &controllerRepo{found: true}
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	runner := controllerRunner(func(ctx context.Context, request conversation.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
+	runner := controllerRunner(func(ctx context.Context, request conversation.RunRequest, _ pi.EventListener) (pi.RunResult, error) {
 		if request.UserID != "visitor-1" || request.ConversationID != "chat-1" || request.RunID != "run-1" {
 			t.Errorf("request = %#v", request)
 		}

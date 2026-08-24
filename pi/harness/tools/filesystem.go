@@ -126,24 +126,6 @@ func (w *Workspace) Remove(path string) error {
 	return w.root.Remove(path)
 }
 
-func (w *Workspace) Rename(oldPath, newPath string) error {
-	oldPath, err := cleanRelativePath(oldPath, true)
-	if err != nil {
-		return err
-	}
-	newPath, err = cleanRelativePath(newPath, true)
-	if err != nil {
-		return err
-	}
-	if err := w.guard(oldPath); err != nil {
-		return err
-	}
-	if err := w.guard(newPath); err != nil {
-		return err
-	}
-	return w.root.Rename(oldPath, newPath)
-}
-
 func (w *Workspace) ResolveDir(path string) (string, error) {
 	path, err := cleanRelativePath(path, false)
 	if err != nil {

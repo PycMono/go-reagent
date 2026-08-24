@@ -9,8 +9,8 @@ import (
 
 func TestErrorCodeValuesAreStable(t *testing.T) {
 	want := map[ErrorCode]string{
-		ErrorCodeUnknown: "unknown", ErrorCodeConfigLoad: "config_load_failed",
-		ErrorCodeConfigInvalid: "config_invalid", ErrorCodeInitialization: "initialization_failed",
+		ErrorCodeUnknown: "unknown",
+		ErrorCodeInitialization: "initialization_failed",
 		ErrorCodeRequestInvalid: "request_invalid", ErrorCodeWorkspaceInvalid: "workspace_invalid",
 		ErrorCodeAIGeneration: "ai_generation_failed", ErrorCodeToolRuntime: "tool_runtime_failed",
 		ErrorCodeAITransient: "ai_transient", ErrorCodeAIRateLimited: "ai_rate_limited",
@@ -48,9 +48,9 @@ func TestClassifyToolUsesStableCodes(t *testing.T) {
 	}
 }
 
-func TestClassifyPreservesSpecificCodeAndCause(t *testing.T) {
+func TestWrapPreservesSpecificCodeAndCause(t *testing.T) {
 	cause := stderrors.New("provider failed")
-	err := Classify("Run", Wrap(ErrorCodeAITransient, "action", cause))
+	err := Wrap(ErrorCodeAITransient, "action", cause)
 	if ErrorCodeOf(err) != ErrorCodeAITransient || !stderrors.Is(err, cause) {
 		t.Fatalf("classified error = %v", err)
 	}

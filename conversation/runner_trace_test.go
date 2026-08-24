@@ -160,7 +160,7 @@ type cancelDuringRunFake struct {
 	result pi.RunResult
 }
 
-func (f cancelDuringRunFake) Run(ctx context.Context, _ pi.RunRequest, _ pi.Reporter) (pi.RunResult, error) {
+func (f cancelDuringRunFake) Run(ctx context.Context, _ pi.RunRequest, _ pi.EventListener) (pi.RunResult, error) {
 	f.cancel()
 	return f.result, ctx.Err()
 }

@@ -80,7 +80,7 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reporter := &registerTestReporter{}
+	listener := &registerTestRunListener{}
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 		ContentType: "text",
 		Content:     "你好",
 		SenderType:  "customer",
-	}}, reporter)
+	}}, listener)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -101,8 +101,8 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 		t.Fatalf("Provider calls = %d, want 1", provider.calls)
 	}
 	wantEvents := []AgentEventType{AgentEventMessageStart, AgentEventMessageUpdate, AgentEventMessageEnd}
-	if !slices.Equal(reporter.events, wantEvents) {
-		t.Fatalf("events = %v, want %v", reporter.events, wantEvents)
+	if !slices.Equal(listener.events, wantEvents) {
+		t.Fatalf("events = %v, want %v", listener.events, wantEvents)
 	}
 }
 
@@ -139,11 +139,11 @@ func (s *registerTestStream) Current() ai.StreamEvent {
 func (s *registerTestStream) Result() (*ai.Message, error) { return s.message, nil }
 func (s *registerTestStream) Close() error                 { return nil }
 
-type registerTestReporter struct {
+type registerTestRunListener struct {
 	events []AgentEventType
 }
 
-func (r *registerTestReporter) Report(_ context.Context, event AgentEvent) {
+func (r *registerTestRunListener) OnEvent(_ context.Context, event AgentEvent) {
 	r.events = append(r.events, event.Type)
 }
 

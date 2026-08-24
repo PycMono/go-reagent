@@ -60,7 +60,7 @@ func exaRemoteTools() []Tool {
 
 func TestExtensionDiscoversOnlyAllowedTools(t *testing.T) {
 	client := &extensionClientFake{tools: exaRemoteTools()}
-	extension, err := newExtensionWithClient(ExtensionOptions{
+	extension, err := buildTestExtension(ExtensionOptions{
 		Name: "exa", AllowTools: []string{"web_search_exa", "web_fetch_exa"}, ToolPrefix: "exa",
 	}, client)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestExtensionDiscoversOnlyAllowedTools(t *testing.T) {
 
 func TestExtensionRequiresEveryAllowedTool(t *testing.T) {
 	client := &extensionClientFake{tools: exaRemoteTools()[:2]}
-	extension, err := newExtensionWithClient(ExtensionOptions{
+	extension, err := buildTestExtension(ExtensionOptions{
 		Name: "exa", AllowTools: []string{"web_search_exa", "web_fetch_exa"},
 	}, client)
 	if err != nil {
@@ -114,12 +114,12 @@ func TestExtensionValidatesOptionsAndPropagatesRegistrationFailure(t *testing.T)
 		{Name: "exa", AllowTools: []string{"same", "same"}},
 		{Name: "exa", AllowTools: []string{"ok"}, ToolPrefix: "bad prefix"},
 	} {
-		if _, err := newExtensionWithClient(options, client); err == nil {
+		if _, err := buildTestExtension(options, client); err == nil {
 			t.Fatalf("invalid options accepted: %#v", options)
 		}
 	}
 
-	extension, err := newExtensionWithClient(ExtensionOptions{Name: "exa", AllowTools: []string{"web_search_exa"}}, client)
+	extension, err := buildTestExtension(ExtensionOptions{Name: "exa", AllowTools: []string{"web_search_exa"}}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,5 +129,14 @@ func TestExtensionValidatesOptionsAndPropagatesRegistrationFailure(t *testing.T)
 	}
 }
 
-var _ pi.Extension = (*Extension)(nil)
-var _ pi.ExtensionCloser = (*Extension)(nil)
+var _ pi.Extension = (*extension)(nil)
+var _ pi.ExtensionCloser = (*extension)(nil)
+
+// buildTestExtension 替代已删除的生产辅助函数：归一化选项后直接用 fake client 组装。
+func buildTestExtension(options ExtensionOptions, client extensionClient) (*extension, error) {
+	normalized, err := normalizeExtensionOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return buildExtension(normalized, client), nil
+}

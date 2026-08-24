@@ -35,10 +35,11 @@ func New(webhookURL string, client *http.Client) *Notifier {
 	return &Notifier{webhookURL: webhookURL, client: client}
 }
 
-// Notify 实现 pi.Notifier：把最终回复以 markdown 发到群机器人。
+// Notify 实现 pi.Notifier：把运行告警以 markdown 发到群机器人。
 // 通知是旁路：失败只记日志，不重试、不影响 run。
 func (n *Notifier) Notify(ctx context.Context, notification pi.Notification) {
-	if err := n.send(ctx, truncateUTF8(notification.Text, markdownMaxBytes)); err != nil {
+	text := fmt.Sprintf("[告警] %s\n%s", notification.Kind, notification.Summary)
+	if err := n.send(ctx, truncateUTF8(text, markdownMaxBytes)); err != nil {
 		logsdk.Error(ctx, "企业微信群通知发送失败",
 			logsdk.Any("component", "wecom_notifier"),
 			logsdk.Err(err),

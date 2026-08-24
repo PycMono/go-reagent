@@ -25,7 +25,6 @@ type ExtensionOptions struct {
 	Timeout    time.Duration
 	AllowTools []string
 	ToolPrefix string
-	HTTPClient *http.Client
 }
 
 type extensionClient interface {
@@ -35,7 +34,7 @@ type extensionClient interface {
 	Close(context.Context) error
 }
 
-type Extension struct {
+type extension struct {
 	name       string
 	allowTools []string
 	toolPrefix string
@@ -48,10 +47,9 @@ func NewExtension(options ExtensionOptions) (pi.Extension, error) {
 		return nil, err
 	}
 	transport, err := NewHTTPTransport(HTTPTransportOptions{
-		Endpoint:   normalized.Endpoint,
-		Headers:    normalized.Headers,
-		Timeout:    normalized.Timeout,
-		HTTPClient: normalized.HTTPClient,
+		Endpoint: normalized.Endpoint,
+		Headers:  normalized.Headers,
+		Timeout:  normalized.Timeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create MCP extension %q transport: %w", normalized.Name, err)
@@ -63,19 +61,8 @@ func NewExtension(options ExtensionOptions) (pi.Extension, error) {
 	return buildExtension(normalized, client), nil
 }
 
-func newExtensionWithClient(options ExtensionOptions, client extensionClient) (*Extension, error) {
-	normalized, err := normalizeExtensionOptions(options)
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		return nil, errors.New("MCP extension client is required")
-	}
-	return buildExtension(normalized, client), nil
-}
-
-func buildExtension(options ExtensionOptions, client extensionClient) *Extension {
-	return &Extension{
+func buildExtension(options ExtensionOptions, client extensionClient) *extension {
+	return &extension{
 		name:       "mcp:" + options.Name,
 		allowTools: append([]string(nil), options.AllowTools...),
 		toolPrefix: options.ToolPrefix,
@@ -112,49 +99,49 @@ func normalizeExtensionOptions(options ExtensionOptions) (ExtensionOptions, erro
 	return options, nil
 }
 
-func (extension *Extension) Name() string { return extension.name }
+func (e *extension) Name() string { return e.name }
 
-func (extension *Extension) Register(ctx context.Context, api pi.ExtensionAPI) error {
-	if err := extension.client.Initialize(ctx); err != nil {
-		return fmt.Errorf("initialize extension %q: %w", extension.name, err)
+func (e *extension) Register(ctx context.Context, api pi.ExtensionAPI) error {
+	if err := e.client.Initialize(ctx); err != nil {
+		return fmt.Errorf("initialize extension %q: %w", e.name, err)
 	}
-	remoteTools, err := extension.client.ListTools(ctx)
+	remoteTools, err := e.client.ListTools(ctx)
 	if err != nil {
-		return fmt.Errorf("discover tools for extension %q: %w", extension.name, err)
+		return fmt.Errorf("discover tools for extension %q: %w", e.name, err)
 	}
 	byName := make(map[string]Tool, len(remoteTools))
 	for _, remote := range remoteTools {
 		byName[remote.Name] = remote
 	}
-	proxies := make([]*proxyTool, 0, len(extension.allowTools))
-	for _, allowedName := range extension.allowTools {
+	proxies := make([]*proxyTool, 0, len(e.allowTools))
+	for _, allowedName := range e.allowTools {
 		remote, exists := byName[allowedName]
 		if !exists {
-			return fmt.Errorf("extension %q did not expose required tool %q", extension.name, allowedName)
+			return fmt.Errorf("extension %q did not expose required tool %q", e.name, allowedName)
 		}
 		if remote.InputSchema == nil {
-			return fmt.Errorf("extension %q tool %q has no input schema", extension.name, allowedName)
+			return fmt.Errorf("extension %q tool %q has no input schema", e.name, allowedName)
 		}
 		exposedName := remote.Name
-		if extension.toolPrefix != "" {
-			exposedName = extension.toolPrefix + "_" + remote.Name
+		if e.toolPrefix != "" {
+			exposedName = e.toolPrefix + "_" + remote.Name
 		}
-		proxies = append(proxies, newProxyTool(extension.client, remote, exposedName))
+		proxies = append(proxies, newProxyTool(e.client, remote, exposedName))
 	}
 	sort.Slice(proxies, func(i, j int) bool {
 		return proxies[i].Definition().Name < proxies[j].Definition().Name
 	})
 	for _, proxy := range proxies {
 		if err := api.RegisterTool(proxy); err != nil {
-			return fmt.Errorf("register extension %q tool %q: %w", extension.name, proxy.Definition().Name, err)
+			return fmt.Errorf("register extension %q tool %q: %w", e.name, proxy.Definition().Name, err)
 		}
 	}
 	return nil
 }
 
-func (extension *Extension) Close(ctx context.Context) error {
-	return extension.client.Close(ctx)
+func (e *extension) Close(ctx context.Context) error {
+	return e.client.Close(ctx)
 }
 
-var _ pi.Extension = (*Extension)(nil)
-var _ pi.ExtensionCloser = (*Extension)(nil)
+var _ pi.Extension = (*extension)(nil)
+var _ pi.ExtensionCloser = (*extension)(nil)

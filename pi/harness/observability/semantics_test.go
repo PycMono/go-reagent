@@ -13,9 +13,9 @@ func TestEnumValuesMatchDesign(t *testing.T) {
 		"acceptance":         {string(AcceptanceAccepted), string(AcceptanceContractInvalid)},
 		"cost_quality":       {string(CostQualityExact), string(CostQualityEstimated)},
 		"token_type":         {string(TokenTypeInputTotal), string(TokenTypeOutputTotal), string(TokenTypeCacheRead), string(TokenTypeCacheWrite), string(TokenTypeReasoning)},
-		"compaction_reason":  {string(CompactionReasonOverflow), string(CompactionReasonThreshold), string(CompactionReasonManual)},
-		"execution_mode":     {string(ExecutionModeSerial), string(ExecutionModeParallel), string(ExecutionModeMixed)},
-		"transport":          {string(TransportHTTPSSE), string(TransportTerminal), string(TransportWeCom), string(TransportSDK)},
+		"compaction_reason":  {string(CompactionReasonOverflow), string(CompactionReasonThreshold)},
+		"execution_mode":     {string(ExecutionModeSerial), string(ExecutionModeParallel), string(ExecutionModeMixed), string(ExecutionModeSubagentGate)},
+		"transport":          {string(TransportHTTPSSE)},
 	}
 	want := map[string][]string{
 		"generation_phase":   {"thinking", "action", "compaction", "unknown"},
@@ -24,9 +24,9 @@ func TestEnumValuesMatchDesign(t *testing.T) {
 		"acceptance":         {"accepted", "contract_invalid"},
 		"cost_quality":       {"exact", "estimated"},
 		"token_type":         {"input_total", "output_total", "cache_read", "cache_write", "reasoning"},
-		"compaction_reason":  {"overflow", "threshold", "manual"},
-		"execution_mode":     {"serial", "parallel", "mixed"},
-		"transport":          {"http_sse", "terminal", "wecom", "sdk"},
+		"compaction_reason":  {"overflow", "threshold"},
+		"execution_mode":     {"serial", "parallel", "mixed", "subagent_gate"},
+		"transport":          {"http_sse"},
 	}
 	for name, got := range cases {
 		expected := want[name]

@@ -25,5 +25,5 @@ type RunRequest struct {
 
 // Runner 定义带会话加载和持久化的一次运行行为。
 type Runner interface {
-	Run(context.Context, RunRequest, pi.Reporter) (pi.RunResult, error)
+	Run(context.Context, RunRequest, pi.EventListener) (pi.RunResult, error)
 }

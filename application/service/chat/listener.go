@@ -8,29 +8,29 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
-type runReporter struct {
+type runListener struct {
 	runID  string
 	events chan<- vo.RunEventVO
 }
 
-func newRunReporter(runID string, events chan<- vo.RunEventVO) pi.Reporter {
-	return &runReporter{runID: runID, events: events}
+func newRunListener(runID string, events chan<- vo.RunEventVO) pi.EventListener {
+	return &runListener{runID: runID, events: events}
 }
 
-func (reporter *runReporter) Report(ctx context.Context, event pi.AgentEvent) {
-	mapped, important, ok := mapRunEvent(reporter.runID, event)
+func (listener *runListener) OnEvent(ctx context.Context, event pi.AgentEvent) {
+	mapped, important, ok := mapRunEvent(listener.runID, event)
 	if !ok {
 		return
 	}
 	if !important {
 		select {
-		case reporter.events <- mapped:
+		case listener.events <- mapped:
 		default:
 		}
 		return
 	}
 	select {
-	case reporter.events <- mapped:
+	case listener.events <- mapped:
 	case <-ctx.Done():
 	}
 }

@@ -147,7 +147,7 @@ go-reagent/
 │   │   ├── skills/            # Skill 发现与加载
 │   │   └── tools/             # 六个默认工具和进程监督器
 │   ├── mcp/                   # MCP 客户端、HTTP 传输与工具扩展
-│   └── notifier.go            # Notifier 通知端口与最终回复桥接
+│   └── notifier.go            # Notifier 告警端口与运行告警桥接
 ├── config/                    # 业务配置、全部配置校验与 Configor 加载
 ├── domain/                    # 业务实体与 Repository 接口
 ├── infrastructure/           # Redis/MySQL/MCP/Gin 等驱动、持久化、中间件与通知通道
@@ -412,8 +412,8 @@ go test ./...
 - 可选的 Thinking Phase：暂时隐藏工具，将规划 Trace 注入 Action 上下文。
 - 支持直接模型响应的 ReAct Main Loop。
 - 支持将连续安全 Tool Call 有界并发执行，以独占工具为屏障，并稳定聚合结果。
-- 通过 Reporter 订阅统一 Agent Event（SSE 实时推送浏览器）；`pi.Notifier` 通知端口由 pi 内部桥接识别最终回复并扇出到外部通道，通道实现方无需理解事件模型。
-- 支持配置化企业微信群机器人 Webhook，将每次 Run 的最终回复发送为 Markdown 群通知。
+- 通过 EventListener 订阅统一 Agent Event（SSE 实时推送浏览器）；`pi.Notifier` 告警端口在运行异常时回调外部通道（run 错误终止、预算触顶、工具执行失败），正常回复不通知，通道实现方无需理解事件模型。
+- 支持配置化企业微信群机器人 Webhook，将 Agent 运行告警发送为 Markdown 群通知。
 - 基于 Uber Fx 的可组合 Core、只读工具和完整 Coding 工具注册图。
 - 模型生成错误和空响应防护，并保留官方 SDK 错误解包链。
 - 工具调用 ID 的整批前置校验。
@@ -429,7 +429,7 @@ go test ./...
 - [x] 增加可开关的慢思考与行动双阶段循环。
 - [x] 实现内存版 Tool Registry 和本地编码工具闭环。
 - [x] 实现配置驱动的 OpenAI/Anthropic 兼容 Provider。
-- [x] 使用 Uber Fx 组装真实 Config、Provider、Registry、Reporter、Engine 和 Runner。
+- [x] 使用 Uber Fx 组装真实 Config、Provider、Registry、EventListener、Engine 和 Runner。
 - [x] 增加按工具安全等级分波的有界并发调度器。
 - [x] 增加可配置的轮次、Token 与成本预算（wall-clock 由 `context.Context` deadline 承担）。
 - [ ] 增加行为型循环检测（重复工具调用提醒与熔断）。
@@ -438,5 +438,5 @@ go test ./...
 - [x] 在浏览器聊天中增加 MySQL 会话持久化。
 - [x] 增加 MCP 客户端扩展与 Exa 公网检索通道。
 - [ ] 增加飞书等外部消息渠道适配。
-- [x] 增加企业微信群机器人单向回复通知（`pi.Notifier` 端口 + notice 通道）。
+- [x] 增加企业微信群机器人运行告警（`pi.Notifier` 端口 + notice 通道）。
 - [ ] 增加企业微信和飞书的双向消息接入。

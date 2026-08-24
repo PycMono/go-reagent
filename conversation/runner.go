@@ -42,7 +42,7 @@ func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepos
 	return &runner{runtime: runtime, repository: repository, historyLimit: historyLimit, limits: limits}
 }
 
-func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+func (r *runner) Run(ctx context.Context, request RunRequest, listener pi.EventListener) (pi.RunResult, error) {
 	result := pi.RunResult{}
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("conversation runner: run canceled: %w", err)
@@ -97,7 +97,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, reporter pi.Report
 		},
 		Context: append([]pi.ContextBlock(nil), request.Context...),
 		Limits:  r.limits,
-	}, reporter)
+	}, listener)
 	if runErr != nil && len(runtimeResult.NewMessages) == 0 && len(runtimeResult.Invocations) == 0 {
 		return runtimeResult, runErr
 	}
