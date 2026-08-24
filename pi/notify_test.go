@@ -37,7 +37,7 @@ func newNotifyingAgent(t *testing.T, provider ai.Provider, notifiers ...Notifier
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), false, WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	return New(builder, loop, toolRuntime, notifiers...)
 }
 
@@ -78,7 +78,7 @@ func TestNotifierAlertsOnPrepareFailure(t *testing.T) {
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	provider := &scriptedProvider{}
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), false, WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	notifier := &recordingNotifier{}
 	agent := New(builder, loop, toolRuntime, notifier)
 

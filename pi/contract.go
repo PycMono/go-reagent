@@ -89,14 +89,14 @@ const (
 	ModelInvocationPhaseSubagent ModelInvocationPhase = "subagent"
 )
 
-// ModelInvocationOutcome 是可信 Invocation 的契约验收结果（§9.3）。
+// ModelInvocationOutcome 是可信 Invocation 的契约验收结果。
 type ModelInvocationOutcome string
 
 const (
 	// ModelInvocationAccepted 表示契约校验通过。
 	ModelInvocationAccepted ModelInvocationOutcome = "accepted"
 	// ModelInvocationContractInvalid 表示已取得可信 Usage 但 Thinking/Action/
-	// Compaction 契约校验失败；调用已计费，必须入账（§1.1、§9.3）。
+	// Compaction 契约校验失败；调用已计费，必须入账。
 	ModelInvocationContractInvalid ModelInvocationOutcome = "contract_invalid"
 )
 
@@ -110,7 +110,7 @@ type ModelInvocation struct {
 	Usage ai.Usage `json:"usage"`
 	// Outcome 是契约验收结果；新 Invocation 必须显式写入，不依赖数据库默认值。
 	Outcome ModelInvocationOutcome `json:"outcome"`
-	// ProviderRequestIndex 是本次调用对应的物理 Provider 请求序号（§7），
+	// ProviderRequestIndex 是本次调用对应的物理 Provider 请求序号，
 	// 与 Invocation Sequence 分离；用于在 Trace 中定位唯一 Provider Span。
 	ProviderRequestIndex uint32 `json:"provider_request_index,omitempty"`
 	// FinishReason 是模型结束当前响应的统一原因。

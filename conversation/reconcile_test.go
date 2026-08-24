@@ -98,7 +98,7 @@ func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	traced := piobservability.NewTracingProvider(reconProvider{}, "openai", "test", "fake")
-	loop := pi.NewLoop(traced, pi.NewScheduler(toolRuntime, 1), false, pi.WithLoopProviderIdentity("test", "fake"))
+	loop := pi.NewLoop(traced, pi.NewScheduler(toolRuntime, 1), pi.WithLoopProviderIdentity("test", "fake"))
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	agent := pi.New(builder, loop, toolRuntime)
 

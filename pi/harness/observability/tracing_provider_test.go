@@ -131,15 +131,15 @@ func TestTracingProviderSuccessSpan(t *testing.T) {
 		t.Fatalf("span = %q/%v", span.Name, span.SpanKind)
 	}
 	for key, want := range map[string]any{
-		AttrGenAIOperationName:     "chat",
-		AttrGenAIProviderName:      "openai",
-		AttrGenAIRequestModel:      "test-model",
-		AttrGenerationPhase:        "action",
-		AttrProviderAttempt:        int64(2),
-		AttrProviderRequestIndex:   int64(3),
-		"gen_ai.usage.input_tokens":  int64(10),
-		"gen_ai.usage.output_tokens": int64(5),
-		AttrStreamChunkCount:       int64(4),
+		AttrGenAIOperationName:           "chat",
+		AttrGenAIProviderName:            "openai",
+		AttrGenAIRequestModel:            "test-model",
+		AttrGenerationPhase:              "action",
+		AttrProviderAttempt:              int64(2),
+		AttrProviderRequestIndex:         int64(3),
+		"gen_ai.usage.input_tokens":      int64(10),
+		"gen_ai.usage.output_tokens":     int64(5),
+		AttrStreamChunkCount:             int64(4),
 		"gen_ai.response.finish_reasons": []string{"stop"},
 	} {
 		got := spanAttr(span, key)

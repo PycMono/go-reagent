@@ -25,7 +25,6 @@ func TestCoreRegisterInjectsCompactionConfig(t *testing.T) {
 		CoreRegister,
 		fx.Supply(
 			WorkDir(root),
-			ThinkingEnabled(false),
 			providers.Options{
 				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
 				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
@@ -52,7 +51,6 @@ func TestCoreRegisterDefaultsZeroCompactionConfig(t *testing.T) {
 		CoreRegister,
 		fx.Supply(
 			WorkDir(root),
-			ThinkingEnabled(false),
 			providers.Options{
 				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
 				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
@@ -86,7 +84,7 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
-	loop := NewLoop(provider, NewScheduler(runtime, 1), false)
+	loop := NewLoop(provider, NewScheduler(runtime, 1))
 	agent := New(builder, loop, runtime)
 
 	_, err = agent.Run(context.Background(), RunRequest{Input: Message{
@@ -166,7 +164,6 @@ func TestCoreRegisterAllowsEmptyToolGroup(t *testing.T) {
 		CoreRegister,
 		fx.Supply(
 			WorkDir(root),
-			ThinkingEnabled(false),
 			providers.Options{
 				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
 				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
@@ -199,7 +196,6 @@ func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
 		)),
 		fx.Supply(
 			WorkDir(root),
-			ThinkingEnabled(false),
 			providers.Options{
 				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
 				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
@@ -233,4 +229,80 @@ func resolveRegisteredToolNames(t *testing.T, register fx.Option) []string {
 		names[index] = definition.Name
 	}
 	return names
+}
+
+// subagentFXTestOptions 提供 fx 装配测试的公共依赖（stub web 工具入 group）。
+func subagentFXTestOptions(root string) fx.Option {
+	return fx.Options(
+		CoreRegister,
+		SubagentRegister,
+		fx.Provide(
+			fx.Annotate(func() ai.Tool { return &stubTool{name: "web_search_exa"} },
+				fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+			fx.Annotate(func() ai.Tool { return &stubTool{name: "web_fetch_exa"} },
+				fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
+		),
+		fx.Supply(
+			WorkDir(root),
+			providers.Options{
+				ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: "https://example.test/v1/",
+				APIKey: "test-key", Model: "test-model", Pricing: &providers.Pricing{},
+			},
+		),
+	)
+}
+
+func findSubagentTools(tools []ai.Tool) []*SubagentTool {
+	var found []*SubagentTool
+	for _, tool := range tools {
+		if subagent, ok := tool.(*SubagentTool); ok {
+			found = append(found, subagent)
+		}
+	}
+	return found
+}
+
+func TestSubagentRegisterBindsAfterFreeze(t *testing.T) {
+	var tools []ai.Tool
+	app := fxtest.New(
+		t,
+		subagentFXTestOptions(t.TempDir()),
+		fx.Invoke(func(params struct {
+			fx.In
+			Tools []ai.Tool `group:"agent_tools"`
+		}) {
+			tools = params.Tools
+		}),
+	)
+	app.RequireStart()
+	t.Cleanup(app.RequireStop)
+
+	subagents := findSubagentTools(tools)
+	if len(subagents) != 1 {
+		t.Fatalf("subagent tools = %d, want 1（默认 research）", len(subagents))
+	}
+	// fx.Invoke 生效：启动期绑定完成（freeze 后，含 MCP 类工具）。
+	if subagents[0].bound.Load() == nil {
+		t.Fatal("subagent tool must be bound after app start")
+	}
+	pipeline := subagents[0].bound.Load()
+	if len(pipeline.childTools) != 2 {
+		t.Fatalf("child tools = %v, want [web_search_exa web_fetch_exa]", pipeline.childTools)
+	}
+}
+
+func TestSubagentRegisterRejectsUnknownWhitelistTool(t *testing.T) {
+	badTool := newResearchSubagentTool()
+	badTool.tools = []string{"nonexistent_tool"}
+	app := fx.New(
+		fx.NopLogger,
+		subagentFXTestOptions(t.TempDir()),
+		fx.Provide(fx.Annotate(
+			func() ai.Tool { return badTool },
+			fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`))),
+	)
+	if err := app.Start(context.Background()); err == nil {
+		t.Fatal("unknown whitelist tool must fail app start")
+	}
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
 }

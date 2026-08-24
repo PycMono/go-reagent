@@ -19,15 +19,15 @@ type generationResult struct {
 	context []ai.Message
 	// attempts 是本次逻辑生成的物理 Provider 请求次数（不含 Compaction 自身）。
 	attempts int
-	// compactionTriggered 表示本次逻辑生成中触发了 L2 Compaction（§4.4）。
+	// compactionTriggered 表示本次逻辑生成中触发了 L2 Compaction。
 	compactionTriggered bool
-	// requestIndex 是最终成功响应对应的物理请求序号（§7）。
+	// requestIndex 是最终成功响应对应的物理请求序号。
 	requestIndex uint32
 }
 
 // generateState 是一次逻辑生成（Thinking 或 Action）的共享状态：
-// Attempt 在 Overflow 恢复后的重试中保持连续（§4.1 attempt=1→2）；
-// RequestIndex 经 compactionRuntime 在 Run 内单调递增（§7）。
+// Attempt 在 Overflow 恢复后的重试中保持连续；
+// RequestIndex 经 compactionRuntime 在 Run 内单调递增。
 type generateState struct {
 	phase    observability.GenerationPhase
 	rt       *compactionRuntime
@@ -38,7 +38,7 @@ type generateState struct {
 	lastRequestIndex uint32
 }
 
-// generateWithSpan 为一次逻辑生成创建 reagent.generate Span（§4.4）；
+// generateWithSpan 为一次逻辑生成创建 reagent.generate Span；
 // Span 覆盖 Retry、Overflow 恢复与可能的 Compaction 子 Span，状态与
 // 生命周期由 WithSpan 管理。
 func (l *Loop) generateWithSpan(
@@ -93,11 +93,15 @@ func (l *Loop) generateWithRetry(
 	err := retry.Do(func() error {
 		state.attempts++
 		if state.attempts > 1 {
-			// 上一次 Retry 等待的 Timer 正常到期（§4.8 completed）。
+			// 上一次 Retry 等待的 Timer 正常到期。
 			observability.RecordRetryCompleted(ctx, state.attempts, time.Since(scheduledAt))
 		}
 		waitingForRetry = false
-		state.lastRequestIndex = state.rt.nextRequestIndex()
+		requestIndex, seqErr := state.rt.nextRequestIndex()
+		if seqErr != nil {
+			return seqErr
+		}
+		state.lastRequestIndex = requestIndex
 		hintCtx := observability.WithGenerationHint(ctx, observability.GenerationHint{
 			Phase:        string(state.phase),
 			Attempt:      state.attempts,
@@ -126,7 +130,7 @@ func (l *Loop) generateWithRetry(
 			scheduledAt = time.Now()
 			delay := retryDelay(int(attempt))
 			reason := string(pierrors.ErrorCodeOf(err))
-			// Retry Counter 仅在 scheduled 时累加一次（§4.8）。
+			// Retry Counter 仅在 scheduled 时累加一次。
 			observability.RecordRetryScheduled(ctx, state.attempts+1, delay, reason)
 			observability.RecordModelRetry(ctx,
 				labelOrUnknown(l.providerID), labelOrUnknown(l.model), state.phase, reason)

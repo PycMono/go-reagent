@@ -14,7 +14,6 @@ import (
 func TestRunListenerMapsPublicPiEvents(t *testing.T) {
 	events := make(chan vo.RunEventVO, 8)
 	listener := newRunListener("run-1", events)
-	listener.OnEvent(context.Background(), pi.NewThinkingEvent())
 	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolStart(ai.ToolCall{
 		ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`),
 	})))
@@ -32,7 +31,7 @@ func TestRunListenerMapsPublicPiEvents(t *testing.T) {
 	}))
 
 	wants := []vo.RunEventType{
-		vo.RunEventAgentThinking, vo.RunEventToolStarted, vo.RunEventToolUpdated,
+		vo.RunEventToolStarted, vo.RunEventToolUpdated,
 		vo.RunEventToolCompleted, vo.RunEventMessageStarted, vo.RunEventMessageDelta,
 		vo.RunEventMessageDelta, vo.RunEventMessageCompleted,
 	}
@@ -60,7 +59,8 @@ func TestRunListenerMapsPublicPiEvents(t *testing.T) {
 func TestRunListenerDoesNotDropMessageDeltaWhenQueueIsFull(t *testing.T) {
 	events := make(chan vo.RunEventVO, 1)
 	listener := newRunListener("run-1", events)
-	listener.OnEvent(context.Background(), pi.NewThinkingEvent())
+	// 先用一条 important 事件占满容量为 1 的队列，制造"队列已满"前提。
+	listener.OnEvent(context.Background(), pi.NewMessageStartEvent())
 	done := make(chan struct{})
 	go func() {
 		listener.OnEvent(context.Background(), pi.NewMessageUpdateEvent(ai.TextBlock("chunk")))
@@ -86,7 +86,6 @@ func TestRunListenerDoesNotDropMessageDeltaWhenQueueIsFull(t *testing.T) {
 func TestRunListenerMayDropToolUpdatesWhenQueueIsFull(t *testing.T) {
 	events := make(chan vo.RunEventVO, 1)
 	listener := newRunListener("run-1", events)
-	listener.OnEvent(context.Background(), pi.NewThinkingEvent())
 	done := make(chan struct{})
 	go func() {
 		listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolUpdate(

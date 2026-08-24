@@ -133,7 +133,7 @@ func newTracedAgent(t *testing.T, provider ai.Provider, tools ...ai.Tool) *Agent
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), false, WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	return New(builder, loop, toolRuntime)
 }
 
@@ -166,7 +166,7 @@ func sortByRequestIndex(spans []tracetest.SpanStub) {
 	})
 }
 
-// ---------- Span 树（§4.1、OBS-001） ----------
+// ---------- Span 树 ----------
 
 func TestRunBuildsFullSpanTree(t *testing.T) {
 	exporter := installRunTracer(t)
@@ -237,7 +237,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 			attrOf(chat, observability.AttrProviderRequestIndex) != int64(index+1) {
 			t.Fatalf("chat[%d] attempt/request_index 错误: %v", index, chat.Attributes)
 		}
-		// TTFT 只在有非空 Text Delta 时写入（§5）：第一次响应为纯 Tool Call，
+		// TTFT 只在有非空 Text Delta 时写入：第一次响应为纯 Tool Call，
 		// 第二次（request_index=2）有正文，必须有 TTFT。
 		hasTTFT := attrOf(chat, observability.AttrStreamTTFTMS) != nil
 		if wantTTFT := attrOf(chat, observability.AttrProviderRequestIndex) == int64(2); hasTTFT != wantTTFT {
@@ -269,7 +269,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 	}
 }
 
-// TestRunRetryEvents 验证 §4.8：首次失败后在 Generate Span 上记录
+// TestRunRetryEvents 验证 Retry 事件契约：首次失败后在 Generate Span 上记录
 // scheduled/completed，Attempt 与下一 Provider Span 对齐，Counter 只增一次。
 func TestRunRetryEvents(t *testing.T) {
 	exporter := installRunTracer(t)
@@ -328,7 +328,7 @@ func TestRunRetryEvents(t *testing.T) {
 			succeeded = chat
 		}
 	}
-	// 失败 Provider Span 保持 Error，父 Generate 按最终 Outcome 成功（§4.4/§4.9）。
+	// 失败 Provider Span 保持 Error，父 Generate 按最终 Outcome 成功。
 	if failed.Status.Code != codes.Error || !failed.Parent.Equal(generate.SpanContext) {
 		t.Fatalf("失败 chat Span 状态错误: %v", failed.Status)
 	}
@@ -338,7 +338,7 @@ func TestRunRetryEvents(t *testing.T) {
 	}
 }
 
-// TestRunCanceledMarksCanceled 验证取消与 deadline 不归入普通 error（§4.9）。
+// TestRunCanceledMarksCanceled 验证取消与 deadline 不归入普通 error。
 func TestRunCanceledMarksCanceled(t *testing.T) {
 	exporter := installRunTracer(t)
 	provider := &scriptedProvider{streams: []*scriptedStream{
@@ -362,7 +362,7 @@ func TestRunCanceledMarksCanceled(t *testing.T) {
 	}
 }
 
-// ---------- 恢复（§4.4、§4.7、§4.9） ----------
+// ---------- 恢复 ----------
 
 // TestGenerateOverflowRecoverySpans 验证 Overflow→Compaction→重试成功：
 // 失败 Provider Span 保持 Error，Generate 最终 succeeded 且
@@ -376,11 +376,10 @@ func TestGenerateOverflowRecoverySpans(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(
 		observability.NewTracingProvider(provider, "openai", "test", "fake"),
-		nil, false,
-		harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: false},
+		nil, harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: false},
 		WithLoopProviderIdentity("test", "fake"),
 	)
-	rt := newCompactionRuntime(loop.compaction, 1)
+	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
 	var observed []ai.Usage
 
 	result, err := loop.generateWithSpan(context.Background(), observability.GenerationPhaseAction,
@@ -445,7 +444,7 @@ func TestGenerateOverflowRecoverySpans(t *testing.T) {
 	}
 }
 
-// ---------- 并发（§4.1 并行 Tool 平行子 Span） ----------
+// ---------- 并发 ----------
 
 type sleepTool struct {
 	name  string
@@ -496,7 +495,7 @@ func TestParallelToolsShareTurnParentAndOverlap(t *testing.T) {
 	}
 }
 
-// ---------- Ledger 正确性（§9.3、OBS-003） ----------
+// ---------- Ledger 正确性 ----------
 
 // TestContractInvalidStillRecorded 验证：已取得可信 Usage 的调用即使契约
 // 校验失败也必须进入 Invocations 与 RunTotals，Outcome 标记为
@@ -533,7 +532,7 @@ func TestContractInvalidStillRecorded(t *testing.T) {
 }
 
 // TestLedgerRequestIndexSeparatesFromSequence 验证物理请求序号与可信
-// Invocation Sequence 分离（§7）：首次失败不产生 Invocation，重试成功的
+// Invocation Sequence 分离：首次失败不产生 Invocation，重试成功的
 // Invocation 携带 RequestIndex=2、Sequence=1。
 func TestLedgerRequestIndexSeparatesFromSequence(t *testing.T) {
 	installRunTracer(t)
@@ -559,7 +558,7 @@ func TestLedgerRequestIndexSeparatesFromSequence(t *testing.T) {
 	}
 }
 
-// ---------- 性能（§19） ----------
+// ---------- 性能 ----------
 
 // TestTelemetryOverheadWithinBudget 在同一进程、无网络 Collector 下对比
 // Noop 与 Enabled（NeverSample SDK Provider，Span 不导出）的 Run 时延：

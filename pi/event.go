@@ -22,7 +22,6 @@ type ToolResult struct {
 type AgentEventType string
 
 const (
-	AgentEventThinking      AgentEventType = "thinking"
 	AgentEventToolStart     AgentEventType = "tool_start"
 	AgentEventToolUpdate    AgentEventType = "tool_update"
 	AgentEventToolEnd       AgentEventType = "tool_end"
@@ -77,10 +76,6 @@ func NewAgentToolEvent(event ToolEvent) AgentEvent {
 	}
 
 	return AgentEvent{Type: eventType, Tool: &event}
-}
-
-func NewThinkingEvent() AgentEvent {
-	return AgentEvent{Type: AgentEventThinking}
 }
 
 func NewMessageStartEvent() AgentEvent {

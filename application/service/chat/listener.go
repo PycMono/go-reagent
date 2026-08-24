@@ -38,9 +38,6 @@ func (listener *runListener) OnEvent(ctx context.Context, event pi.AgentEvent) {
 func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) {
 	result := vo.RunEventVO{RunID: runID}
 	switch event.Type {
-	case pi.AgentEventThinking:
-		result.Type = vo.RunEventAgentThinking
-		return result, false, true
 	case pi.AgentEventToolStart, pi.AgentEventToolUpdate, pi.AgentEventToolEnd:
 		if event.Tool == nil {
 			return vo.RunEventVO{}, false, false

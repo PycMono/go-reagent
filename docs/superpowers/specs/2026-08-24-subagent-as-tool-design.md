@@ -32,6 +32,26 @@
 
 本文件规格审阅已通过五轮终审，进入实现阶段。
 
+2026-08-24 实现期修订（第六轮，架构简化）：删除 `filteredToolFacade` 门面层——
+1. **执行边界改为 Loop 通用可见性不变量**：`planToolBatch` 在调度前校验 `availableTools.Has(call.Name)`，不在本轮工具列表的调用合成 IsError（对齐 Pi agent-loop 查 `currentContext.tools` 的架构；可见性拒绝静默，与未注册工具旧语义一致，不触发 tool_error 告警）；
+2. **读写闸下沉 Scheduler**：`toolGate` 从门面移入 `Scheduler.executeWave`，子代理 Scheduler 由 binder 注入图级共享 gate；
+3. 子 Scheduler 直接复用共享 `ToolRuntime`，不再复制 Execute 主体；
+4. 启用语义从三态简化为两态（Supply 非空定义才启用，pi 不做隐式默认回落），默认 research 由 `config.NewSubagentDefinitions` 按 MCP 配置显式选择；
+5. **读写闸最终删除**：评估后确认其保护场景不成立——跨聊天 Run 的 MCP 并发是系统现状（本就无保护且运行正常）；Exa 是无状态 HTTP，`ParallelSafe:false` 为保守硬编码，429 是软错误；删除后单 Run 内 Exa 并发上限 = 并发子代理数（maxParallel=4），天然有界。若未来限流成为问题，正确解法是评估将无状态 HTTP 的 MCP 工具标为 `ParallelSafe: true`，而非恢复 gate。
+
+2026-08-24 实现后简化（第八轮）：**删除 SubagentDefinition 配置机制，全部写死**——
+1. 配置机制被证实只服务硬编码单定义：`SubagentDefinition`、`DefaultSubagentDefinitions`、`validateSubagentDefinitions`、`config.NewSubagentDefinitions`、fx 的 Definitions 可选注入全部删除；
+2. research 配置收敛为包内常量 `researchConfig`（未导出的 `subagentConfig` 仅为装配与测试提供构造参数，不作扩展点）；
+3. 启用语义最终形态：`cmd/server` 引入 `pi.SubagentRegister` 即启用，不引入即关闭；Exa 白名单缺失时 binder 启动失败（当前部署 Exa 为必需 MCP 服务，运行期启停开关不需要）；
+4. 第二种子代理（workspace-analysis）到来时按真实需求重新引入定义结构——当前结构的字段是猜测，届时可能本就不合身。
+
+2026-08-24 实现后审计（第七轮）：0 项严重问题；修复与确认如下——
+1. **并发契约统一为"有意行为"**：`ParallelSafe` 注释本就限定"同一批次"；跨子运行并发与跨 Run 现状一致，新增并发量 ≤ maxParallel 的上界测试；
+2. **limit_scope 按实际错误归属判定**：runErr 为父首错 → parent，termination.Limit 有值且非父错误 → child（父子同时触顶时 observe 子错误优先），sibling 级联取消 → parent；
+3. 修复 config 的 MCP 工具暴露名计算（真实格式 `prefix + "_" + tool`）；
+4. 序号器改 CAS 循环（永不写 0）；NewSubagentTool 复制 Tools 切片；rejected_count 语义注释覆盖两类拒绝；go.mod 回退无关变更（x/sync 恢复 indirect、撤回 go-cache-sdk 顺升）；
+5. 补高风险测试：并发上界、limit_scope 三场景归属、触顶后在飞结算、确定性的取消×触顶竞态。
+
 ## 背景与定位
 
 主业务是客服式聊天（`conversation` + SSE + 企微通知 + Exa 检索），与 coding agent 的诉求不同：
@@ -78,8 +98,8 @@
 | 隔离实现 | 子进程 spawn | 进程内嵌套循环 | 进程内复用 `Loop.runDetailed`（消息历史隔离） |
 | 子循环 | 完整 pi 进程 | 手写简化循环（能力分叉） | 复用主 Loop，自动继承压缩/中间件/tracing/metrics |
 | 打破包循环 | 不涉及 | `AgentRunner` 窄接口注入 | 工具放根包 `pi`，天然无环 |
-| 工具集 | frontmatter `tools:` 白名单 | 只读 Registry | 冻结 Registry 白名单过滤门面（启动期晚绑定） |
-| 并行 | 工具内自建并发（8 任务/4 并发） | 无 | 复用 Scheduler 批次并发；底层非并发工具经门面读写闸独占 |
+| 工具集 | frontmatter `tools:` 白名单 | 只读 Registry | `ai.ToolDefinitions` 白名单 + Loop 可见性不变量（对齐 Pi agent-loop 查 `currentContext.tools`） |
+| 并行 | 工具内自建并发（8 任务/4 并发） | 无 | 复用 Scheduler 批次并发（并发上限 maxParallel=4，无额外跨 Loop 闸） |
 | 预算/账本 | 仅展示性聚合 | 硬编码 maxTurns=10 | 子 Limits + 并发安全父预算实时扣减 + 全路径账本结算 |
 | 进度冒泡 | `onUpdate` → `tool_execution_update` | Reporter 透传打标记 | 子 EventListener 适配成 `ai.ToolUpdate` |
 
@@ -116,7 +136,7 @@
         │           ├── childGovernor := newRunGovernor(子Limits, parent=batchBudget)
         │           │     └── observe：子累加 → 父 debit（统一单点，子触顶不跳过父扣减）
         │           ├── childLoop.runDetailed(ctx2, childCtx, eventAdapter, childGovernor)
-        │           │     └── 底层 ParallelSafe=false 工具经门面读写闸独占执行
+        │           │     └── 子 Scheduler 批次并发（maxParallel 限流，无额外跨 Loop 闸）
         │           ├── 父预算触顶 → batchBudget 以专属 cause 取消 batchCtx，
         │           │     同批其余子运行经取消链提前退出；在飞调用完成后照常累加 Totals
         │           ├── 事件适配：子 EventListener → ai.ToolUpdate → tool_update → SSE
@@ -139,7 +159,7 @@
   1. extensionRuntime.start：注册 MCP 工具 → registry.freeze()
   2. subagentBinder.start：校验每个定义白名单 ⊆ 冻结 Registry（含 MCP 工具），
      失败 → OnStart 返回错误 → 服务启动失败并列出可用工具；
-     成功 → 构建过滤门面快照 + 共享 toolGate，原子绑定到各 *SubagentTool
+     成功 → 构建白名单 defs 快照与共享 ToolRuntime 子管线，原子绑定到各 *SubagentTool
 
 运行期：
   SubagentTool.Execute 仅在绑定成功后运行（防御性检查，未绑定返回内部错误）
@@ -168,7 +188,7 @@ type subagentRunReport struct {
     Invocations []ModelInvocation
 }
 
-// SubagentTool 实现 ai.Tool。构造期不持有 Registry；子管线（过滤门面、
+// SubagentTool 实现 ai.Tool。构造期不持有 Registry；子管线（白名单 defs 快照、
 // childScheduler、childLoop）由 subagentBinder 在启动期 freeze 后绑定。
 // 一个子代理定义 = 一个工具，不做单工具 + agent 参数的运行时分发。
 type SubagentTool struct {
@@ -185,7 +205,7 @@ type subagentPipeline struct {
 工具定义：
 
 - `Name: "subagent_" + definition.Name`；
-- `ParallelSafe: true`——语义是"多个 subagent 调用可批次并发"；底层 `ParallelSafe=false` 工具的独占执行由门面读写闸保证（见下），不由本声明绕过；
+- `ParallelSafe: true`——语义是"多个 subagent 调用可批次并发"（并发上限由 Scheduler `maxParallel=4` 限流）；
 - InputSchema：`{task: string, context?: string}`——`required:["task"]`，`task` 带 `minLength:1`，`additionalProperties:false`，两者均带 `maxLength`（task ≤ 4096 字符，context ≤ 8192 字符）；执行期对 task/context 做 trim，trim 后为空返回参数错误工具结果；`context` 的描述中明确契约：主 Agent 必须把已掌握的相关背景一并传入，子代理看不到主会话历史。
 
 `Execute` 流程：
@@ -206,37 +226,11 @@ type subagentPipeline struct {
 
 事件适配器（第一阶段降噪策略）：只转发工具轨迹与最终消息（`→ [<agent>] <tool>` 一行、成功/失败一行、当前轮文本摘要截断 200 字符），不转发 `message_update` 流式增量。
 
-### 2. 过滤门面与并发安全（`pi/subagent_facade.go`，约 140 行）
+### 2. 可见性边界与并发（`pi/loop.go`，无独立门面、无跨 Loop 闸）
 
-```go
-// filteredToolFacade 实现 ToolRuntime：Definitions() 返回绑定的白名单快照，
-// Execute() 经同款默认中间件链委托冻结 Registry 中的工具执行。
-type filteredToolFacade struct {
-    registry *toolRegistry
-    defs     ai.ToolDefinitions // 绑定后快照
-    handler  Handler            // DefaultMiddlewareRegistrations 链
-    gate     *toolGate          // fx 图级共享，binder 创建、所有门面共用
-}
+**执行边界 = Loop 通用可见性不变量**（对齐 Pi agent-loop 查 `currentContext.tools` 的架构）：`planToolBatch` 在调度前校验 `availableTools.Has(call.Name)`，不在本轮工具列表中的调用合成 IsError（`tool_permission_denied`），绝不进入 `toolRuntime.Execute`。主运行的 availableTools 是全集（无差别），子代理运行是白名单 defs 快照（即执行边界）。此类拒绝与未注册工具的旧语义一致：静默错误结果，不补发事件、不触发 tool_error 告警；批次上限拒绝（`maxSubagentCallsPerBatch`）保留事件补发。
 
-// toolGate 是 Scheduler 屏障语义在"跨 subagent、跨 Run 的 subagent 调用"
-// 维度的扩展，基于 x/sync/semaphore 加权信号量：
-//   - ParallelSafe=true 工具：Acquire(ctx, 1)，与其他安全工具并发；
-//   - ParallelSafe=false 工具：Acquire(ctx, toolGateMaxWeight)，独占执行——
-//     等价于屏障"独占运行"语义，不同名的非并发安全工具也互斥。
-// Acquire 原生响应 ctx 取消：父预算触顶或用户取消时，等待中的子代理
-// 立即以 ctx.Err() 退出，不会阻塞到持锁方释放。
-//
-// 保护范围：仅经 subagent 门面发起的工具调用；父 Agent 直连 MCP 走原
-// ToolRuntime，不经过 gate（与现状一致，非回退）。
-type toolGate struct{ sem *semaphore.Weighted }
-
-// toolGateMaxWeight 是 gate 满权重，同时构成 fx 图级安全子工具并发上限。
-// 取值 64：远高于 maxParallel(4)×单 Run 正常子代理批次数，正常负载永不触顶；
-// 仅作为失控防护，压测后按实例容量调整。
-const toolGateMaxWeight = 64
-```
-
-等待时长计入现有 `observability.RecordToolQueueDuration`，mode 取新增枚举值 `ExecutionModeSubagentGate`（见"可观测性"节）。注意同一底层工具执行可能同时产生 Scheduler queue 与 gate queue 两条 Histogram 观测，聚合查询必须按 mode 分组，否则 count 重复。底层工具在单个子代理内部仍受 child Scheduler 屏障语义约束。
+**并发 = 复用 Scheduler 既有机制，不设跨 Loop 闸**：子 Scheduler 直接复用共享 `ToolRuntime` 与 `maxParallel=4` 限流。经评估不引入跨 Loop 读写闸：跨聊天 Run 的 MCP 并发是系统现状（本就无保护且运行正常）；Exa 是无状态 HTTP，`ParallelSafe:false` 为保守硬编码，限流是软错误（429 → 工具错误结果 → 模型重试）；单 Run 内 Exa 并发上限 = 并发子代理数（≤4），天然有界。若未来限流成为问题，正确解法是评估将无状态 HTTP 的 MCP 工具标为 `ParallelSafe: true`，而非恢复闸。
 
 ### 3. 父预算：并发安全实时扣减（`pi/governor.go`，约 +110 行）
 
@@ -372,10 +366,12 @@ ModelInvocationPhaseSubagent ModelInvocationPhase = "subagent"
 ### 7. `pi/register.go`（装配，约 +120 行）
 
 ```go
-// SubagentRegister 提供子代理工具与启动期绑定器。启用语义三态：
-//   - 不引入本 Register：关闭（零工具、零开销）；
-//   - 引入且未 Supply []SubagentDefinition：启用内置 research 定义；
-//   - 引入且 Supply 空切片：显式关闭。
+// SubagentRegister 提供子代理工具与启动期绑定器。启用语义两态：
+//   - 引入且 Supply 非空 []SubagentDefinition：启用这些定义；
+//   - 不引入 / 未 Supply / Supply 空切片：关闭。
+// pi 不做隐式默认回落——未 Supply 时启用默认定义会让没有 Exa 工具的
+// 部署在 freeze 后校验失败；默认 research 由组合根显式选择
+// （如 config.NewSubagentDefinitions 按 MCP 配置判定）。
 //
 // fx.Invoke 是硬要求：fx.Provide 惰性实例化，binder 若无消费者
 // 永远不会执行（不 append OnStart、工具永远未绑定）。
@@ -398,16 +394,15 @@ type subagentToolsOut struct {
 
 定义校验（binder 启动期执行）：Name `^[a-z][a-z0-9_]{0,31}$`、定义间不重复、Description/SystemPrompt 非空、`Limits.Validate()` 且**禁止全零**（`MaxTurns>0` 且 `MaxCostUSD>0` 或 `MaxTotalTokens>0`——全零=不限制，违背"受限子运行"目标）、Tools 条目 trim 后非空且无重复、白名单存在性与安全策略（见"安全模型"）。重名规则：占位工具已在冻结 Registry 中，因此校验"Registry 中 `subagent_<name>` 条目必须正是当前占位工具实例"；与其他工具的真正重名会在 Registry/MCP 注册阶段提前失败。
 
-递归防护双保险：① 门面白名单不含 subagent 工具，定义校验拒绝 `subagent_` 前缀；② ctx 深度守卫兜底。
+递归防护双保险：① 子运行 availableTools 为白名单快照，天然不含 subagent 工具，定义校验另拒绝 `subagent_` 前缀；② ctx 深度守卫兜底。
 
 ### 8. 可观测性（`pi/harness/observability/semantics.go`，约 +10 行）
 
 新增：
 
 ```go
-AttrSubagentName = "reagent.subagent.name"           // 自定义命名空间，不占用 gen_ai.*
-ExecutionModeSubagentGate ExecutionMode = "subagent_gate" // gate 排队时长 mode
-AttrToolsRejectedCount = "reagent.tools.rejected_count"  // Turn Span：批次上限拒绝数
+AttrSubagentName = "reagent.subagent.name"              // 自定义命名空间，不占用 gen_ai.*
+AttrToolsRejectedCount = "reagent.tools.rejected_count" // Turn Span：批次上限拒绝数
 ```
 
 `gen_ai.*` 保留给 OTel 标准属性，不创造非标准属性；子 Span 的代理归属用标准 `gen_ai.agent.name = <子代理名>` 表达，`reagent.subagent.name` 作为同值冗余标记便于按子代理过滤。`semantics_test.go` 的枚举/label 集合同步更新。
@@ -499,7 +494,7 @@ subagent 无框架级自动触发，触发是概率性到确定性的连续谱�
 | 预算触顶与用户取消并发 | 父 ctx 取消优先（switch 顺序保证），Totals 含全部已计量消耗 |
 | Schedule 基础设施错误 | 结算照常入账；返回 scheduleErr，不 join 预算错误 |
 | 子契约校验失败 | 子 Invocation 以 `contract_invalid` 入账（Outcome 透传父账本），工具返回错误结果 |
-| 并发派发 N 个 | Scheduler 批次并发（`maxParallel=4` 限流）；底层非并发工具经门面读写闸独占；账户与 recorder 加锁 |
+| 并发派发 N 个 | Scheduler 批次并发（`maxParallel=4` 限流）；账户与 recorder 加锁 |
 | 单批 subagent 调用 > 8 | 按调用顺序前 8 个执行，超出部分不调度、直接返回 IsError 结果（运行继续，模型可下轮补发） |
 | 子运行零产出 | 报告回退 `"(no output)"`（对齐 `normalizeToolResult` 空输出处理） |
 
@@ -509,7 +504,6 @@ subagent 无框架级自动触发，触发是概率性到确定性的连续谱�
 - 父预算触顶不中途撤回在飞调用，超额为触顶时在飞请求的最终实际消耗（无预先金额上界，见第 3 节）；
 - 子代理归属不进 DB 账本，仅经 Trace 查询；
 - 跨子代理的账本顺序为弱序（Sequence 单调、ProviderRequestIndex 不保证递增，见第 4 节）；
-- 门面读写闸只保护经 subagent 门面发起的调用（跨 subagent、跨 Run 的 subagent 调用维度）；父 Agent 直连 MCP 工具不经过 gate，与现状一致、非回退。gate 是新增的 fx 图级串行点，极端并发下可能成为排队点（经 `subagent_gate` 队列时长指标观测，聚合按 mode 分组）。
 
 ## 测试计划
 
@@ -518,10 +512,8 @@ subagent 无框架级自动触发，触发是概率性到确定性的连续谱�
 | 子运行端到端 | `pi/subagent_test.go` | scripted fake Provider：主 Agent action 返回 subagent 调用 → 子两轮 → 断言 Content、Details 汇总字段、父账本含 `phase=subagent` 且 Totals 含子消耗 |
 | fx 装配无环 | `pi/register_test.go` | 引入 SubagentRegister 的完整 fx 图启动成功；**每个 SubagentTool 的 `bound.Load()` 非 nil**（验证 fx.Invoke 生效） |
 | 启动期晚绑定 | 同上 | 注册模拟 Extension 工具 → freeze 后绑定成功；引用不存在工具 → 启动失败且列出可用工具；未绑定直接 Execute → 内部错误 |
-| 三态启用 | 同上 | 缺席=关闭、未 Supply=默认 research、空切片=关闭 |
-| 底层非并发工具独占 | `pi/subagent_test.go` + `-race` | 两个子代理并发调用 `ParallelSafe=false` 工具：同名与**不同名**均断言不重叠执行（读写闸独占语义） |
-| 门等待可取消 | 同上 | 子代理等待 gate 时取消父 ctx / 触发预算：等待立即以 ctx 错误退出，不阻塞到持锁方释放 |
-| 门等待可观测 | 同上 | 等待时长计入 `RecordToolQueueDuration`（mode=subagent_gate） |
+| 两态启用 | 同上 | Supply 非空=启用、未 Supply/空切片/缺席=关闭 |
+| 可见性边界 | `pi/subagent_test.go` | 子模型发起白名单外 `read` 调用：read 执行计数为 0、子运行收到 IsError 后继续产出报告 |
 | 预算实时扣减 | 同上 | 子 Invocation 完成立即反映到父 Totals |
 | 预算触顶终止原因 | 同上 | 触顶后父 Termination.Reason=max_cost（**不是 canceled**）；batchCtx cause 为 errParentBudgetExhausted |
 | 触顶后在飞入账 | 同上 | 触顶后仍在飞的调用完成后照常累加 Totals 并入账 |
@@ -552,14 +544,14 @@ subagent 无框架级自动触发，触发是概率性到确定性的连续谱�
 | 文件 | 改动量 | 性质 |
 |---|---|---|
 | `pi/subagent.go` | +350 行 | 新增 |
-| `pi/subagent_facade.go` | +140 行 | 新增（过滤门面 + 读写闸） |
-| `go.mod` | 0 行 | `golang.org/x/sync` 间接依赖提为直接依赖 |
+| `pi/run_primitives.go` | +120 行 | 新增（ctx 原语：序号器/batchBudget/recorder/深度守卫——四方共用，独立归属） |
 | `pi/governor.go` | +110 行 | governor 加锁升级 + batchBudget/debit/exhausted |
+| `pi/scheduler.go` | +15 行 | `isSubagentTool` 类型断言 |
 | `pi/loop.go` | +60 行 | batchCtx(WithCancelCause)/批次上限校验/结算阶段/错误优先级 switch |
 | `pi/compaction.go` + `pi/recovery.go` | +35 行 | 共享序号器接入（含回绕防御） |
 | `pi/contract.go` | +8 行 | 新增 Phase 枚举值 + Invocations 注释修正（向后兼容） |
 | `pi/register.go` | +120 行 | 新 Register + binder 生命周期 |
-| `pi/harness/observability/semantics.go` | +10 行 | 新增常量与 `ExecutionModeSubagentGate` 枚举值（`semantics_test.go` 同步） |
+| `pi/harness/observability/semantics.go` | +8 行 | 新增 `AttrSubagentName`/`AttrToolsRejectedCount` 常量 |
 | `cmd/server` | +1 行 | 组合根引入 `pi.SubagentRegister` |
 | 测试 | +800 行 | 新增为主 |
 

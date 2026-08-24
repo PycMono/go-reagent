@@ -33,14 +33,14 @@ func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime, n
 
 // Run 校验并执行一次相互隔离的请求。
 //
-// invoke_agent Span（§4.2）在本函数创建：经过 Chat 服务时是
+// invoke_agent Span在本函数创建：经过 Chat 服务时是
 // conversation.run 的子 Span；直接 SDK 调用时自然成为根 Span。
 // Span 状态与生命周期由 WithSpan 管理。
 func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListener) (result RunResult, err error) {
 	startedAt := time.Now()
 	err = contexttracing.WithSpan(ctx, observability.AgentSpanName(observability.AgentName), func(ctx context.Context) (runErr error) {
 		defer func() {
-			// 终止原因与 RunTotals 无论成败都写入（§4.2）。
+			// 终止原因与 RunTotals 无论成败都写入。
 			reason := string(result.Termination.Reason)
 			if reason == "" {
 				reason = string(RunTerminationError)
@@ -99,7 +99,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 				{Name: "alerts", Order: 100, Listener: &alertListener{notifiers: a.notifiers}},
 			})
 		}
-		loopResult, runErr := a.loop.runDetailed(ctx, runContext, listener, governor)
+		loopResult, runErr := a.loop.run(ctx, runContext, listener, governor)
 		result.NewMessages = loopResult.newMessages
 		result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
 		result.Termination = governor.termination(runErr)
