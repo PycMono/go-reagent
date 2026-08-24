@@ -117,14 +117,14 @@ func (s *Service) executeRun(
 			contexttracing.KV(piobservability.AttrRunTransport, string(piobservability.TransportHTTPSSE)),
 			contexttracing.KV(piobservability.AttrPersistenceEnabled, true),
 		)
-		reporter := newRunReporter(runID, events)
+		listener := newRunListener(runID, events)
 		var err error
 		result, err = s.runner.Run(ctx, conversation.RunRequest{
 			UserID: userID, ConversationID: conversationID, RunID: runID,
 			Input:          ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
 			ResponsePolicy: responsePolicy,
 			Context:        profileContext,
-		}, reporter)
+		}, listener)
 		// 终止原因与 RunTotals 无论成败都写入（§3）。
 		terminationReason = string(result.Termination.Reason)
 		if terminationReason != "" {
@@ -247,4 +247,4 @@ func terminationReason(termination pi.RunTermination) string {
 	return string(termination.Reason)
 }
 
-var _ pi.Reporter = (*runReporter)(nil)
+var _ pi.EventListener = (*runListener)(nil)

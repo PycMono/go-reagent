@@ -13,9 +13,8 @@ cmd/server -> config + conversation + infrastructure + pi
 
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
 - `pi/ai/providers`：Provider 配置，以及 OpenAI/Anthropic 官方 SDK 适配器。
-- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、Middleware、Reporter 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、Middleware、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
-- `pi/test`：根 `pi` 的集中式公开 API、运行循环和包边界测试；各 Harness 子包的白盒测试仍与实现放在同一包。
 - `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`）。
 - `cmd/server`：唯一进程入口与组合根，直接组合 `pi`、基础设施、Conversation 业务和 Gin；`application/service/chat`：Conversation 用例。
 
@@ -64,7 +63,7 @@ result, err := runner.Run(ctx, pi.RunRequest{
 
 ```go
 type Runner interface {
-	Run(context.Context, RunRequest, Reporter) (RunResult, error)
+	Run(context.Context, RunRequest, EventListener) (RunResult, error)
 }
 
 func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
@@ -103,14 +102,14 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 - 结构化 Context Overflow 触发一次 32 KiB 有界旧历史摘要，并只重试一次原请求；
 - Compaction 摘要的 Usage 以 `compaction` ModelInvocation 返回；
 - Tool Recovery Hint 由 ErrorCode 生成，只存在于下一次 Provider Context；
-- Reporter、`NewMessages` 和 Conversation 持久化继续保留原始 Tool Result；
+- EventListener、`NewMessages` 和 Conversation 持久化继续保留原始 Tool Result；
 - 取消、超时、鉴权、配额、非法请求和未知 Provider 错误立即终止。
 
 `NewMessages` 只包含当前 Run 新增的 Assistant/Tool 消息，不包含 System、外部 Context、History、Input 或 Thinking 脚手架。运行中途失败时，已经完成的消息仍与错误一起返回；是否持久化部分结果由业务决定。
 
 默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking、Compaction 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ErrorCodeAIGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
 
-`pi.Runner.Run` 通过最后一个参数接收 Reporter；不需要进度事件时传 `nil`。浏览器聊天由 Application Service 把 Agent Event 转换成 SSE 事件。
+`pi.Runner.Run` 通过最后一个参数接收 EventListener；不需要进度事件时传 `nil`。浏览器聊天由 Application Service 把 Agent Event 转换成 SSE 事件。
 
 ## Workspace
 

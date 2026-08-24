@@ -69,7 +69,7 @@ func visitorWithReader(conf *config.Config, store sessionStore, random io.Reader
 		}
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name: VisitorCookieName, Value: sid, Path: "/",
-			MaxAge: visitorCookieMaxAge,
+			MaxAge:   visitorCookieMaxAge,
 			HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 		})
 		c.Request = c.Request.WithContext(bizctx.WithKV(c.Request.Context(), bizctx.UserID(userID)))

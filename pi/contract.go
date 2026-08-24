@@ -84,6 +84,9 @@ const (
 	ModelInvocationPhaseAction ModelInvocationPhase = "action"
 	// ModelInvocationPhaseCompaction 表示上下文摘要阶段的模型调用。
 	ModelInvocationPhaseCompaction ModelInvocationPhase = "compaction"
+	// ModelInvocationPhaseSubagent 表示子代理运行内的模型调用（入账父账本；
+	// 指标层保留子运行真实 Phase；归属经 Trace 的 reagent.subagent.name 表达）。
+	ModelInvocationPhaseSubagent ModelInvocationPhase = "subagent"
 )
 
 // ModelInvocationOutcome 是可信 Invocation 的契约验收结果（§9.3）。
@@ -178,7 +181,9 @@ type RunTermination struct {
 type RunResult struct {
 	// NewMessages 是本次运行新增的 Assistant 和 Tool 消息。
 	NewMessages []ai.Message `json:"new_messages,omitempty"`
-	// Invocations 是本次运行按顺序完成的模型调用记录。
+	// Invocations 是本次运行已完成的模型调用记录：主运行的调用按完成顺序
+	// 排列；子代理调用在其工具批次结算时按 drain 顺序追加，Sequence 单调
+	// 递增，但 ProviderRequestIndex 不保证随账本顺序递增（跨子代理弱序）。
 	Invocations []ModelInvocation `json:"invocations,omitempty"`
 	// Termination 是本次运行的结构化终止结果。
 	Termination RunTermination `json:"termination"`

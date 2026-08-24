@@ -38,10 +38,10 @@ func TestNotifySendsMarkdownToWebhook(t *testing.T) {
 	}))
 	defer server.Close()
 
-	New(server.URL, server.Client()).Notify(context.Background(), pi.Notification{Text: "最终回复"})
+	New(server.URL, server.Client()).Notify(context.Background(), pi.Notification{Kind: pi.NotificationRunError, Summary: "最终回复"})
 
 	payload := <-requests
-	if payload.MsgType != "markdown" || payload.Markdown.Content != "最终回复" {
+	if payload.MsgType != "markdown" || payload.Markdown.Content != "[告警] run_error\n最终回复" {
 		t.Fatalf("payload = %#v", payload)
 	}
 }
@@ -58,7 +58,7 @@ func TestNotifyTruncatesUTF8Safely(t *testing.T) {
 	}))
 	defer server.Close()
 
-	New(server.URL, server.Client()).Notify(context.Background(), pi.Notification{Text: strings.Repeat("企", 2000)})
+	New(server.URL, server.Client()).Notify(context.Background(), pi.Notification{Kind: pi.NotificationRunError, Summary: strings.Repeat("企", 2000)})
 
 	payload := <-requests
 	if content := payload.Markdown.Content; len(content) > markdownMaxBytes || !utf8.ValidString(content) || !strings.HasSuffix(content, "... (已截断)") {
@@ -75,8 +75,8 @@ func TestNotifyFailureDoesNotPanic(t *testing.T) {
 	defer server.Close()
 
 	notifier := New(server.URL, server.Client())
-	notifier.Notify(context.Background(), pi.Notification{Text: "x"})
-	notifier.Notify(context.Background(), pi.Notification{Text: "y"})
+	notifier.Notify(context.Background(), pi.Notification{Kind: pi.NotificationRunError, Summary: "x"})
+	notifier.Notify(context.Background(), pi.Notification{Kind: pi.NotificationRunError, Summary: "y"})
 	if calls.Load() != 2 {
 		t.Fatalf("calls = %d, want 2（失败后仍可继续）", calls.Load())
 	}

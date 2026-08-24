@@ -45,10 +45,9 @@ func (err *transportError) Error() string {
 func (err *transportError) Unwrap() error { return err.cause }
 
 type HTTPTransportOptions struct {
-	Endpoint   string
-	Headers    http.Header
-	Timeout    time.Duration
-	HTTPClient *http.Client
+	Endpoint string
+	Headers  http.Header
+	Timeout  time.Duration
 }
 
 type HTTPTransport struct {
@@ -78,12 +77,6 @@ func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
 	}
 	client := &http.Client{}
 	baseTransport := http.DefaultTransport
-	if options.HTTPClient != nil {
-		*client = *options.HTTPClient
-		if options.HTTPClient.Transport != nil {
-			baseTransport = options.HTTPClient.Transport
-		}
-	}
 	// 出站 HTTP 固定包装 otelhttp（§15.3、§16.2）：为每次 MCP 请求创建
 	// CLIENT 子 Span 并仅向该已配置目标注入 W3C traceparent/tracestate；
 	// 不复制入站 Baggage、Cookie 或 Authorization。全局 Provider 未安装时

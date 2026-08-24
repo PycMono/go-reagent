@@ -68,7 +68,7 @@ type registeredRuntimeFake struct {
 	result pi.RunResult
 }
 
-func (f *registeredRuntimeFake) Run(context.Context, pi.RunRequest, pi.Reporter) (pi.RunResult, error) {
+func (f *registeredRuntimeFake) Run(context.Context, pi.RunRequest, pi.EventListener) (pi.RunResult, error) {
 	return f.result, nil
 }
 

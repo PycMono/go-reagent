@@ -79,18 +79,6 @@ func NewAgentToolEvent(event ToolEvent) AgentEvent {
 	return AgentEvent{Type: eventType, Tool: &event}
 }
 
-func NewToolStartEvent(call ai.ToolCall) AgentEvent {
-	return NewAgentToolEvent(NewToolStart(call))
-}
-
-func NewToolUpdateEvent(call ai.ToolCall, update ai.ToolUpdate) AgentEvent {
-	return NewAgentToolEvent(NewToolUpdate(call, update))
-}
-
-func NewToolEndEvent(call ai.ToolCall, result ToolResult) AgentEvent {
-	return NewAgentToolEvent(NewToolEnd(call, result))
-}
-
 func NewThinkingEvent() AgentEvent {
 	return AgentEvent{Type: AgentEventThinking}
 }
@@ -107,51 +95,51 @@ func NewMessageEndEvent(message ai.Message) AgentEvent {
 	return AgentEvent{Type: AgentEventMessageEnd, Message: &message}
 }
 
-// Reporter receives user-facing Agent lifecycle events.
-type Reporter interface {
-	Report(context.Context, AgentEvent)
+// EventListener receives user-facing Agent lifecycle events.
+type EventListener interface {
+	OnEvent(context.Context, AgentEvent)
 }
 
-// nopReporter 丢弃全部事件，用于把可选 Reporter 归一化为非 nil。
-type nopReporter struct{}
+// nopListener 丢弃全部事件，用于把可选 EventListener 归一化为非 nil。
+type nopListener struct{}
 
-func (nopReporter) Report(context.Context, AgentEvent) {}
+func (nopListener) OnEvent(context.Context, AgentEvent) {}
 
-// ReporterRegistration describes one deterministic Reporter subscriber.
-type ReporterRegistration struct {
+// ListenerRegistration describes one deterministic EventListener subscriber.
+type ListenerRegistration struct {
 	Name     string
 	Order    int
-	Reporter Reporter
+	Listener EventListener
 }
 
-type multiReporter struct {
-	registrations []ReporterRegistration
+type multiEventListener struct {
+	registrations []ListenerRegistration
 }
 
-// NewMultiReporter broadcasts events in Order then Name order.
-func NewMultiReporter(registrations []ReporterRegistration) Reporter {
-	filtered := append([]ReporterRegistration(nil), registrations...)
-	slices.SortFunc(filtered, func(a, b ReporterRegistration) int {
+// NewMultiEventListener broadcasts events in Order then Name order.
+func NewMultiEventListener(registrations []ListenerRegistration) EventListener {
+	filtered := append([]ListenerRegistration(nil), registrations...)
+	slices.SortFunc(filtered, func(a, b ListenerRegistration) int {
 		if order := cmp.Compare(a.Order, b.Order); order != 0 {
 			return order
 		}
 		return cmp.Compare(a.Name, b.Name)
 	})
-	return &multiReporter{registrations: filtered}
+	return &multiEventListener{registrations: filtered}
 }
 
-func (r *multiReporter) Report(ctx context.Context, event AgentEvent) {
+func (r *multiEventListener) OnEvent(ctx context.Context, event AgentEvent) {
 	for _, registration := range r.registrations {
-		if strings.TrimSpace(registration.Name) == "" || registration.Reporter == nil {
+		if strings.TrimSpace(registration.Name) == "" || registration.Listener == nil {
 			continue
 		}
-		reportSafely(ctx, registration.Reporter, event)
+		deliverSafely(ctx, registration.Listener, event)
 	}
 }
 
-func reportSafely(ctx context.Context, reporter Reporter, event AgentEvent) {
+func deliverSafely(ctx context.Context, listener EventListener, event AgentEvent) {
 	defer func() {
 		_ = recover()
 	}()
-	reporter.Report(ctx, event)
+	listener.OnEvent(ctx, event)
 }

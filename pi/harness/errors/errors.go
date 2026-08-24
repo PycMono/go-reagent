@@ -13,8 +13,6 @@ type ErrorCode string
 
 const (
 	ErrorCodeUnknown              ErrorCode = "unknown"
-	ErrorCodeConfigLoad           ErrorCode = "config_load_failed"
-	ErrorCodeConfigInvalid        ErrorCode = "config_invalid"
 	ErrorCodeInitialization       ErrorCode = "initialization_failed"
 	ErrorCodeRequestInvalid       ErrorCode = "request_invalid"
 	ErrorCodeWorkspaceInvalid     ErrorCode = "workspace_invalid"
@@ -96,30 +94,6 @@ func Wrap(code ErrorCode, op string, err error) error {
 	return &Error{Code: code, Op: op, Err: err}
 }
 
-func Classify(op string, err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case stderrors.Is(err, context.Canceled):
-		return Wrap(ErrorCodeCanceled, op, err)
-	case stderrors.Is(err, context.DeadlineExceeded):
-		return Wrap(ErrorCodeDeadlineExceeded, op, err)
-	case stderrors.Is(err, ErrClosed):
-		return Wrap(ErrorCodeClosed, op, err)
-	case stderrors.Is(err, ErrRequestInvalid):
-		return Wrap(ErrorCodeRequestInvalid, op, err)
-	case stderrors.Is(err, ErrWorkspaceInvalid):
-		return Wrap(ErrorCodeWorkspaceInvalid, op, err)
-	case stderrors.Is(err, ErrToolRuntime):
-		return Wrap(ErrorCodeToolRuntime, op, err)
-	case stderrors.Is(err, ErrRunLimitExceeded):
-		return Wrap(ErrorCodeRunLimitExceeded, op, err)
-	default:
-		return Wrap(ErrorCodeInternal, op, err)
-	}
-}
-
 func ClassifyTool(op string, err error) error {
 	if err == nil {
 		return nil
@@ -140,14 +114,4 @@ func ClassifyTool(op string, err error) error {
 	default:
 		return Wrap(ErrorCodeToolRuntime, op, err)
 	}
-}
-
-func ClassifyInitialization(op string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if stderrors.Is(err, ErrWorkspaceInvalid) {
-		return Wrap(ErrorCodeWorkspaceInvalid, op, err)
-	}
-	return Wrap(ErrorCodeInitialization, op, err)
 }

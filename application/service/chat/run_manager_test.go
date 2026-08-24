@@ -26,7 +26,7 @@ type controllableRunner struct {
 	result   pi.RunResult
 }
 
-func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRequest, reporter pi.Reporter) (pi.RunResult, error) {
+func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRequest, listener pi.EventListener) (pi.RunResult, error) {
 	r.mu.Lock()
 	r.requests = append(r.requests, request)
 	r.mu.Unlock()
@@ -36,9 +36,9 @@ func (r *controllableRunner) Run(ctx context.Context, request conversation.RunRe
 	select {
 	case err := <-r.release:
 		if err == nil {
-			reporter.Report(ctx, pi.NewMessageStartEvent())
-			reporter.Report(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("answer")))
-			reporter.Report(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}))
+			listener.OnEvent(ctx, pi.NewMessageStartEvent())
+			listener.OnEvent(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("answer")))
+			listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}}))
 		}
 		return r.result, err
 	case <-ctx.Done():

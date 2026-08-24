@@ -2,44 +2,62 @@ package pi
 
 import (
 	"context"
-	"strings"
-
-	"github.com/PycMono/go-reagent/pi/ai"
+	"fmt"
 )
 
-// Notification 是一次 run 值得通知外部通道的结果快照。
+// NotificationKind 是告警类别。
+type NotificationKind string
+
+const (
+	// NotificationRunError 是 run 以错误终止（Provider 失败、内部错误、
+	// 上下文 deadline 等；用户主动取消不算）。
+	NotificationRunError NotificationKind = "run_error"
+	// NotificationRunLimit 是 run 触发请求级预算上限（轮次/成本/Token）。
+	NotificationRunLimit NotificationKind = "run_limit"
+	// NotificationToolError 是单次工具执行失败（ToolResult.IsError）。
+	NotificationToolError NotificationKind = "tool_error"
+)
+
+// Notification 是一条运行告警。Summary 是面向告警通道的一句话描述，
+// 由 pi 生成并保证脱敏（不含消息正文、工具参数、密钥）。
 type Notification struct {
-	Text string // 最终 Assistant 回复正文
+	Kind    NotificationKind
+	Summary string
 }
 
-// Notifier 接收 run 级通知，实现方是企业微信、飞书等外部通知通道。
+// Notifier 接收 Agent 运行告警，实现方是企业微信、飞书等外部通知通道。
 //
-// Notify 在 loop 收尾路径上被同步串行调用：实现必须快速返回或自行
-// 异步化。pi 对每个 Notifier 做 panic 兜底，不重试，通知失败不影响 run。
+// Notify 在 loop/Run 收尾路径上被同步串行调用：实现必须快速返回或自行
+// 异步化。pi 对每个 Notifier 做 panic 兜底，不重试，告警失败不影响 run。
+// 正常回复不产生任何通知。
 type Notifier interface {
 	Notify(ctx context.Context, notification Notification)
 }
 
-// notifyBridge 把事件流翻译成 Notifier 回调：只认"无工具调用的最终
-// Assistant 消息"，空文本不通知。通知时机、过滤语义由 pi 统一定义，
-// 通道实现方不需要理解事件模型。
-type notifyBridge struct {
+// alertListener 监听事件流，把工具失败翻译成 Notifier 告警。告警时机与
+// 脱敏语义由 pi 统一定义，通道实现方不需要理解事件模型。
+type alertListener struct {
 	notifiers []Notifier
 }
 
-func (b *notifyBridge) Report(ctx context.Context, event AgentEvent) {
-	if event.Type != AgentEventMessageEnd || event.Message == nil {
+func (b *alertListener) OnEvent(ctx context.Context, event AgentEvent) {
+	if event.Type != AgentEventToolEnd || event.Tool == nil || event.Tool.Result == nil {
 		return
 	}
-	if event.Message.Role != ai.RoleAssistant || len(event.Message.ToolCalls) != 0 {
+	result := event.Tool.Result
+	if !result.IsError {
 		return
 	}
-	text, err := ai.TextContent(event.Message.Content)
-	if err != nil || strings.TrimSpace(text) == "" {
-		return
+	summary := fmt.Sprintf("工具 %s 执行失败", result.ToolName)
+	if result.ErrorCode != "" {
+		summary += fmt.Sprintf("（错误码 %s）", result.ErrorCode)
 	}
+	b.notify(ctx, Notification{Kind: NotificationToolError, Summary: summary})
+}
+
+func (b *alertListener) notify(ctx context.Context, notification Notification) {
 	for _, notifier := range b.notifiers {
-		notifySafely(ctx, notifier, Notification{Text: text})
+		notifySafely(ctx, notifier, notification)
 	}
 }
 

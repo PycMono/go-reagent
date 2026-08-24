@@ -117,9 +117,9 @@ func (echoTool) Execute(_ context.Context, arguments json.RawMessage, _ ai.Updat
 	return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock(string(arguments))}}, nil
 }
 
-type nopRunReporter struct{}
+type nopRunListener struct{}
 
-func (nopRunReporter) Report(context.Context, AgentEvent) {}
+func (nopRunListener) OnEvent(context.Context, AgentEvent) {}
 
 func newTracedAgent(t *testing.T, provider ai.Provider, tools ...ai.Tool) *Agent {
 	t.Helper()
@@ -176,7 +176,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 	}}
 	agent := newTracedAgent(t, provider, echoTool{})
 
-	result, err := agent.Run(context.Background(), runInput(), nopRunReporter{})
+	result, err := agent.Run(context.Background(), runInput(), nopRunListener{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 	if !toolSpan.Parent.Equal(turnOne.SpanContext) {
 		t.Fatal("execute_tool 必须是发起它的 turn 的子 Span")
 	}
-	if attrOf(toolSpan, observability.AttrGenAIToolCallID) != "c1" ||
+	if attrOf(toolSpan, "gen_ai.tool.call.id") != "c1" ||
 		attrOf(toolSpan, observability.AttrToolParallelSafe) != true ||
 		attrOf(toolSpan, observability.AttrToolIsError) != false {
 		t.Fatalf("tool 属性错误: %v", toolSpan.Attributes)
@@ -279,7 +279,7 @@ func TestRunRetryEvents(t *testing.T) {
 	}}
 	agent := newTracedAgent(t, provider)
 
-	if _, err := agent.Run(context.Background(), runInput(), nopRunReporter{}); err != nil {
+	if _, err := agent.Run(context.Background(), runInput(), nopRunListener{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,7 +348,7 @@ func TestRunCanceledMarksCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := agent.Run(ctx, runInput(), nopRunReporter{})
+	_, err := agent.Run(ctx, runInput(), nopRunListener{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -477,7 +477,7 @@ func TestParallelToolsShareTurnParentAndOverlap(t *testing.T) {
 	}}
 	agent := newTracedAgent(t, provider, sleepTool{name: "slow-a", delay: 80 * time.Millisecond}, sleepTool{name: "slow-b", delay: 80 * time.Millisecond})
 
-	if _, err := agent.Run(context.Background(), runInput(), nopRunReporter{}); err != nil {
+	if _, err := agent.Run(context.Background(), runInput(), nopRunListener{}); err != nil {
 		t.Fatal(err)
 	}
 	spans := spansByName(exporter)
@@ -509,7 +509,7 @@ func TestContractInvalidStillRecorded(t *testing.T) {
 	provider := &scriptedProvider{streams: []*scriptedStream{textDeltaStream(invalid)}}
 	agent := newTracedAgent(t, provider, echoTool{})
 
-	result, err := agent.Run(context.Background(), runInput(), nopRunReporter{})
+	result, err := agent.Run(context.Background(), runInput(), nopRunListener{})
 	if err == nil {
 		t.Fatal("契约非法必须返回错误")
 	}
@@ -543,7 +543,7 @@ func TestLedgerRequestIndexSeparatesFromSequence(t *testing.T) {
 	}}
 	agent := newTracedAgent(t, provider)
 
-	result, err := agent.Run(context.Background(), runInput(), nopRunReporter{})
+	result, err := agent.Run(context.Background(), runInput(), nopRunListener{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestTelemetryOverheadWithinBudget(t *testing.T) {
 			provider.streams = []*scriptedStream{textDeltaStream(actionMessage("完成"))}
 			provider.calls = 0
 			start := time.Now()
-			if _, err := agent.Run(context.Background(), runInput(), nopRunReporter{}); err != nil {
+			if _, err := agent.Run(context.Background(), runInput(), nopRunListener{}); err != nil {
 				t.Fatal(err)
 			}
 			return time.Since(start)

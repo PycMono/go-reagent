@@ -30,9 +30,6 @@ func TestWorkspaceRejectsNonRelativePathsForEveryFileOperation(t *testing.T) {
 			if err := workspace.Remove(path); err == nil {
 				t.Fatalf("Remove(%q) error = nil", path)
 			}
-			if err := workspace.Rename("inside.txt", path); err == nil {
-				t.Fatalf("Rename(_, %q) error = nil", path)
-			}
 			if _, err := workspace.ResolveDir(path); err == nil {
 				t.Fatalf("ResolveDir(%q) error = nil", path)
 			}
@@ -81,7 +78,6 @@ func TestWorkspaceRejectsOutsideSymlinkTargets(t *testing.T) {
 		{"ReadFile", func() error { _, err := workspace.ReadFile("outside-file"); return err }},
 		{"MkdirAll", func() error { return workspace.MkdirAll("outside-dir/new", 0o700) }},
 		{"Remove", func() error { return workspace.Remove("outside-file") }},
-		{"Rename", func() error { return workspace.Rename("outside-file", "renamed") }},
 		{"ResolveDir", func() error { _, err := workspace.ResolveDir("outside-dir"); return err }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {

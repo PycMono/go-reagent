@@ -8,11 +8,9 @@ import "github.com/PycMono/go-reagent/pi/ai"
 // Outcome/Acceptance 等枚举（拼写由 semantics_test.go 锁定）。
 // 指标名称/Label/Bucket 等 Metrics 语义见 metrics.go。
 //
-// gen_ai.* 名称封装自 OTel semantic-conventions gen-ai（development 状态），
-// 精确 revision 见下；Development 名称统一在本文件封装，业务代码不得直接引用
+// gen_ai.* 名称封装自 OTel semantic-conventions gen-ai（development 状态）。
+// Development 名称统一在本文件封装，业务代码不得直接引用
 // semconv 包或散落字符串字面量。
-const GenAISemConvRevision = "go.opentelemetry.io/otel/semconv/v1.37.0 (genaiconv, development)"
-
 // AgentName 是本项目唯一 Agent 的固定名称（§4.2：invoke_agent reagent）。
 const AgentName = "reagent"
 
@@ -41,20 +39,13 @@ func ToolSpanName(tool string) string { return "execute_tool " + tool }
 
 const (
 	// gen_ai 标准属性（semconv gen-ai development，统一封装）。
-	AttrGenAIOperationName     = "gen_ai.operation.name"
-	AttrGenAIAgentName         = "gen_ai.agent.name"
-	AttrGenAIAgentVersion      = "gen_ai.agent.version"
-	AttrGenAIConversationID    = "gen_ai.conversation.id"
-	AttrGenAIProviderName      = "gen_ai.provider.name"
-	AttrGenAIRequestModel      = "gen_ai.request.model"
-	AttrGenAIResponseModel     = "gen_ai.response.model"
-	AttrGenAIResponseFinishRsn = "gen_ai.response.finish_reasons"
-	AttrGenAIUsageInputTokens  = "gen_ai.usage.input_tokens"
-	AttrGenAIUsageOutputTokens = "gen_ai.usage.output_tokens"
-	AttrGenAIToolName          = "gen_ai.tool.name"
-	AttrGenAIToolCallID        = "gen_ai.tool.call.id"
-	AttrErrorType              = "error.type"
-	AttrReagentErrorCode       = "reagent.error.code"
+	AttrGenAIOperationName  = "gen_ai.operation.name"
+	AttrGenAIAgentName      = "gen_ai.agent.name"
+	AttrGenAIConversationID = "gen_ai.conversation.id"
+	AttrGenAIProviderName   = "gen_ai.provider.name"
+	AttrGenAIRequestModel   = "gen_ai.request.model"
+	AttrErrorType           = "error.type"
+	AttrReagentErrorCode    = "reagent.error.code"
 
 	// conversation.run（§4.2）。
 	AttrRunID              = "reagent.run.id"
@@ -76,6 +67,11 @@ const (
 	AttrToolsAvailableCount   = "reagent.tools.available_count"
 	AttrToolsRequestedCount   = "reagent.tools.requested_count"
 	AttrToolsExecutionMode    = "reagent.tools.execution_mode"
+	// AttrSubagentName 是子代理名称（自定义命名空间；代理归属的标准表达
+	// 用 gen_ai.agent.name，本属性作为同值冗余标记便于按子代理过滤）。
+	AttrSubagentName = "reagent.subagent.name"
+	// AttrToolsRejectedCount 是 Turn 内因单批子代理调用上限被拒绝的调用数。
+	AttrToolsRejectedCount = "reagent.tools.rejected_count"
 
 	// reagent.generate（§4.4）。
 	AttrGenerationPhase     = "reagent.generation.phase"
@@ -188,13 +184,12 @@ const (
 	TokenTypeReasoning   TokenType = "reasoning"
 )
 
-// CompactionReason 是 Compaction 触发原因（§4.7）；manual 为保留枚举。
+// CompactionReason 是 Compaction 触发原因（§4.7）。
 type CompactionReason string
 
 const (
 	CompactionReasonOverflow  CompactionReason = "overflow"
 	CompactionReasonThreshold CompactionReason = "threshold"
-	CompactionReasonManual    CompactionReason = "manual"
 )
 
 // ExecutionMode 是 Turn 内 Tool 调度模式（§4.3、§8.3）。
@@ -204,16 +199,17 @@ const (
 	ExecutionModeSerial   ExecutionMode = "serial"
 	ExecutionModeParallel ExecutionMode = "parallel"
 	ExecutionModeMixed    ExecutionMode = "mixed"
+	// ExecutionModeSubagentGate 是子代理门面读写闸的排队观测 mode。
+	// 同一底层工具执行可能同时产生 Scheduler queue 与本 mode 两条
+	// Histogram 观测，聚合查询必须按 mode 分组。
+	ExecutionModeSubagentGate ExecutionMode = "subagent_gate"
 )
 
 // Transport 是业务 Run 的入口通道（§4.2）。
 type Transport string
 
 const (
-	TransportHTTPSSE  Transport = "http_sse"
-	TransportTerminal Transport = "terminal"
-	TransportWeCom    Transport = "wecom"
-	TransportSDK      Transport = "sdk"
+	TransportHTTPSSE Transport = "http_sse"
 )
 
 // RetryCancelReason 是 Retry 等待被取消的原因（§4.8）。
@@ -223,9 +219,3 @@ const (
 	RetryCancelContextCanceled  RetryCancelReason = "context_canceled"
 	RetryCancelDeadlineExceeded RetryCancelReason = "deadline_exceeded"
 )
-
-// ---------- 内容策略（§11） ----------
-
-// ContentModeNone 是唯一合法的内容采集模式：只记录元数据、长度、状态和
-// Token，不采集可还原的模型或 Tool 正文。其他值在配置校验期启动失败。
-const ContentModeNone = "none"

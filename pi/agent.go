@@ -14,7 +14,7 @@ import (
 
 // Runner 定义无状态 Agent 的单次运行行为。
 type Runner interface {
-	Run(context.Context, RunRequest, Reporter) (RunResult, error)
+	Run(context.Context, RunRequest, EventListener) (RunResult, error)
 }
 
 // Agent 是可复用的无状态运行入口。
@@ -36,7 +36,7 @@ func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime, n
 // invoke_agent Span（§4.2）在本函数创建：经过 Chat 服务时是
 // conversation.run 的子 Span；直接 SDK 调用时自然成为根 Span。
 // Span 状态与生命周期由 WithSpan 管理。
-func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) (result RunResult, err error) {
+func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListener) (result RunResult, err error) {
 	startedAt := time.Now()
 	err = contexttracing.WithSpan(ctx, observability.AgentSpanName(observability.AgentName), func(ctx context.Context) (runErr error) {
 		defer func() {
@@ -88,24 +88,56 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, reporter Reporter) 
 		}
 
 		governor := newRunGovernor(request.Limits)
-		if reporter == nil {
-			reporter = nopReporter{}
+		if listener == nil {
+			listener = nopListener{}
 		}
 		if len(a.notifiers) > 0 {
-			// 通知桥接排在调用方 Reporter 之后：SSE 等实时订阅优先，
-			// 通道 panic 由 MultiReporter/notifySafely 双层兜底。
-			reporter = NewMultiReporter([]ReporterRegistration{
-				{Name: "caller", Order: 0, Reporter: reporter},
-				{Name: "notifiers", Order: 100, Reporter: &notifyBridge{notifiers: a.notifiers}},
+			// 告警监听排在调用方 EventListener 之后：SSE 等实时订阅优先，
+			// 通道 panic 由 MultiEventListener/notifySafely 双层兜底。
+			listener = NewMultiEventListener([]ListenerRegistration{
+				{Name: "caller", Order: 0, Listener: listener},
+				{Name: "alerts", Order: 100, Listener: &alertListener{notifiers: a.notifiers}},
 			})
 		}
-		loopResult, runErr := a.loop.runDetailed(ctx, runContext, reporter, governor)
+		loopResult, runErr := a.loop.runDetailed(ctx, runContext, listener, governor)
 		result.NewMessages = loopResult.newMessages
 		result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
 		result.Termination = governor.termination(runErr)
 		return runErr
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
+	// 在 WithSpan 之外告警：覆盖 prepare 失败等 loop 之前的提前返回路径
+	//（fail() 已正确设置 result.Termination）。
+	a.notifyTermination(ctx, result.Termination)
 	return result, err
+}
+
+// notifyTermination 把异常终止翻译为运行告警：错误/超时/预算终止告警，
+// 正常完成与用户主动取消不告警。Summary 只含终止原因与累计用量，不含
+// 消息正文或错误细节，告警通道可直接转发。
+func (a *Agent) notifyTermination(ctx context.Context, termination RunTermination) {
+	if len(a.notifiers) == 0 {
+		return
+	}
+	var notification Notification
+	switch termination.Reason {
+	case RunTerminationError, RunTerminationDeadline, RunTerminationLoopDetected:
+		notification = Notification{
+			Kind:    NotificationRunError,
+			Summary: fmt.Sprintf("Agent 运行异常终止（%s）", termination.Reason),
+		}
+	case RunTerminationMaxTurns, RunTerminationMaxCost, RunTerminationMaxTotalTokens:
+		notification = Notification{
+			Kind: NotificationRunLimit,
+			Summary: fmt.Sprintf("Agent 运行触发预算上限（%s）：%d 轮 / %d 次调用 / %d tokens / $%.6f",
+				termination.Reason, termination.Totals.Turns, termination.Totals.Invocations,
+				termination.Totals.TotalTokens, termination.Totals.CostUSD),
+		}
+	default:
+		return
+	}
+	for _, notifier := range a.notifiers {
+		notifySafely(ctx, notifier, notification)
+	}
 }
 
 func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (harness.Context, error) {
