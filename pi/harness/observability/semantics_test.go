@@ -14,7 +14,7 @@ func TestEnumValuesMatchDesign(t *testing.T) {
 		"cost_quality":       {string(CostQualityExact), string(CostQualityEstimated)},
 		"token_type":         {string(TokenTypeInputTotal), string(TokenTypeOutputTotal), string(TokenTypeCacheRead), string(TokenTypeCacheWrite), string(TokenTypeReasoning)},
 		"compaction_reason":  {string(CompactionReasonOverflow), string(CompactionReasonThreshold)},
-		"execution_mode":     {string(ExecutionModeSerial), string(ExecutionModeParallel), string(ExecutionModeMixed), string(ExecutionModeSubagentGate)},
+		"execution_mode":     {string(ExecutionModeSerial), string(ExecutionModeParallel), string(ExecutionModeMixed)},
 		"transport":          {string(TransportHTTPSSE)},
 	}
 	want := map[string][]string{
@@ -25,7 +25,7 @@ func TestEnumValuesMatchDesign(t *testing.T) {
 		"cost_quality":       {"exact", "estimated"},
 		"token_type":         {"input_total", "output_total", "cache_read", "cache_write", "reasoning"},
 		"compaction_reason":  {"overflow", "threshold"},
-		"execution_mode":     {"serial", "parallel", "mixed", "subagent_gate"},
+		"execution_mode":     {"serial", "parallel", "mixed"},
 		"transport":          {"http_sse"},
 	}
 	for name, got := range cases {

@@ -41,7 +41,7 @@ const (
 
 // DefaultMiddlewareRegistrations returns a fresh ordered default middleware set.
 //
-// tracing（Order=5）包住现有 Middleware 与真实 Tool 调用（§4.6）；未注册
+// tracing（Order=5）包住现有 Middleware 与真实 Tool 调用；未注册
 // Tool 在 ToolRuntime 入口即返回，不经过本链，不创建执行 Span。
 func DefaultMiddlewareRegistrations() []MiddlewareRegistration {
 	return []MiddlewareRegistration{
@@ -54,8 +54,8 @@ func DefaultMiddlewareRegistrations() []MiddlewareRegistration {
 }
 
 // tracingMiddleware 为每次实际 Tool 执行创建 execute_tool Span 并记录
-// 执行指标（§4.6、§8.3）。Span 只记录元数据与长度，不采集参数/输出正文
-// （§11 content.mode=none）；状态与生命周期由 WithSpan 管理。
+// 执行指标。Span 只记录元数据与长度，不采集参数/输出正文
+// ；状态与生命周期由 WithSpan 管理。
 func tracingMiddleware() Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, execution Execution, emit ai.UpdateEmitter) (output ai.ToolOutput, err error) {
@@ -73,7 +73,7 @@ func tracingMiddleware() Middleware {
 				output, runErr = next(ctx, execution, emit)
 
 				// Tool 业务性失败（IsError）设置 Error Status，但 Scheduler 成功
-				// 返回这类结果不会把整个 Run 标记为内部错误（§4.9）。
+				// 返回这类结果不会把整个 Run 标记为内部错误。
 				fields := []contexttracing.Field{
 					contexttracing.KV(observability.AttrToolIsError, runErr != nil),
 					contexttracing.KV(observability.AttrToolOutputSize, toolOutputSize(output)),

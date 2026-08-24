@@ -189,7 +189,6 @@ func TestControllerRejectsMalformedInput(t *testing.T) {
 func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 	repo := &controllerRepo{found: true}
 	runner := controllerRunner(func(ctx context.Context, _ conversation.RunRequest, listener pi.EventListener) (pi.RunResult, error) {
-		listener.OnEvent(ctx, pi.NewThinkingEvent())
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
 		listener.OnEvent(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("do")))
 		listener.OnEvent(ctx, pi.NewMessageUpdateEvent(ai.TextBlock("ne")))
@@ -207,7 +206,7 @@ func TestStartRunStreamsNamedSSEEvents(t *testing.T) {
 		t.Fatalf("status/headers = %d / %#v", response.Code, response.Header())
 	}
 	body := response.Body.String()
-	events := []string{"run.started", "agent.thinking", "message.started", "message.delta", "message.completed", "run.completed"}
+	events := []string{"run.started", "message.started", "message.delta", "message.completed", "run.completed"}
 	last := -1
 	for _, event := range events {
 		if !strings.Contains(body, "event: "+event+"\n") || !strings.Contains(body, "data: {") {

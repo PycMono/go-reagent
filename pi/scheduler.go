@@ -29,6 +29,21 @@ func NewScheduler(toolRuntime ToolRuntime, maxParallel int) *Scheduler {
 	return &Scheduler{toolRuntime: toolRuntime, maxParallel: maxParallel}
 }
 
+// isSubagentTool 报告指定工具是否为已注册的 SubagentTool
+// （按 Registry 条目类型断言，不按名字前缀；未知工具返回 false）。
+func (s *Scheduler) isSubagentTool(name string) bool {
+	runtime, ok := s.toolRuntime.(*toolRuntime)
+	if !ok {
+		return false
+	}
+	entry, ok := runtime.registry.lookup(name)
+	if !ok {
+		return false
+	}
+	_, ok = entry.tool.(*SubagentTool)
+	return ok
+}
+
 // Schedule 按照 Scheduler 的批次规则执行 calls。
 func (s *Scheduler) Schedule(
 	ctx context.Context,
@@ -121,7 +136,7 @@ func (s *Scheduler) executeWave(
 		waitGroup.Add(1)
 		go func(index int, call ai.ToolCall) {
 			defer waitGroup.Done()
-			// 信号量等待只进入 queue_duration Histogram，不创建 Queue Span（§4.6）。
+			// 信号量等待只进入 queue_duration Histogram，不创建 Queue Span。
 			queuedAt := time.Now()
 			select {
 			case semaphore <- struct{}{}:
@@ -146,7 +161,7 @@ func (s *Scheduler) executeWave(
 	return ctx.Err()
 }
 
-// recordToolQueue 记录排队时延；未注册 Tool 的 Label 固定为 unknown（§4.6）。
+// recordToolQueue 记录排队时延；未注册 Tool 的 Label 固定为 unknown。
 func recordToolQueue(
 	ctx context.Context,
 	call ai.ToolCall,

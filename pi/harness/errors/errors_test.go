@@ -9,7 +9,7 @@ import (
 
 func TestErrorCodeValuesAreStable(t *testing.T) {
 	want := map[ErrorCode]string{
-		ErrorCodeUnknown: "unknown",
+		ErrorCodeUnknown:        "unknown",
 		ErrorCodeInitialization: "initialization_failed",
 		ErrorCodeRequestInvalid: "request_invalid", ErrorCodeWorkspaceInvalid: "workspace_invalid",
 		ErrorCodeAIGeneration: "ai_generation_failed", ErrorCodeToolRuntime: "tool_runtime_failed",

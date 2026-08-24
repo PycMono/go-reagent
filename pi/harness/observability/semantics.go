@@ -70,7 +70,8 @@ const (
 	// AttrSubagentName 是子代理名称（自定义命名空间；代理归属的标准表达
 	// 用 gen_ai.agent.name，本属性作为同值冗余标记便于按子代理过滤）。
 	AttrSubagentName = "reagent.subagent.name"
-	// AttrToolsRejectedCount 是 Turn 内因单批子代理调用上限被拒绝的调用数。
+	// AttrToolsRejectedCount 是 Turn 内被拒绝的工具调用数
+	// （可见性边界拒绝 + 单批子代理调用上限拒绝）。
 	AttrToolsRejectedCount = "reagent.tools.rejected_count"
 
 	// reagent.generate（§4.4）。
@@ -199,10 +200,6 @@ const (
 	ExecutionModeSerial   ExecutionMode = "serial"
 	ExecutionModeParallel ExecutionMode = "parallel"
 	ExecutionModeMixed    ExecutionMode = "mixed"
-	// ExecutionModeSubagentGate 是子代理门面读写闸的排队观测 mode。
-	// 同一底层工具执行可能同时产生 Scheduler queue 与本 mode 两条
-	// Histogram 观测，聚合查询必须按 mode 分组。
-	ExecutionModeSubagentGate ExecutionMode = "subagent_gate"
 )
 
 // Transport 是业务 Run 的入口通道（§4.2）。

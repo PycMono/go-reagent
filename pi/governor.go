@@ -21,7 +21,7 @@ func (err *runLimitError) Error() string {
 
 func (err *runLimitError) Unwrap() error { return pierrors.ErrRunLimitExceeded }
 
-// errParentBudgetExhausted 是父预算触顶取消 batchCtx 的专属 cause（§批次取消语义）：
+// errParentBudgetExhausted 是父预算触顶取消 batchCtx 的专属 cause：
 // 用于把内部预算取消与用户取消/真实 deadline 区分开。
 var errParentBudgetExhausted = errors.New("parent run budget exhausted")
 
@@ -32,9 +32,9 @@ var errParentBudgetExhausted = errors.New("parent run budget exhausted")
 // 扣减父预算。parent 仅存在于子代理的 Governor：子运行 Invocation 完成时
 // 除自身累加外，同步扣减父预算账户。
 type runGovernor struct {
-	mu       sync.Mutex
-	limits   RunLimits
-	totals   RunTotals
+	mu     sync.Mutex
+	limits RunLimits
+	totals RunTotals
 	// costCompensation 是 Kahan 补偿项，降低多次成本累加的浮点误差。
 	costCompensation float64
 	// exhausted 与 firstErr 记录本 Run 首次预算越界：触顶后在飞调用仍须
@@ -82,11 +82,12 @@ func (b *batchBudget) debit(invocation ModelInvocation) error {
 	return firstErr
 }
 
-// exhausted 报告父预算是否已触顶（供子 Governor beforeTurn 检查）。
+// exhausted 报告父预算是否已触顶（供子 Governor checkTurnLimit 检查）。
 func (b *batchBudget) exhausted() bool {
 	if b == nil || b.governor == nil {
 		return false
 	}
+
 	b.governor.mu.Lock()
 	defer b.governor.mu.Unlock()
 	return b.governor.exhausted
@@ -154,9 +155,9 @@ func (g *runGovernor) setFirstErrLocked(err error) error {
 	return err
 }
 
-// beforeTurn 在下一 turn 的 Thinking 之前检查 MaxTurns；子代理 Governor
+// checkTurnLimit 在进入下一 turn 前检查 MaxTurns 是否越界；子代理 Governor
 // 额外检查父预算账户是否已触顶。
-func (g *runGovernor) beforeTurn() error {
+func (g *runGovernor) checkTurnLimit() error {
 	g.mu.Lock()
 	turnsErr := error(nil)
 	if g.limits.MaxTurns > 0 && g.totals.Turns >= g.limits.MaxTurns {
@@ -166,6 +167,7 @@ func (g *runGovernor) beforeTurn() error {
 	if turnsErr != nil {
 		return turnsErr
 	}
+
 	if g.parent != nil && g.parent.exhausted() {
 		return g.parent.firstBudgetError()
 	}

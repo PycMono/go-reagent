@@ -7,8 +7,8 @@ import (
 	"github.com/PycMono/go-reagent/conversation"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
-	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/infrastructure/notice"
+	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
 )
@@ -32,6 +32,6 @@ var Register = fx.Options(
 var agentRegister = fx.Options(
 	pi.CoreRegister,
 	pi.ReadOnlyToolsRegister,
+	pi.SubagentRegister,
 	chattools.Register,
-	fx.Supply(pi.ThinkingEnabled(false)),
 )
