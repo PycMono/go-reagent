@@ -4,6 +4,8 @@
 
 方案已在对话中完成架构选择，并根据当前 `pi` 的 Agent Loop、`governor`、Compaction、Scheduler、子代理与消息持久化契约，以及 pi.dev、OpenClaw 的公开实现完成复核。
 
+2026-08-25 需求审计修订：补全 warning ephemeral context 的生成、重试、Compaction 与回写生命周期；形式化 Ping-pong 稳定条件；固定 Tool Result 对齐失败的 Run 级错误语义；明确窗口淘汰、post-compaction 漏报、易变结果文本、依赖方向与配置校验边界。架构选择不变。
+
 本文等待规格审阅，不包含代码实现。用户确认本文后，再单独编写实施计划。
 
 本文是 [2026-08-19 Run Budget 与循环护栏设计](./2026-08-19-run-budget-loop-guardrails-design.md) 中“第二阶段：行为循环检测”的详细规格，并取代该节的概要描述；已经落地的 `MaxTurns`、`MaxCostUSD`、`MaxTotalTokens`、Invocation、Totals、父子预算与 Termination 设计不迁移、不重写。
@@ -165,7 +167,7 @@ OpenClaw 没有把 retry、timeout、fallback、compaction、预算和 loop guar
 
 ```text
 pi/loopdetect/
-├── config.go                    # Config、默认/固定策略和校验
+├── config.go                    # Config、默认/固定策略和防御性归一化
 ├── types.go                     # Admission、Decision、Intervention、Pattern、Level
 ├── fingerprint.go               # Call/Outcome canonicalization 与 SHA-256
 ├── detector.go                  # 历史窗口、准入、提醒和恢复状态机
@@ -180,6 +182,7 @@ pi/loopdetect/
 
 ```text
 pi/loop.go
+pi/recovery.go
 pi/compaction.go
 pi/register.go
 pi/governor/governor.go
@@ -234,10 +237,12 @@ agent:
 
 - SDK 与 bundled application 的零值均为关闭，保持兼容；示例部署显式开启；
 - `excluded_tools` 使用最终暴露给模型的精确工具名匹配，大小写敏感，不支持 glob 或正则；
-- 空白名称、前后空格和重复项在 `config.Validate` 阶段拒绝；
+- bundled application 的空白名称、前后空格和重复项在 `config` 包的 `normalizeAndValidate` 阶段 fail-fast；
 - 不要求排除项一定已注册，因为 MCP/extension 工具可能到启动期才完整出现；
 - 被排除的调用不进入任何历史、提醒、critical 或 post-compaction 计数；
 - 混合批次只检测未排除调用，但只要其中一个触发阻断，仍按整批原子规则处理全部调用。
+
+业务配置校验只在根 `config` 包执行，不在 `pi/loopdetect` 复制第二套校验。直接使用 SDK 时，`loopdetect.New` 不返回配置错误，只复制配置切片，并对 `ExcludedTools` 做 trim、去空和去重的防御性归一化；这些操作不得修改调用方传入的 Config。
 
 固定第一版参数：
 
@@ -325,7 +330,7 @@ pi.dev 使用的是 `beforeToolCall` + `BeforeToolCallResult.block` 生命周期
 - `DecisionAllow` 的 `Intervention` 必须为 nil；
 - `DecisionWarn` 允许工具批次执行，并携带一次只对模型可见的提醒证据；
 - `DecisionRecover` 和 `DecisionTerminate` 都不允许任何工具开始；
-- `RecordToolBatchOutcome` 要求 `len(calls) == len(results)`、`calls[i].ID == results[i].ToolCallID` 且工具名一致；Loop 在调用前检查该不变量，违反时返回 internal error，不进入 Detector；Detector 自身对不匹配输入不修改状态并返回 nil；
+- `RecordToolBatchOutcome` 要求 `len(calls) == len(results)`、`calls[i].ID == results[i].ToolCallID` 且工具名一致；Loop 在调用前检查该不变量，违反时执行“结果对齐失败”终止协议，不进入 Detector；Detector 自身对不匹配输入不修改状态并返回 nil；
 - `RecordToolBatchOutcome` 在普通记账时返回 nil，只在完成结果后需要立即干预时返回值；第一版的立即干预只有 post-compaction 终止；
 - Config 关闭时，`AdmitToolBatch` 恒返回 `DecisionAllow`，另外两个方法无副作用；
 - Detector 不暴露内部 hash、参数或结果，也不返回最终 `governor.Termination`。
@@ -382,6 +387,8 @@ SHA256(
 
 不保存 raw canonical JSON 或 raw result，只在内存中保存固定长度 hash 与安全元数据。这样既可识别相同结果，又避免 Detector 成为第二份敏感数据账本。
 
+完整 `Content.Text` 会保留正确的“结果变化即进展”语义，但也带来有意接受的漏报：如果工具每次在正文中加入时间戳、随机 ID、临时路径等易变文本，Outcome signature 将持续变化，stable-outcome 与 global circuit 都不会 critical。第一版只会发出 repeated-call warning，最终由 `MaxTurns`、`MaxTotalTokens`、`MaxCostUSD` 兜底；工具专属 result canonicalizer 留待真实样本驱动。
+
 ## 请求内状态
 
 Detector 至少维护：
@@ -404,7 +411,9 @@ post-compaction guard 状态
 
 结果变化代表进展：同一 `callSignature` 的新 `outcomeSignature` 与上次不同，就把该 signature 的 stable-outcome streak 重置为 1，并清除与该 signature 相关的 warning 抑制状态。其他 signature 的状态不受影响。
 
-历史超过 16 条时丢弃最旧记录，并同步清理不再被窗口引用的 warning key 和辅助计数。Detector 的内存上限与 Run 长度无关。
+历史超过 16 条时丢弃最旧记录。某个 Call signature 不再被窗口中任何记录引用时，必须删除它的 stable outcome signature、stable count、repeated-call warning key 和 Ping-pong 辅助状态；Run 级 `criticalInterventions` 与当前 post-compaction window 不随普通历史淘汰而重置。Detector 的内存上限与 Run 长度无关。
+
+因此，间隔超过 16 条工具记录才复现一次的慢循环可能漏报，这是维持请求内存有界的有意取舍；绝对预算继续作为最终兜底。
 
 ## 第一版检测算法
 
@@ -441,9 +450,11 @@ A, B, A, B, A ...
 其中 A/B 是两个不同 Call signature。
 
 - projected 交替长度达到 3 时 warning；
-- projected 交替长度达到 5，且 A 的既有 outcomes 全部稳定、B 的既有 outcomes 也全部稳定时 critical；
+- projected 交替长度达到 5，且 `stableForPingPong(A)` 与 `stableForPingPong(B)` 同时成立时 critical；
 - 任一侧结果变化、出现第三个 signature 或顺序不再交替时重置该模式；
 - A/B 可以是同一个工具的两组参数，也可以是两个不同工具。
+
+形式化定义：`stableForPingPong(signature)` 当且仅当当前交替尾部在本次 admission 之前，已经包含该 signature 至少 2 个已完成、非 `loopVeto` 的 Outcome，并且这些 Outcome signature 全部相同。当前批次内尚未执行的 projected calls 不提供 Outcome 证据；因此没有历史结果的一批 `A/B/A/B/A` 只能触发 warning，不能直接 critical。
 
 ### 4. Global circuit breaker
 
@@ -463,7 +474,7 @@ A, B, A, B, A ...
 
 如果 3 个结果未全部相同，窗口耗尽并自动 disarm。再次成功 L2 Compaction 会重新 arm，并替换尚未结束的旧窗口。
 
-Detector 同时保留最近 16 条普通历史，因此 arm 时可以快照压缩前的 Call signature 尾部用于诊断“是否回到压缩前调用”；第一版终止条件仍只依赖压缩后 3 个完整 outcome 完全相同，避免仅凭相同参数误杀状态发生变化的轮询。
+第一版 post-compaction guard 只覆盖单一完整 Outcome 连续重复。压缩后重新出现 `A/B/A/B` 交替模式时，这个 3-outcome 窗口不会终止；普通 16 条历史不会因 Compaction 清空，因此继续由 Ping-pong 与 global circuit 规则兜底。该漏报方向是降低短窗口误杀率的有意取舍，第一版不保存压缩前 baseline 快照或其他仅用于诊断的死状态。
 
 ## Critical 恢复状态机
 
@@ -524,8 +535,10 @@ Detector 同时保留最近 16 条普通历史，因此 arm 时可以快照压�
 9. allow/warn/recover 路径按下文提交完整协议组；terminate 路径不提交；
 10. allow/warn 时执行可见性/子代理批次规划与 Scheduler；
 11. 工具批次结算后，父预算错误优先于 Scheduler 基础设施错误；
-12. 合并并提交所有 Tool Results；
-13. 调用 `RecordToolBatchOutcome`，若 post-compaction 返回终止，则在已完成协议组之后结束 Run。
+12. 按原始下标合并 Tool Results，并校验长度、ToolCallID、ToolName 对齐；
+13. 对齐失败时执行“结果对齐失败”协议并以 internal error 终止，不调用 Detector；
+14. 对齐正常时提交所有 Tool Results；
+15. 调用 `RecordToolBatchOutcome`，若 post-compaction 返回终止，则在已完成协议组之后结束 Run。
 
 如果同一个 Action 模型调用已经耗尽 Token/Cost 预算，预算终止获胜；Detector 不检查也不改变终止原因。`MaxTurns`、Token、Cost 与行为检测因此不是两套竞争预算，而是在不同检查点执行的不同安全边界。
 
@@ -547,14 +560,34 @@ RecordToolBatchOutcome
 提醒必须满足：
 
 - 只进入下一次逻辑 Action 的 Provider Context；
+- 不进入 `state.contextHistory` 或 `generationResult.context`；
 - 不进入 `state.newMessages`；
 - 不触发 `EventListener`；
 - 不进入 Reporter/SSE/MySQL；
+- 不进入 proactive/reactive Compaction 的摘要输入；
 - 不写日志正文；
 - generation retry 仍能看到同一提醒；
 - 一次 Action 完成后消费，不永久污染后续上下文。
 
-实现可在 `runState` 保存 pending reminder，在 proactive compaction 后临时附加到 Provider Context；若 reactive compaction 返回修改后的 Context，必须按内部固定标记移除提醒后再写回 `state.contextHistory`。不能简单永久 append 一条 System Message，因为 Anthropic Provider 会把所有 System Message 聚合为全局 system prompt。
+不能依赖“临时 append 后按正文标记剥离”：当前普通生成会把输入 `messages` 原样放入 `generationResult.context`，随后每轮必经 `state.contextHistory = generated.context`；只处理 reactive compaction 分支仍会泄漏提醒。
+
+生成链固定增加 durable/ephemeral 双通道：
+
+```go
+type generationInput struct {
+    Durable   []ai.Message
+    Ephemeral []ai.Message
+}
+```
+
+- `Durable` 是允许写回 `generationResult.context`、参与 L1/L2 Compaction 和进入后续 turn 的真实历史；
+- `Ephemeral` 只在每次物理 Provider 请求前复制并附加到 `Durable`，不属于返回 Context；
+- `generateWithRetry` 的每次 retry 使用同一份 Ephemeral，保证一次逻辑 Action 内提醒不丢失；
+- `recoverOverflow` 只对 Durable 做 L1/L2，随后在重试 Provider 时重新附加 Ephemeral，提醒不进入摘要输入；
+- `generationResult.context` 在普通成功、L1 retry、L2 retry 和失败恢复路径中始终只返回 Durable；
+- `Loop` 在一次逻辑 Action 完成后清空 pending reminder；若生成最终失败并结束 Run，request-local 状态随 Run 释放。
+
+Provider 最终看到的是 `clone(Durable) + Ephemeral`，但 Provider 接口和 `ai.Message` 不增加持久化标记。Anthropic 可以继续把临时 System Message 聚合进本次请求的 system prompt；该消息不会进入下一次请求。实现必须复制切片，不能因 append 复用底层数组而修改 Durable 或调用方历史。
 
 ### Recover
 
@@ -605,6 +638,19 @@ Web Chat 继续依赖现有 `run.failed` 路径丢弃 provisional Assistant。�
 
 post-compaction guard 只能在真实结果完成后判定，因此先提交 Assistant 和完整 Tool Results，再返回 typed error。已经发生的工具副作用和消息不能回滚，也不能为了让终止看起来更早而删除。
 
+### Tool Result 对齐失败
+
+`len(calls) != len(results)`、`calls[i].ID != results[i].ToolCallID` 或工具名不一致都表示 Scheduler/合并逻辑违反内部不变量，不属于模型行为，也不能降级为“跳过循环记账后继续”。工具批次可能已经产生副作用，因此处理固定为：
+
+1. 保留所有已经完成的 Invocation 和 Governor Totals；
+2. 不调用 `RecordToolBatchOutcome`，Detector 历史保持在 admission 后的 pending 状态，随后随 Run 释放；
+3. 不尝试回滚或重放任何工具；
+4. 为原始 Tool Calls 各生成一个完整的 `IsError=true` Tool Result，ToolCallID/ToolName 取原始调用，`ErrorCode=ErrorCodeInternal`，安全正文固定说明“工具批次结果对齐失败，执行状态未知，请勿自动重试”；
+5. 把这些合成结果追加到 `contextHistory` 与 `newMessages`，闭合已经提交的 tool-calling Assistant；真实工具已经发出的 start/update/end 事件不重复补发；
+6. 返回 `pierrors.Wrap(ErrorCodeInternal, "tool batch outcome reconciliation", err)`，`done=true`，最终 Termination 为 `error` 而不是 `loop_detected`。
+
+该路径是内部故障兜底，不声称合成结果代表真实执行结果；它只保证协议闭合、已发生费用不丢失，并阻止模型或调用方基于不可靠状态自动继续。
+
 ## Compaction 集成
 
 `ArmPostCompaction()` 只在一次 L2 摘要成功并原子提交 `compacted messages + next CompactionState` 后调用：
@@ -649,6 +695,16 @@ governor.TerminationLoopDetected = "loop_detected"
 ```
 
 已经存在。`governor.TerminationFromError` 增加对 `*loopdetect.Error` 的 `errors.As` 分支，映射到 `TerminationLoopDetected`。`Termination.Totals` 仍来自同一个 Governor；Detector 不构造、不复制、不修改 Totals。
+
+包依赖方向固定为：
+
+```text
+governor  ──> loopdetect     仅用于 TerminationFromError 识别 typed Error
+loopdetect ──> toolexec      仅用于归一化 Result
+loopdetect -X-> governor     禁止反向依赖
+```
+
+`loopdetect` 不得 import `governor`，不得接收 Limits/Totals/Invocation；否则会形成职责倒置，并可能经 `governor -> loopdetect` 产生包循环。
 
 取消/deadline 的映射优先于 loop error。实现不得使用 `errors.Join` 把循环错误和预算错误拼成不确定优先级；每个固定检查点只返回该顺序下的一个错误。
 
@@ -699,6 +755,12 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 
 ## 测试设计
 
+### Config
+
+1. bundled application 对空白、带前后空格和重复 `excluded_tools` 在 `config.Load` 阶段 fail-fast。
+2. SDK 直接调用 `loopdetect.New` 时对 ExcludedTools 做 trim、去空、去重，并复制切片；调用方随后修改原 Config 不影响 Detector。
+3. Config 零值保持 disabled，所有方法为无增长型状态的 no-op。
+
 ### Fingerprint
 
 1. JSON object key 顺序和无意义空白不同，Call signature 相同。
@@ -708,6 +770,7 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 5. Outcome 的 IsError、ErrorCode、Content 顺序/Type/Text 任一变化都会改变签名。
 6. Details、duration、PID、timestamp、ToolCallID 变化不改变 Outcome signature。
 7. Detector 状态中不存在原始参数与结果副本。
+8. Content.Text 中时间戳变化会改变 Outcome signature，并用测试固定这一有意漏报边界。
 
 ### Admission 与 history
 
@@ -718,12 +781,14 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 5. 确认 5 个相同 outcomes 后再次调用，第一次返回 Recover。
 6. Recover 后再次出现任意 critical，返回 Terminate。
 7. Recover 批次由 Admit 记录 veto；调用 Outcome recorder 会由 Loop 测试证明不会发生。
-8. A/B/A 达到 warning；有稳定结果证据的 A/B/A/B/A 达到 critical。
-9. A/B 中任一结果变化或插入 C，ping-pong critical 不成立。
-10. 16 条窗口中达到 8 条跨 signature 无进展证据，触发 global critical。
-11. 第 17 条插入后最旧记录淘汰，相关计数与 warning key 正确清理。
-12. excluded tool 不计数；混合批次中的未排除工具仍可阻止整批。
-13. Tool Names 去重、排序稳定。
+8. A/B/A 达到 warning；A/B 各只有一个已完成 Outcome 时不得 critical。
+9. 同一批没有历史 Outcome 的 A/B/A/B/A 不得 critical；A/B 各有至少两个相同已完成 Outcome 时可以 critical。
+10. A/B 中任一结果变化或插入 C，ping-pong critical 不成立。
+11. 16 条窗口中达到 8 条跨 signature 无进展证据，触发 global critical。
+12. 第 17 条插入后最旧记录淘汰；signature 完全离窗时清除 stable、warning 与 Ping-pong 状态，但不重置 Run 级 critical 次数。
+13. 超过窗口间隔的慢循环不累计 stable count，由预算兜底。
+14. excluded tool 不计数；混合批次中的未排除工具仍可阻止整批。
+15. Tool Names 去重、排序稳定。
 
 ### Batch 原子性与消息协议
 
@@ -735,6 +800,15 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 6. provisional SSE Assistant 在 run.failed 时被现有前端删除。
 7. post-outcome 终止仍保留已经执行并完成的 Assistant + 全部 Tool Results。
 8. ToolCall 固有校验失败发生在 admission 前，Detector 历史不变化。
+9. Tool Result 数量、ID 或工具名对齐失败时不调用 Detector，为全部原始 calls 合成 `ErrorCodeInternal` 结果，保留 Invocation/Totals 并以 `TerminationError` 结束。
+
+### Warning ephemeral context
+
+1. 普通成功路径中，Provider 能看到 warning，`generationResult.context` 与 `state.contextHistory` 都不包含 warning。
+2. transient/rate-limit retry 的每次物理请求都看到同一 warning，逻辑 Action 完成后只消费一次。
+3. proactive L1/L2 与 reactive L1/L2 的输入、摘要范围和返回 Durable Context 都不包含 warning；压缩后的 Provider retry 仍看到 warning。
+4. Ephemeral 合并使用复制切片，不修改 Durable、RunRequest History 或调用方 Config。
+5. warning 不进入 NewMessages、EventListener、SSE、MySQL 或日志正文。
 
 ### 与 Governor 的优先级
 
@@ -754,6 +828,7 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 6. excluded outcome 不消费三次观察窗口。
 7. 窗口未结束时再次成功 Compaction，旧窗口被替换。
 8. Compaction 不清空普通 16 条历史、warning 或 critical 次数。
+9. post-compaction 的 A/B/A 三个不同完整 Outcome 不触发专属 guard；后续仍由保留的普通 Ping-pong/global 状态处理。
 
 ### 子代理与并发
 
@@ -771,9 +846,9 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 2. 普通历史、warning、stable outcome、ping-pong、global circuit 状态机；
 3. batch admission、一次 recovery 与 typed error；
 4. post-compaction guard；
-5. Loop 消息提交时机调整与 synthetic results；
+5. Loop 消息提交时机、durable/ephemeral 生成链、结果对齐失败与 synthetic results；
 6. Governor termination/error code 集成；
-7. Config/fx/root+subagent Loop 装配；
+7. Config/fx/root+subagent Loop 装配；开始实现前用当前工作树重新核对 fx provider 的真实落点，配置已迁移时修改实际装配入口，不强行沿用过期文件路径；
 8. SSE/Notifier/observability 安全映射；
 9. 全量单元、集成、race 和回归测试。
 
@@ -787,9 +862,10 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 4. 相同参数但结果变化永不触发 stable/global critical。
 5. 第一次普通 critical 恢复、第二次终止；post-compaction 三次完全相同结果直接终止。
 6. 主/子/并发 Run 的 Detector 状态完全隔离，父子资源预算传播不受影响。
-7. warning 不进入 NewMessages、EventListener、SSE、数据库或日志正文。
+7. warning 只进入一次逻辑 Action 的 Provider 请求，不进入 `generationResult.context`、`state.contextHistory`、Compaction summary、NewMessages、EventListener、SSE、数据库或日志正文。
 8. 最终 `RunResult.Termination.Reason == loop_detected`，Totals 与 Invocation 明细一致。
-9. `go test ./...`、相关 race test、`git diff --check` 全部通过。
+9. Tool Result 对齐失败闭合消息协议、保留 Invocation/Totals，并以 `error` 而非 `loop_detected` 终止。
+10. `go test ./...`、相关 race test、`git diff --check` 全部通过。
 
 ## 后续演进触发条件
 
