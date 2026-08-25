@@ -1,4 +1,4 @@
-package pi
+package toolexec
 
 import (
 	"context"
@@ -18,30 +18,37 @@ import (
 // 每个并发批次最多同时执行 maxParallel 个调用。虽然并发调用的完成顺序不确定，
 // 返回结果仍与 calls 中的原始顺序一致。上下文取消或某一批次执行失败后，不再启动后续批次。
 type Scheduler struct {
-	// toolRuntime 负责查找并实际执行工具。
-	toolRuntime ToolRuntime
+	// executor 负责查找并实际执行工具。
+	executor Executor
 	// maxParallel 是单个并发批次允许同时执行的最大工具数；非正数按 1 处理。
 	maxParallel int
 }
 
-// NewScheduler 创建使用 toolRuntime 执行工具的调度器。
-func NewScheduler(toolRuntime ToolRuntime, maxParallel int) *Scheduler {
-	return &Scheduler{toolRuntime: toolRuntime, maxParallel: maxParallel}
+// NewScheduler 创建使用 executor 执行工具的调度器。
+func NewScheduler(executor Executor, maxParallel int) *Scheduler {
+	return &Scheduler{executor: executor, maxParallel: maxParallel}
 }
 
-// isSubagentTool 报告指定工具是否为已注册的 SubagentTool
+// SubagentTool 是子代理工具的标记接口：实现它的工具在调度与 Loop
+// 策略上享受特殊待遇（如串行屏障）。定义在本包避免反向依赖根包。
+type SubagentTool interface {
+	ai.Tool
+	IsSubagentTool() bool
+}
+
+// IsSubagentTool 报告指定工具是否为已注册的子代理工具
 // （按 Registry 条目类型断言，不按名字前缀；未知工具返回 false）。
-func (s *Scheduler) isSubagentTool(name string) bool {
-	runtime, ok := s.toolRuntime.(*toolRuntime)
+func (s *Scheduler) IsSubagentTool(name string) bool {
+	exec, ok := s.executor.(*executor)
 	if !ok {
 		return false
 	}
-	entry, ok := runtime.registry.lookup(name)
+	toolEntry, ok := exec.registry.lookup(name)
 	if !ok {
 		return false
 	}
-	_, ok = entry.tool.(*SubagentTool)
-	return ok
+	subagent, ok := toolEntry.tool.(SubagentTool)
+	return ok && subagent.IsSubagentTool()
 }
 
 // Schedule 按照 Scheduler 的批次规则执行 calls。
@@ -49,15 +56,15 @@ func (s *Scheduler) Schedule(
 	ctx context.Context,
 	calls []ai.ToolCall,
 	definitions ai.ToolDefinitions,
-	observer ToolEventObserver,
-) ([]ToolResult, error) {
+	observer EventObserver,
+) ([]Result, error) {
 	parallelSafe := definitions.ParallelSafety()
 	knownTools := make(map[string]bool, len(parallelSafe))
 	for name := range parallelSafe {
 		knownTools[name] = true
 	}
 	mode := s.Mode(calls, definitions)
-	results := make([]ToolResult, len(calls))
+	results := make([]Result, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -113,10 +120,10 @@ func (s *Scheduler) Mode(calls []ai.ToolCall, definitions ai.ToolDefinitions) st
 func (s *Scheduler) executeWave(
 	ctx context.Context,
 	calls []ai.ToolCall,
-	results []ToolResult,
+	results []Result,
 	start int,
 	end int,
-	observer ToolEventObserver,
+	observer EventObserver,
 	mode string,
 	knownTools map[string]bool,
 ) error {
@@ -149,7 +156,7 @@ func (s *Scheduler) executeWave(
 			if ctx.Err() != nil {
 				return
 			}
-			results[index], executionErrors[index-start] = s.toolRuntime.Execute(ctx, call, observer)
+			results[index], executionErrors[index-start] = s.executor.Execute(ctx, call, observer)
 		}(index, call)
 	}
 	waitGroup.Wait()

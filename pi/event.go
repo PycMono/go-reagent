@@ -7,17 +7,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
-
-type ToolResult struct {
-	ToolCallID string             `json:"tool_call_id"`
-	ToolName   string             `json:"tool_name"`
-	Content    []ai.ContentBlock  `json:"content"`
-	Details    any                `json:"details,omitempty"`
-	IsError    bool               `json:"is_error"`
-	ErrorCode  pierrors.ErrorCode `json:"error_code,omitempty"`
-}
 
 type AgentEventType string
 
@@ -30,38 +20,11 @@ const (
 	AgentEventMessageEnd    AgentEventType = "message_end"
 )
 
-type ToolEventPhase string
-
-const (
-	ToolEventStart  ToolEventPhase = "start"
-	ToolEventUpdate ToolEventPhase = "update"
-	ToolEventEnd    ToolEventPhase = "end"
-)
-
-type ToolEvent struct {
-	Phase  ToolEventPhase `json:"phase"`
-	Call   ai.ToolCall    `json:"call"`
-	Update *ai.ToolUpdate `json:"update,omitempty"`
-	Result *ToolResult    `json:"result,omitempty"`
-}
-
 type AgentEvent struct {
 	Type    AgentEventType   `json:"type"`
 	Tool    *ToolEvent       `json:"tool,omitempty"`
 	Delta   *ai.ContentBlock `json:"delta,omitempty"`
 	Message *ai.Message      `json:"message,omitempty"`
-}
-
-func NewToolStart(call ai.ToolCall) ToolEvent {
-	return ToolEvent{Phase: ToolEventStart, Call: call}
-}
-
-func NewToolUpdate(call ai.ToolCall, update ai.ToolUpdate) ToolEvent {
-	return ToolEvent{Phase: ToolEventUpdate, Call: call, Update: &update}
-}
-
-func NewToolEnd(call ai.ToolCall, result ToolResult) ToolEvent {
-	return ToolEvent{Phase: ToolEventEnd, Call: call, Result: &result}
 }
 
 func NewAgentToolEvent(event ToolEvent) AgentEvent {

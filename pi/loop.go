@@ -233,7 +233,7 @@ func (l *Loop) planToolBatch(
 			silent[index] = true
 			continue
 		}
-		if l.scheduler.isSubagentTool(call.Name) {
+		if l.scheduler.IsSubagentTool(call.Name) {
 			subagentSeen++
 			if subagentSeen > maxSubagentCallsPerBatch {
 				if rejected == nil {

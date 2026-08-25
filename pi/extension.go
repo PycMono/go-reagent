@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 type Extension interface {
@@ -35,10 +36,10 @@ func isNilExtension(extension Extension) bool {
 }
 
 type extensionAPI struct {
-	registry *toolRegistry
+	registry *toolexec.Registry
 	owner    string
 }
 
 func (api extensionAPI) RegisterTool(tool ai.Tool) error {
-	return api.registry.register(api.owner, tool)
+	return api.registry.Register(api.owner, tool)
 }

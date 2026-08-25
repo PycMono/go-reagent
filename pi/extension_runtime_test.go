@@ -2,13 +2,30 @@ package pi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx/fxtest"
 )
+
+// extensionTestTool 是扩展注册用的最小 ai.Tool 实现。
+type extensionTestTool string
+
+func (tool extensionTestTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name:        string(tool),
+		InputSchema: map[string]any{"type": "object"},
+	}
+}
+
+func (extensionTestTool) Execute(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
+	return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
+}
 
 type extensionFake struct {
 	name        string
@@ -23,7 +40,7 @@ func (extension *extensionFake) Name() string { return extension.name }
 func (extension *extensionFake) Register(_ context.Context, api ExtensionAPI) error {
 	*extension.events = append(*extension.events, "start:"+extension.name)
 	if extension.tool != "" {
-		if err := api.RegisterTool(registryTestTool(extension.tool)); err != nil {
+		if err := api.RegisterTool(extensionTestTool(extension.tool)); err != nil {
 			return err
 		}
 	}
@@ -37,7 +54,7 @@ func (extension *extensionFake) Close(context.Context) error {
 
 func TestExtensionRuntimeStartsSortedAndStopsReversed(t *testing.T) {
 	var events []string
-	registry, err := newToolRegistry(nil)
+	registry, err := toolexec.NewRegistry(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +80,7 @@ func TestExtensionRuntimeStartsSortedAndStopsReversed(t *testing.T) {
 
 func TestExtensionRuntimeRollsBackAndClosesAfterStartFailure(t *testing.T) {
 	var events []string
-	registry, err := newToolRegistry(nil)
+	registry, err := toolexec.NewRegistry(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +104,7 @@ func TestExtensionRuntimeRollsBackAndClosesAfterStartFailure(t *testing.T) {
 	if !slices.Equal(events, wantEvents) {
 		t.Fatalf("events = %v, want %v", events, wantEvents)
 	}
-	if definitions := registry.definitions(); len(definitions) != 0 {
+	if definitions := registry.Definitions(); len(definitions) != 0 {
 		t.Fatalf("definitions after rollback = %#v", definitions)
 	}
 }
@@ -108,7 +125,7 @@ func TestExtensionRuntimeRejectsInvalidExtensions(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			registry, err := newToolRegistry(nil)
+			registry, err := toolexec.NewRegistry(nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +143,7 @@ func TestExtensionRuntimeRejectsInvalidExtensions(t *testing.T) {
 
 func TestExtensionRuntimeJoinsCloseErrorsAndContinues(t *testing.T) {
 	var events []string
-	registry, err := newToolRegistry(nil)
+	registry, err := toolexec.NewRegistry(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

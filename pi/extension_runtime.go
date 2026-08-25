@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx"
 )
 
@@ -14,12 +15,12 @@ type extensionRuntimeParams struct {
 	fx.In
 
 	Lifecycle  fx.Lifecycle
-	Registry   *toolRegistry
+	Registry   *toolexec.Registry
 	Extensions []Extension `group:"agent_extensions"`
 }
 
 type extensionRuntime struct {
-	registry   *toolRegistry
+	registry   *toolexec.Registry
 	extensions []Extension
 	started    []Extension
 }
@@ -55,11 +56,11 @@ func (runtime *extensionRuntime) start(ctx context.Context) error {
 		name := extension.Name()
 		api := extensionAPI{registry: runtime.registry, owner: name}
 		if err := extension.Register(ctx, api); err != nil {
-			runtime.registry.rollback(name)
+			runtime.registry.Rollback(name)
 			cleanupErr := closeExtension(ctx, extension)
 			for index := len(runtime.started) - 1; index >= 0; index-- {
 				started := runtime.started[index]
-				runtime.registry.rollback(started.Name())
+				runtime.registry.Rollback(started.Name())
 				cleanupErr = errors.Join(cleanupErr, closeExtension(ctx, started))
 			}
 			runtime.started = nil
@@ -67,7 +68,7 @@ func (runtime *extensionRuntime) start(ctx context.Context) error {
 		}
 		runtime.started = append(runtime.started, extension)
 	}
-	runtime.registry.freeze()
+	runtime.registry.Freeze()
 	return nil
 }
 
