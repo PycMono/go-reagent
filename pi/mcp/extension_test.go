@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/extension"
 )
 
 type extensionClientFake struct {
@@ -129,11 +129,11 @@ func TestExtensionValidatesOptionsAndPropagatesRegistrationFailure(t *testing.T)
 	}
 }
 
-var _ pi.Extension = (*extension)(nil)
-var _ pi.ExtensionCloser = (*extension)(nil)
+var _ extension.Extension = (*mcpExtension)(nil)
+var _ extension.Closer = (*mcpExtension)(nil)
 
 // buildTestExtension 替代已删除的生产辅助函数：归一化选项后直接用 fake client 组装。
-func buildTestExtension(options ExtensionOptions, client extensionClient) (*extension, error) {
+func buildTestExtension(options ExtensionOptions, client extensionClient) (*mcpExtension, error) {
 	normalized, err := normalizeExtensionOptions(options)
 	if err != nil {
 		return nil, err

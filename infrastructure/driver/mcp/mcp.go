@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/extension"
 	pimcp "github.com/PycMono/go-reagent/pi/mcp"
 	"go.uber.org/fx"
 )
 
 type ExtensionsOut struct {
 	fx.Out
-	Extensions []pi.Extension `group:"agent_extensions,flatten"`
+	Extensions []extension.Extension `group:"agent_extensions,flatten"`
 }
 
 func NewExtensions(cfg *config.Config) (ExtensionsOut, error) {

@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/extension"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx"
@@ -109,6 +111,30 @@ type registerTestProvider struct {
 	calls int
 }
 
+// registerTestExtension 是经 Extension API 注册一个 Tool 的测试扩展。
+type registerTestExtension struct {
+	name   string
+	events *[]string
+	tool   string
+}
+
+func (e *registerTestExtension) Name() string { return e.name }
+
+func (e *registerTestExtension) Register(_ context.Context, api extension.API) error {
+	*e.events = append(*e.events, "start:"+e.name)
+	return api.RegisterTool(registerTestTool(e.tool))
+}
+
+type registerTestTool string
+
+func (t registerTestTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{Name: string(t), InputSchema: map[string]any{"type": "object"}}
+}
+
+func (registerTestTool) Execute(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
+	return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
+}
+
 func (p *registerTestProvider) Stream(context.Context, []ai.Message, []ai.ToolDefinition) ai.Stream {
 	p.calls++
 	message := &ai.Message{
@@ -190,8 +216,8 @@ func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
 		t,
 		CoreRegister,
 		fx.Provide(fx.Annotate(
-			func() Extension {
-				return &extensionFake{name: "mcp:test", events: &events, tool: "remote_tool"}
+			func() extension.Extension {
+				return &registerTestExtension{name: "mcp:test", events: &events, tool: "remote_tool"}
 			},
 			fx.ResultTags(`group:"agent_extensions"`),
 		)),
@@ -218,7 +244,7 @@ func resolveRegisteredToolNames(t *testing.T, register fx.Option) []string {
 	app := fxtest.New(
 		t,
 		register,
-		fx.Provide(newFXToolRegistry, newExtensionRuntime, newFXToolRuntime),
+		fx.Provide(newFXToolRegistry, extension.NewRuntime, newFXToolRuntime),
 		fx.Supply(WorkDir(t.TempDir())),
 		fx.Populate(&runtime),
 	)
