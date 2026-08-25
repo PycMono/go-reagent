@@ -1,4 +1,4 @@
-package pi
+package extension
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"go.uber.org/fx"
 )
 
-type extensionRuntimeParams struct {
+type Params struct {
 	fx.In
 
 	Lifecycle  fx.Lifecycle
@@ -19,13 +19,13 @@ type extensionRuntimeParams struct {
 	Extensions []Extension `group:"agent_extensions"`
 }
 
-type extensionRuntime struct {
+type Runtime struct {
 	registry   *toolexec.Registry
 	extensions []Extension
 	started    []Extension
 }
 
-func newExtensionRuntime(params extensionRuntimeParams) (*extensionRuntime, error) {
+func NewRuntime(params Params) (*Runtime, error) {
 	extensions := append([]Extension(nil), params.Extensions...)
 	seen := make(map[string]struct{}, len(extensions))
 	for _, extension := range extensions {
@@ -46,16 +46,16 @@ func newExtensionRuntime(params extensionRuntimeParams) (*extensionRuntime, erro
 	}
 	sort.Slice(extensions, func(i, j int) bool { return extensions[i].Name() < extensions[j].Name() })
 
-	runtime := &extensionRuntime{registry: params.Registry, extensions: extensions}
+	runtime := &Runtime{registry: params.Registry, extensions: extensions}
 	params.Lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
 	return runtime, nil
 }
 
-func (runtime *extensionRuntime) start(ctx context.Context) error {
+func (runtime *Runtime) start(ctx context.Context) error {
 	for _, extension := range runtime.extensions {
 		name := extension.Name()
-		api := extensionAPI{registry: runtime.registry, owner: name}
-		if err := extension.Register(ctx, api); err != nil {
+		extAPI := api{registry: runtime.registry, owner: name}
+		if err := extension.Register(ctx, extAPI); err != nil {
 			runtime.registry.Rollback(name)
 			cleanupErr := closeExtension(ctx, extension)
 			for index := len(runtime.started) - 1; index >= 0; index-- {
@@ -72,7 +72,7 @@ func (runtime *extensionRuntime) start(ctx context.Context) error {
 	return nil
 }
 
-func (runtime *extensionRuntime) stop(ctx context.Context) error {
+func (runtime *Runtime) stop(ctx context.Context) error {
 	var joined error
 	for index := len(runtime.started) - 1; index >= 0; index-- {
 		extension := runtime.started[index]
@@ -83,7 +83,7 @@ func (runtime *extensionRuntime) stop(ctx context.Context) error {
 }
 
 func closeExtension(ctx context.Context, extension Extension) error {
-	closer, ok := extension.(ExtensionCloser)
+	closer, ok := extension.(Closer)
 	if !ok {
 		return nil
 	}

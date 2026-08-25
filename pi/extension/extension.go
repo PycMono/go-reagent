@@ -1,4 +1,6 @@
-package pi
+// Package extension 定义 Agent 的扩展契约：扩展在启动期经 API 注册
+// Tool，可实现 Closer 参与停机清理。
+package extension
 
 import (
 	"context"
@@ -10,14 +12,14 @@ import (
 
 type Extension interface {
 	Name() string
-	Register(context.Context, ExtensionAPI) error
+	Register(context.Context, API) error
 }
 
-type ExtensionAPI interface {
+type API interface {
 	RegisterTool(ai.Tool) error
 }
 
-type ExtensionCloser interface {
+type Closer interface {
 	Close(context.Context) error
 }
 
@@ -35,11 +37,11 @@ func isNilExtension(extension Extension) bool {
 	}
 }
 
-type extensionAPI struct {
+type api struct {
 	registry *toolexec.Registry
 	owner    string
 }
 
-func (api extensionAPI) RegisterTool(tool ai.Tool) error {
-	return api.registry.Register(api.owner, tool)
+func (a api) RegisterTool(tool ai.Tool) error {
+	return a.registry.Register(a.owner, tool)
 }

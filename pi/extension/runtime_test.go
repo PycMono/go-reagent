@@ -1,4 +1,4 @@
-package pi
+package extension
 
 import (
 	"context"
@@ -13,21 +13,21 @@ import (
 	"go.uber.org/fx/fxtest"
 )
 
-// extensionTestTool 是扩展注册用的最小 ai.Tool 实现。
-type extensionTestTool string
+// testTool 是扩展注册用的最小 ai.Tool 实现。
+type testTool string
 
-func (tool extensionTestTool) Definition() ai.ToolDefinition {
+func (tool testTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:        string(tool),
 		InputSchema: map[string]any{"type": "object"},
 	}
 }
 
-func (extensionTestTool) Execute(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
+func (testTool) Execute(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
 	return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 }
 
-type extensionFake struct {
+type fakeExtension struct {
 	name        string
 	events      *[]string
 	tool        string
@@ -35,19 +35,19 @@ type extensionFake struct {
 	closeErr    error
 }
 
-func (extension *extensionFake) Name() string { return extension.name }
+func (extension *fakeExtension) Name() string { return extension.name }
 
-func (extension *extensionFake) Register(_ context.Context, api ExtensionAPI) error {
+func (extension *fakeExtension) Register(_ context.Context, api API) error {
 	*extension.events = append(*extension.events, "start:"+extension.name)
 	if extension.tool != "" {
-		if err := api.RegisterTool(extensionTestTool(extension.tool)); err != nil {
+		if err := api.RegisterTool(testTool(extension.tool)); err != nil {
 			return err
 		}
 	}
 	return extension.registerErr
 }
 
-func (extension *extensionFake) Close(context.Context) error {
+func (extension *fakeExtension) Close(context.Context) error {
 	*extension.events = append(*extension.events, "stop:"+extension.name)
 	return extension.closeErr
 }
@@ -59,12 +59,12 @@ func TestExtensionRuntimeStartsSortedAndStopsReversed(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	_, err = newExtensionRuntime(extensionRuntimeParams{
+	_, err = NewRuntime(Params{
 		Lifecycle: lifecycle,
 		Registry:  registry,
 		Extensions: []Extension{
-			&extensionFake{name: "zeta", events: &events},
-			&extensionFake{name: "alpha", events: &events},
+			&fakeExtension{name: "zeta", events: &events},
+			&fakeExtension{name: "alpha", events: &events},
 		},
 	})
 	if err != nil {
@@ -85,12 +85,12 @@ func TestExtensionRuntimeRollsBackAndClosesAfterStartFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	_, err = newExtensionRuntime(extensionRuntimeParams{
+	_, err = NewRuntime(Params{
 		Lifecycle: lifecycle,
 		Registry:  registry,
 		Extensions: []Extension{
-			&extensionFake{name: "alpha", events: &events, tool: "alpha_tool"},
-			&extensionFake{name: "zeta", events: &events, tool: "secret_tool", registerErr: errors.New("discover failed")},
+			&fakeExtension{name: "alpha", events: &events, tool: "alpha_tool"},
+			&fakeExtension{name: "zeta", events: &events, tool: "secret_tool", registerErr: errors.New("discover failed")},
 		},
 	})
 	if err != nil {
@@ -111,16 +111,16 @@ func TestExtensionRuntimeRollsBackAndClosesAfterStartFailure(t *testing.T) {
 
 func TestExtensionRuntimeRejectsInvalidExtensions(t *testing.T) {
 	var events []string
-	var typedNil *extensionFake
+	var typedNil *fakeExtension
 	tests := []struct {
 		name       string
 		extensions []Extension
 	}{
 		{name: "typed nil", extensions: []Extension{typedNil}},
-		{name: "blank", extensions: []Extension{&extensionFake{name: "  ", events: &events}}},
+		{name: "blank", extensions: []Extension{&fakeExtension{name: "  ", events: &events}}},
 		{name: "duplicate", extensions: []Extension{
-			&extensionFake{name: "same", events: &events},
-			&extensionFake{name: "same", events: &events},
+			&fakeExtension{name: "same", events: &events},
+			&fakeExtension{name: "same", events: &events},
 		}},
 	}
 	for _, test := range tests {
@@ -129,7 +129,7 @@ func TestExtensionRuntimeRejectsInvalidExtensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = newExtensionRuntime(extensionRuntimeParams{
+			_, err = NewRuntime(Params{
 				Lifecycle:  fxtest.NewLifecycle(t),
 				Registry:   registry,
 				Extensions: test.extensions,
@@ -148,12 +148,12 @@ func TestExtensionRuntimeJoinsCloseErrorsAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := fxtest.NewLifecycle(t)
-	_, err = newExtensionRuntime(extensionRuntimeParams{
+	_, err = NewRuntime(Params{
 		Lifecycle: lifecycle,
 		Registry:  registry,
 		Extensions: []Extension{
-			&extensionFake{name: "alpha", events: &events, closeErr: errors.New("alpha close")},
-			&extensionFake{name: "zeta", events: &events, closeErr: errors.New("zeta close")},
+			&fakeExtension{name: "alpha", events: &events, closeErr: errors.New("alpha close")},
+			&fakeExtension{name: "zeta", events: &events, closeErr: errors.New("zeta close")},
 		},
 	})
 	if err != nil {

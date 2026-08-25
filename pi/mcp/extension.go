@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/extension"
 )
 
 const mcpClientVersion = "1"
@@ -34,14 +34,14 @@ type extensionClient interface {
 	Close(context.Context) error
 }
 
-type extension struct {
+type mcpExtension struct {
 	name       string
 	allowTools []string
 	toolPrefix string
 	client     extensionClient
 }
 
-func NewExtension(options ExtensionOptions) (pi.Extension, error) {
+func NewExtension(options ExtensionOptions) (extension.Extension, error) {
 	normalized, err := normalizeExtensionOptions(options)
 	if err != nil {
 		return nil, err
@@ -61,8 +61,8 @@ func NewExtension(options ExtensionOptions) (pi.Extension, error) {
 	return buildExtension(normalized, client), nil
 }
 
-func buildExtension(options ExtensionOptions, client extensionClient) *extension {
-	return &extension{
+func buildExtension(options ExtensionOptions, client extensionClient) *mcpExtension {
+	return &mcpExtension{
 		name:       "mcp:" + options.Name,
 		allowTools: append([]string(nil), options.AllowTools...),
 		toolPrefix: options.ToolPrefix,
@@ -99,9 +99,9 @@ func normalizeExtensionOptions(options ExtensionOptions) (ExtensionOptions, erro
 	return options, nil
 }
 
-func (e *extension) Name() string { return e.name }
+func (e *mcpExtension) Name() string { return e.name }
 
-func (e *extension) Register(ctx context.Context, api pi.ExtensionAPI) error {
+func (e *mcpExtension) Register(ctx context.Context, api extension.API) error {
 	if err := e.client.Initialize(ctx); err != nil {
 		return fmt.Errorf("initialize extension %q: %w", e.name, err)
 	}
@@ -139,9 +139,9 @@ func (e *extension) Register(ctx context.Context, api pi.ExtensionAPI) error {
 	return nil
 }
 
-func (e *extension) Close(ctx context.Context) error {
+func (e *mcpExtension) Close(ctx context.Context) error {
 	return e.client.Close(ctx)
 }
 
-var _ pi.Extension = (*extension)(nil)
-var _ pi.ExtensionCloser = (*extension)(nil)
+var _ extension.Extension = (*mcpExtension)(nil)
+var _ extension.Closer = (*mcpExtension)(nil)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/extension"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
@@ -27,7 +28,7 @@ var CoreRegister = fx.Options(
 		newContextBuilder,
 		newProvider,
 		newFXToolRegistry,
-		newExtensionRuntime,
+		extension.NewRuntime,
 		newFXToolRuntime,
 		newScheduler,
 		newLoop,
@@ -106,7 +107,7 @@ type subagentBinderParams struct {
 	Registry  *toolexec.Registry
 	// Runtime 仅表达构造顺序：binder 的 OnStart 必须在 extensionRuntime
 	// 注册 MCP 工具并 freeze 之后执行。
-	Runtime     *extensionRuntime
+	Runtime     *extension.Runtime
 	Tools       []ai.Tool `group:"agent_tools"`
 	ToolRuntime toolexec.Executor
 	Provider    ai.Provider
@@ -229,7 +230,7 @@ type toolRuntimeParams struct {
 	fx.In
 	Registry *toolexec.Registry
 	// Ext 仅用于 fx 构造顺序约束：MCP 工具注册并 freeze 之后才建 Runtime。
-	Ext   *extensionRuntime
+	Ext   *extension.Runtime
 	Extra ExtraToolHandlers `optional:"true"`
 }
 
