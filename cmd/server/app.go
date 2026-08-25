@@ -25,6 +25,7 @@ var Register = fx.Options(
 		config.NewPlatform,
 		config.NewWorkDir,
 		config.NewCompactionConfig,
+		config.NewExtraToolHandlers,
 		agentprofiledriver.NewCatalog,
 	),
 )

@@ -18,6 +18,8 @@ type Config struct {
 	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	MCP             MCPConfig           `json:"mcp" yaml:"mcp" toml:"mcp"`
 	Notice          NoticeConfig        `json:"notice" yaml:"notice" toml:"notice"`
+	Permissions     PermissionsConfig   `json:"permissions" yaml:"permissions" toml:"permissions"`
+	Tools           ToolsConfig         `json:"tools" yaml:"tools" toml:"tools"`
 	Conversation    ConversationConfig  `json:"conversation" yaml:"conversation" toml:"conversation"`
 	Redis           RedisConfig         `json:"redis" yaml:"redis" toml:"redis"`
 	MySQL           MySQLConfig         `json:"mysql" yaml:"mysql" toml:"mysql"`
@@ -133,4 +135,42 @@ type NoticeConfig struct {
 
 type NoticeWeComConfig struct {
 	WebhookURL string `json:"webhook_url" yaml:"webhook_url" toml:"webhook_url"`
+}
+
+// PermissionsConfig 是 Tool 调用的权限策略。规则为空表示不启用权限拦截，
+// ToolRuntime 保持默认中间件链。
+type PermissionsConfig struct {
+	Rules []PermissionRuleConfig `json:"rules" yaml:"rules" toml:"rules"`
+}
+
+// PermissionRuleConfig 是一条权限规则：工具名 + 一组参数正则（匹配
+// tool_call 的原始参数 JSON），命中任一正则即按 Effect 处置。
+type PermissionRuleConfig struct {
+	Tool string `json:"tool" yaml:"tool" toml:"tool"`
+	// Effect 本期仅接受 deny；allow/ask 预留给三态权限与人工审批，
+	// 其他值在 Load 时启动失败（与 ObservabilityContentConfig.Mode 同惯例）。
+	Effect string `json:"effect" yaml:"effect" toml:"effect"`
+	// Patterns 至少一条，每条必须是合法正则（Load 时编译校验）。
+	Patterns []string `json:"patterns" yaml:"patterns" toml:"patterns"`
+	// Reason 是可选的拒绝原因，会随错误返回给模型阅读。
+	Reason string `json:"reason" yaml:"reason" toml:"reason"`
+}
+
+// ToolsConfig 是 Tool 执行的可靠性策略。零值表示全部关闭：无超时兜底、
+// 不重试，链保持纯默认。
+type ToolsConfig struct {
+	// TimeoutSeconds 是单次 Tool 执行的超时秒数（协作式取消），0 表示不启用。
+	TimeoutSeconds int             `json:"timeout_seconds" yaml:"timeout_seconds" toml:"timeout_seconds"`
+	Retry          ToolRetryConfig `json:"retry" yaml:"retry" toml:"retry"`
+}
+
+// ToolRetryConfig 是瞬态失败重试策略，只对白名单中的幂等工具生效。
+type ToolRetryConfig struct {
+	// Attempts 是总尝试次数（含首次），<=1 表示不重试，上限 5。
+	Attempts int `json:"attempts" yaml:"attempts" toml:"attempts"`
+	// BackoffMs 是第 N 次重试前的等待毫秒基数（线性递增）；Attempts>1
+	// 且未配置时归一化为 200。
+	BackoffMs int `json:"backoff_ms" yaml:"backoff_ms" toml:"backoff_ms"`
+	// Tools 是允许重试的工具白名单；Attempts>1 时必填。
+	Tools []string `json:"tools" yaml:"tools" toml:"tools"`
 }

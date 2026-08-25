@@ -6,19 +6,21 @@ go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Co
 
 ```text
 pi/ai <- pi/harness <- pi
+pi/ai <- pi/middleware <- pi
 pi/ai <-------------- pi
-config -> pi/ai/providers
+config -> pi/ai/providers + pi/middleware
 cmd/server -> config + conversation + infrastructure + pi
 ```
 
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
 - `pi/ai/providers`：Provider 配置，以及 OpenAI/Anthropic 官方 SDK 适配器。
-- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、Middleware、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi/middleware`：Tool 执行链的中间件机制与内置 Handler（tracing、panic 恢复、schema 校验、日志、事件转发、权限拦截），详见「Tool 中间件与权限拦截」。
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
-- `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`）。
+- `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`/`NewExtraToolHandlers`）。
 - `cmd/server`：唯一进程入口与组合根，直接组合 `pi`、基础设施、Conversation 业务和 Gin；`application/service/chat`：Conversation 用例。
 
-`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
+`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness`、`pi/middleware` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
 ## Pi SDK 契约
 
@@ -110,6 +112,47 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 默认 SDK 在 Provider 和 Loop 之间强制执行成本计量：每个被接受的 Thinking、Compaction 或 Action 响应都必须有合法 Usage、按配置价格计算的准确成本，并对应一个有序 Invocation。工具循环中的重复 Action 调用也逐次计量。缺失、负数、NaN、无穷值或成本公式不一致都会返回 `ErrorCodeAIGeneration`，不会把未计量响应作为成功结果。自行直接组合根 `pi` 包时，调用方必须提供能返回完整计量 Usage 的 `ai.Provider`；`pi.Loop` 会独立复核这些字段。
 
 `pi.Runner.Run` 通过最后一个参数接收 EventListener；不需要进度事件时传 `nil`。浏览器聊天由 Application Service 把 Agent Event 转换成 SSE 事件。
+
+## Tool 中间件与权限拦截
+
+`pi/middleware` 是 Tool 执行链的中间件包，链式结构即中间件模式：切片顺序即执行顺序、前后置沿链折返、可短路。术语对齐 pi.dev——链上单元是 `Handler`（`func(*Execution)`），被拦截的一次 Tool 执行是 `Execution`，阻断是 `Block(err)`：
+
+```go
+func SchemaValidation(e *middleware.Execution) {
+	if err := e.ValidateArgs(e.Call.Arguments); err != nil {
+		e.Block(pierrors.Wrap(...)) // 记录原因 + 阻断，一步完成
+		return
+	}
+	e.Next()
+}
+```
+
+两条语义铁律（Gin 式索引链的固有性质）：
+
+- 短路必须 `Block`，不能只 `return`——handler 不调 `Next` 直接返回时，外层循环仍会继续执行后续 handler；
+- panic 恢复后必须 `Block`——recover 后控制流回到外层 `Next` 循环。
+
+`Defaults()` 返回默认链：Tracing → PanicRecovery → SchemaValidation → Logging → EventForwarding；ToolRuntime 组装时在末端追加终端 handler `ExecuteTool`。未注册的 Tool 在 ToolRuntime 入口即返回，不经过链、不创建执行 Span。扩展 Handler（权限、重试、超时）通过 `pi.ExtraToolHandlers` 由组合根 fx 注入，按固定顺序追加在默认链之后：**Permission → Retry → Timeout**——权限判定只执行一次；Retry 的后缀即 `[Timeout, ExecuteTool]`，每次重试获得新的执行期限。
+
+三个扩展 Handler 都是 opt-in，由配置驱动（`config.Load` 时 fail-fast 校验）：
+
+```json
+"permissions": {
+	"rules": [
+		{"tool": "exec", "effect": "deny", "patterns": ["rm\\s+-rf", "sudo\\s"], "reason": "命中高危命令黑名单"}
+	]
+},
+"tools": {
+	"timeout_seconds": 60,
+	"retry": {"attempts": 3, "backoff_ms": 200, "tools": ["mcp_search"]}
+}
+```
+
+- **Permission**：规则匹配 tool_call 的**原始参数 JSON**；命中即 `Block`，ErrorCode 为 `tool_permission_denied`，`reason` 随错误返回给模型阅读。`effect` 本期仅接受 `deny`，其他值启动失败（与 `observability.content.mode` 同惯例）。
+- **Retry**：只对白名单中的幂等工具重试瞬态错误（`tool_runtime_failed`、`tool_timeout`），`attempts` 含首次、上限 5，第 N 次重试前等待 `backoff_ms*N`。重试通过索引复位重跑后缀链，后缀 Handler 必须可重入（内置 Handler 均满足）；父 ctx 取消时立即终止退避。`attempts > 1` 时白名单必填，`backoff_ms` 缺省归一化为 200。
+- **Timeout**：协作式单次执行超时（`tool_timeout`），Tool 必须尊重 ctx 才会真正停下；返回前把 `e.Ctx` 还原为父 ctx，因此可被 Retry 安全重跑。父 ctx 的取消/超期不在此覆盖，仍由 ToolRuntime 归一为 `canceled`/`deadline_exceeded`。
+
+全部未配置时 `config.NewExtraToolHandlers` 返回 nil，链保持纯默认零开销。
 
 ## Workspace
 

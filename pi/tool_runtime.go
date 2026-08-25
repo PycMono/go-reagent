@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/middleware"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -23,12 +26,12 @@ type ToolRuntime interface {
 // ToolRuntimeOptions contains the immutable tool and middleware snapshot.
 type ToolRuntimeOptions struct {
 	Tools       []ai.Tool
-	Middlewares []MiddlewareRegistration
+	Middlewares []middleware.Handler
 }
 
 type toolRuntime struct {
 	registry *toolRegistry
-	handler  Handler
+	handlers []middleware.Handler
 }
 
 func NewToolRuntime(options ToolRuntimeOptions) (ToolRuntime, error) {
@@ -40,8 +43,11 @@ func NewToolRuntime(options ToolRuntimeOptions) (ToolRuntime, error) {
 	return newToolRuntimeFromRegistry(registry, options.Middlewares), nil
 }
 
-func newToolRuntimeFromRegistry(registry *toolRegistry, middlewares []MiddlewareRegistration) ToolRuntime {
-	return &toolRuntime{registry: registry, handler: composeHandler(middlewares)}
+func newToolRuntimeFromRegistry(registry *toolRegistry, middlewares []middleware.Handler) ToolRuntime {
+	// 追加终端 handler 时复制切片，避免污染调用方的底层数组。
+	handlers := append([]middleware.Handler{}, middlewares...)
+	handlers = append(handlers, middleware.ExecuteTool)
+	return &toolRuntime{registry: registry, handlers: handlers}
 }
 
 func (r *toolRuntime) Definitions() []ai.ToolDefinition {
@@ -61,14 +67,16 @@ func (r *toolRuntime) Execute(
 		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
 	observe(ctx, observer, NewToolStart(call))
-	execution := Execution{
+	execution := &middleware.Execution{
+		Ctx:          ctx,
 		Call:         call,
 		Definition:   entry.definition,
 		Tool:         entry.tool,
-		Observer:     observer,
+		Observer:     adaptUpdateObserver(observer),
 		ValidateArgs: entry.validateArgs,
 	}
-	output, err := r.handler(ctx, execution, nil)
+	execution.Run(r.handlers)
+	output, err := execution.Output, execution.Err
 	if contextErr := ctx.Err(); contextErr != nil {
 		err = contextErr
 	}
@@ -78,6 +86,17 @@ func (r *toolRuntime) Execute(
 		return result, err
 	}
 	return result, nil
+}
+
+// adaptUpdateObserver 把 ToolEventObserver 适配为中间件包的 UpdateObserver，
+// ToolEvent 的构造留在主包，middleware 包不反向依赖 pi。
+func adaptUpdateObserver(observer ToolEventObserver) middleware.UpdateObserver {
+	if observer == nil {
+		return nil
+	}
+	return func(ctx context.Context, call ai.ToolCall, update ai.ToolUpdate) {
+		observer(ctx, NewToolUpdate(call, update))
+	}
 }
 
 func observe(ctx context.Context, observer ToolEventObserver, event ToolEvent) {
@@ -118,6 +137,69 @@ func toolErrorText(err error) string {
 
 func errorResult(call ai.ToolCall, err error) ToolResult {
 	return normalizeToolResult(call, ai.ToolOutput{}, err)
+}
+
+const (
+	maxToolOutputBytes         = 50 * 1024
+	toolOutputTruncationMarker = "\n[output truncated]"
+)
+
+func limitToolOutput(output ai.ToolOutput) ai.ToolOutput {
+	limited, truncated := limitContent(output.Content)
+	output.Content = limited
+	if truncated {
+		output.Details = withTruncationDetail(output.Details)
+	}
+	return output
+}
+
+func limitContent(content []ai.ContentBlock) ([]ai.ContentBlock, bool) {
+	remaining := maxToolOutputBytes
+	limited := make([]ai.ContentBlock, 0, len(content)+1)
+	truncated := false
+	for _, block := range content {
+		if block.Type != ai.ContentTypeText {
+			limited = append(limited, block)
+			continue
+		}
+		text := strings.ToValidUTF8(block.Text, "�")
+		if len(text) <= remaining {
+			block.Text = text
+			limited = append(limited, block)
+			remaining -= len(text)
+			continue
+		}
+		cut := remaining
+		for cut > 0 && !utf8.ValidString(text[:cut]) {
+			cut--
+		}
+		block.Text = text[:cut]
+		limited = append(limited, block)
+		truncated = true
+		break
+	}
+	if !truncated && len(limited) < len(content) {
+		truncated = true
+	}
+	if truncated {
+		limited = append(limited, ai.TextBlock(toolOutputTruncationMarker))
+	}
+	return limited, truncated
+}
+
+func withTruncationDetail(details any) any {
+	if existing, ok := details.(map[string]any); ok {
+		cloned := make(map[string]any, len(existing)+1)
+		for key, value := range existing {
+			cloned[key] = value
+		}
+		cloned["truncated"] = true
+		return cloned
+	}
+	if details == nil {
+		return map[string]any{"truncated": true}
+	}
+	return map[string]any{"tool_details": details, "truncated": true}
 }
 
 func compileSchemaValidator(definition ai.ToolDefinition) (func(json.RawMessage) error, error) {
