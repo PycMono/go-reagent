@@ -166,7 +166,7 @@ OpenClaw 没有把 retry、timeout、fallback、compaction、预算和 loop guar
 ```text
 pi/loopdetect/
 ├── config.go                    # Config、默认/固定策略和校验
-├── types.go                     # Admission、Intervention、Pattern、Level
+├── types.go                     # Admission、Decision、Intervention、Pattern、Level
 ├── fingerprint.go               # Call/Outcome canonicalization 与 SHA-256
 ├── detector.go                  # 历史窗口、准入、提醒和恢复状态机
 ├── post_compaction.go           # Compaction 后 3-outcome guard
@@ -260,13 +260,13 @@ const (
 ```go
 package loopdetect
 
-type AdmissionAction string
+type Decision string
 
 const (
-    AdmissionAllow     AdmissionAction = "allow"
-    AdmissionWarn      AdmissionAction = "warn"
-    AdmissionRecover   AdmissionAction = "recover"
-    AdmissionTerminate AdmissionAction = "terminate"
+    DecisionAllow     Decision = "allow"
+    DecisionWarn      Decision = "warn"
+    DecisionRecover   Decision = "recover"
+    DecisionTerminate Decision = "terminate"
 )
 
 type Level string
@@ -295,7 +295,7 @@ type Intervention struct {
 }
 
 type Admission struct {
-    Action       AdmissionAction
+    Decision     Decision
     Intervention *Intervention
 }
 
@@ -311,14 +311,23 @@ func (d *Detector) RecordToolBatchOutcome(
 func (d *Detector) ArmPostCompaction()
 ```
 
+命名职责固定为：
+
+- `AdmitToolBatch`：执行副作用前的准入检查，沿用 OpenClaw `admitToolCallBatch` 的 admission-control 语义；
+- `Admission`：一次整批准入的完整返回值；
+- `Decision`：Loop 必须执行的明确决定；
+- `Intervention`：产生 Warn/Recover/Terminate 决定的安全行为证据。
+
+pi.dev 使用的是 `beforeToolCall` + `BeforeToolCallResult.block` 生命周期命名，没有 `Admission` 类型；本设计不是声称与 pi.dev 同名，而是针对批次原子准入采用 OpenClaw 的术语，并用 Go 显式 `Decision` 代替隐式的 nil/undefined 分支。
+
 约束：
 
-- `AdmissionAllow` 的 `Intervention` 必须为 nil；
-- `AdmissionWarn` 允许工具批次执行，并携带一次只对模型可见的提醒证据；
-- `AdmissionRecover` 和 `AdmissionTerminate` 都不允许任何工具开始；
+- `DecisionAllow` 的 `Intervention` 必须为 nil；
+- `DecisionWarn` 允许工具批次执行，并携带一次只对模型可见的提醒证据；
+- `DecisionRecover` 和 `DecisionTerminate` 都不允许任何工具开始；
 - `RecordToolBatchOutcome` 要求 `len(calls) == len(results)`、`calls[i].ID == results[i].ToolCallID` 且工具名一致；Loop 在调用前检查该不变量，违反时返回 internal error，不进入 Detector；Detector 自身对不匹配输入不修改状态并返回 nil；
 - `RecordToolBatchOutcome` 在普通记账时返回 nil，只在完成结果后需要立即干预时返回值；第一版的立即干预只有 post-compaction 终止；
-- Config 关闭时，`AdmitToolBatch` 恒为 Allow，另外两个方法无副作用；
+- Config 关闭时，`AdmitToolBatch` 恒返回 `DecisionAllow`，另外两个方法无副作用；
 - Detector 不暴露内部 hash、参数或结果，也不返回最终 `governor.Termination`。
 
 `Intervention.ToolNames` 必须去重并按字典序排序，确保日志和测试稳定。它只含模型已经知道的工具名，不含参数、结果、路径、命令、URL 或消息正文。
@@ -404,7 +413,7 @@ post-compaction guard 状态
 在最近 16 条历史中，对同一 Call signature 的出现次数计数，并把本批当前调用计入 projected count。
 
 - projected count 小于 3：无干预；
-- projected count 达到 3：返回一次 `AdmissionWarn`；
+- projected count 达到 3：返回一次 `DecisionWarn`；
 - 之后相同 warning key 不重复提醒；
 - 仅凭相同参数不能 critical，因为轮询或幂等读取可能返回新状态。
 
@@ -462,13 +471,13 @@ Detector 同时保留最近 16 条普通历史，因此 arm 时可以快照压�
 
 ```text
 第一次 critical
-    -> AdmissionRecover
+    -> DecisionRecover
     -> 阻止整个工具批次
     -> 合成完整 Tool Results
     -> 允许模型再生成一个 turn
 
 同一 Run 再次出现任意 critical
-    -> AdmissionTerminate
+    -> DecisionTerminate
     -> 不提交当前 tool-calling Assistant
     -> 不执行工具
     -> 返回 loop_detected
