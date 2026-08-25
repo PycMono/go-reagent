@@ -1,4 +1,4 @@
-package pi
+package governor
 
 import (
 	"context"
@@ -23,14 +23,14 @@ func governorUsage(input, output int64) ai.Usage {
 }
 
 func TestGovernorCountsEachInvocationOnce(t *testing.T) {
-	governor := newRunGovernor(RunLimits{MaxTotalTokens: 100})
-	if err := governor.observe(ModelInvocation{Sequence: 1, Usage: governorUsage(10, 10)}); err != nil {
+	governor := New(Limits{MaxTotalTokens: 100})
+	if err := governor.Observe(Invocation{Sequence: 1, Usage: governorUsage(10, 10)}); err != nil {
 		t.Fatal(err)
 	}
 	if governor.totals.Invocations != 1 || governor.totals.TotalTokens != 20 {
 		t.Fatalf("totals = %#v", governor.totals)
 	}
-	if err := governor.observe(ModelInvocation{Sequence: 2, Usage: governorUsage(10, 10)}); err != nil {
+	if err := governor.Observe(Invocation{Sequence: 2, Usage: governorUsage(10, 10)}); err != nil {
 		t.Fatal(err)
 	}
 	if governor.totals.Invocations != 2 || governor.totals.TotalTokens != 40 {
@@ -39,22 +39,22 @@ func TestGovernorCountsEachInvocationOnce(t *testing.T) {
 }
 
 func TestGovernorRejectsTokenOverflow(t *testing.T) {
-	governor := newRunGovernor(RunLimits{})
+	governor := New(Limits{})
 	usage := ai.Usage{
 		PlatformID: "test", Model: "model",
 		InputTokens: math.MaxInt64 - 1,
 	}
-	if err := governor.observe(ModelInvocation{Sequence: 1, Usage: usage}); err != nil {
+	if err := governor.Observe(Invocation{Sequence: 1, Usage: usage}); err != nil {
 		t.Fatal(err)
 	}
-	err := governor.observe(ModelInvocation{Sequence: 2, Usage: usage})
+	err := governor.Observe(Invocation{Sequence: 2, Usage: usage})
 	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeInternal {
 		t.Fatalf("observe() error = %v, want internal overflow error", err)
 	}
 }
 
 func TestGovernorCompensatedCostSummation(t *testing.T) {
-	governor := newRunGovernor(RunLimits{})
+	governor := New(Limits{})
 	usage := ai.Usage{
 		PlatformID: "test", Model: "model",
 		InputTokens:                   1000,
@@ -62,7 +62,7 @@ func TestGovernorCompensatedCostSummation(t *testing.T) {
 		CostUSD:                       0.001,
 	}
 	for range 1000 {
-		if err := governor.observe(ModelInvocation{Usage: usage}); err != nil {
+		if err := governor.Observe(Invocation{Usage: usage}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -72,19 +72,19 @@ func TestGovernorCompensatedCostSummation(t *testing.T) {
 }
 
 func TestTerminationFromErrorPriority(t *testing.T) {
-	limitErr := pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &runLimitError{kind: RunLimitCostUSD})
+	limitErr := pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitCostUSD})
 	joined := errors.Join(context.Canceled, limitErr)
-	if got := terminationFromError(joined, RunTotals{}); got.Reason != RunTerminationCanceled {
+	if got := TerminationFromError(joined, Totals{}); got.Reason != TerminationCanceled {
 		t.Fatalf("reason = %q, want canceled priority", got.Reason)
 	}
-	if got := terminationFromError(limitErr, RunTotals{}); got.Reason != RunTerminationMaxCost ||
-		got.Limit != RunLimitCostUSD {
+	if got := TerminationFromError(limitErr, Totals{}); got.Reason != TerminationMaxCost ||
+		got.Limit != LimitCostUSD {
 		t.Fatalf("termination = %#v, want max_cost", got)
 	}
-	if got := terminationFromError(errors.New("boom"), RunTotals{}); got.Reason != RunTerminationError {
+	if got := TerminationFromError(errors.New("boom"), Totals{}); got.Reason != TerminationError {
 		t.Fatalf("reason = %q, want error", got.Reason)
 	}
-	if got := terminationFromError(nil, RunTotals{}); got.Reason != RunTerminationCompleted {
+	if got := TerminationFromError(nil, Totals{}); got.Reason != TerminationCompleted {
 		t.Fatalf("reason = %q, want completed", got.Reason)
 	}
 }

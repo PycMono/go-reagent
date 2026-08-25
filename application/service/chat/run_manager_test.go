@@ -15,6 +15,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 )
 
 type controllableRunner struct {
@@ -245,9 +246,9 @@ func TestRunBudgetFailureExposesSafeTerminationReason(t *testing.T) {
 	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat", ProfileCode: "general"}}
 	runner := &controllableRunner{
 		release: make(chan error, 1),
-		result: pi.RunResult{Termination: pi.RunTermination{
-			Reason: pi.RunTerminationMaxTurns,
-			Limit:  pi.RunLimitTurns,
+		result: pi.RunResult{Termination: governor.Termination{
+			Reason: governor.TerminationMaxTurns,
+			Limit:  governor.LimitTurns,
 		}},
 	}
 	service := newRunService(repo, runner, "run-1")
@@ -261,8 +262,8 @@ func TestRunBudgetFailureExposesSafeTerminationReason(t *testing.T) {
 	if len(events) != 1 || events[0].Type != vo.RunEventRunFailed || events[0].Error == nil {
 		t.Fatalf("events = %#v", events)
 	}
-	if events[0].Error.Reason != string(pi.RunTerminationMaxTurns) {
-		t.Fatalf("reason = %q, want %q", events[0].Error.Reason, pi.RunTerminationMaxTurns)
+	if events[0].Error.Reason != string(governor.TerminationMaxTurns) {
+		t.Fatalf("reason = %q, want %q", events[0].Error.Reason, governor.TerminationMaxTurns)
 	}
 	if !strings.Contains(events[0].Error.Message, "资源上限") ||
 		strings.Contains(events[0].Error.Message, "turns") {

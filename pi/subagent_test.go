@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/middleware"
@@ -184,9 +185,9 @@ func runParentForTest(
 	ctx context.Context,
 	provider ai.Provider,
 	registry *toolexec.Registry,
-	limits RunLimits,
+	limits governor.Limits,
 	listener EventListener,
-) (loopResult, *runGovernor, error) {
+) (loopResult, *governor.Governor, error) {
 	t.Helper()
 	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	parentLoop := NewLoop(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools))
@@ -198,15 +199,15 @@ func runParentForTest(
 		Tools:             toolRuntime.Definitions(),
 		CurrentInputIndex: 1,
 	}
-	governor := newRunGovernor(limits)
+	gov := governor.New(limits)
 	if listener == nil {
 		listener = nopListener{}
 	}
-	result, err := parentLoop.run(ctx, runContext, listener, governor)
-	return result, governor, err
+	result, err := parentLoop.run(ctx, runContext, listener, gov)
+	return result, gov, err
 }
 
-func countPhase(invocations []ModelInvocation, phase ModelInvocationPhase) int {
+func countPhase(invocations []governor.Invocation, phase governor.InvocationPhase) int {
 	count := 0
 	for _, invocation := range invocations {
 		if invocation.Phase == phase {
@@ -221,20 +222,20 @@ func TestSubagentEndToEnd(t *testing.T) {
 	registry, _ := newSubagentFixture(t, provider, newResearchSubagentTool())
 	listener := &registerTestRunListener{}
 
-	result, governor, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, listener)
+	result, gov, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, listener)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 
 	// 父账本：主运行 2 次 Action + 子运行 2 次调用（subagent 阶段）。
-	if got := countPhase(result.invocations, ModelInvocationPhaseSubagent); got != 2 {
+	if got := countPhase(result.invocations, governor.PhaseSubagent); got != 2 {
 		t.Fatalf("subagent invocations = %d, want 2", got)
 	}
 	if len(result.invocations) != 4 {
 		t.Fatalf("total invocations = %d, want 4", len(result.invocations))
 	}
 	// 父 Totals 合并子消耗。
-	termination := governor.termination(nil)
+	termination := gov.Termination(nil)
 	if termination.Totals.Invocations != 4 || termination.Totals.InputTokens != 400 {
 		t.Fatalf("totals = %+v, want 4 invocations / 400 input tokens", termination.Totals)
 	}
@@ -268,7 +269,7 @@ func TestSubagentSequencerUniqueAcrossRuns(t *testing.T) {
 	provider := &subagentScriptProvider{costUSD: 0.01}
 	registry, _ := newSubagentFixture(t, provider, newResearchSubagentTool())
 
-	result, _, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil)
+	result, _, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -295,17 +296,17 @@ func TestSubagentParentBudgetTripTerminatesAsMaxCost(t *testing.T) {
 			defaultMaxParallelTools),
 		harness.CompactionConfig{})
 
-	result, governor, err := runParentForTest(t, context.Background(), provider, registry,
-		RunLimits{MaxCostUSD: 0.10}, nil)
+	result, gov, err := runParentForTest(t, context.Background(), provider, registry,
+		governor.Limits{MaxCostUSD: 0.10}, nil)
 	if err == nil {
 		t.Fatal("run() should fail with budget error")
 	}
-	termination := governor.termination(err)
-	if termination.Reason != RunTerminationMaxCost {
-		t.Fatalf("termination reason = %s, want %s (不是 canceled)", termination.Reason, RunTerminationMaxCost)
+	termination := gov.Termination(err)
+	if termination.Reason != governor.TerminationMaxCost {
+		t.Fatalf("termination reason = %s, want %s (不是 canceled)", termination.Reason, governor.TerminationMaxCost)
 	}
 	// 已计量子调用照常入账。
-	if got := countPhase(result.invocations, ModelInvocationPhaseSubagent); got != 1 {
+	if got := countPhase(result.invocations, governor.PhaseSubagent); got != 1 {
 		t.Fatalf("subagent invocations = %d, want 1", got)
 	}
 	// 父 Totals 含子消耗。
@@ -324,12 +325,12 @@ func TestSubagentCancelAccounting(t *testing.T) {
 			return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("搜索结果")}}, nil
 		}})
 
-	result, _, err := runParentForTest(t, ctx, provider, registry, RunLimits{}, nil)
+	result, _, err := runParentForTest(t, ctx, provider, registry, governor.Limits{}, nil)
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("run() error = %v, want context.Canceled", err)
 	}
 	// 取消路径照常入账：子 Action 调用已进入父账本。
-	if got := countPhase(result.invocations, ModelInvocationPhaseSubagent); got != 1 {
+	if got := countPhase(result.invocations, governor.PhaseSubagent); got != 1 {
 		t.Fatalf("subagent invocations after cancel = %d, want 1", got)
 	}
 }
@@ -338,7 +339,7 @@ func TestSubagentBatchCapRejectsExcess(t *testing.T) {
 	provider := &subagentScriptProvider{costUSD: 0.001, parentCallCount: maxSubagentCallsPerBatch + 2}
 	registry, _ := newSubagentFixture(t, provider, newResearchSubagentTool())
 
-	result, governor, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil)
+	result, gov, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -371,18 +372,18 @@ func TestSubagentBatchCapRejectsExcess(t *testing.T) {
 	if rejectedResults != 2 {
 		t.Fatalf("rejected results = %d, want 2", rejectedResults)
 	}
-	if termination := governor.termination(nil); termination.Reason != RunTerminationCompleted {
+	if termination := gov.Termination(nil); termination.Reason != governor.TerminationCompleted {
 		t.Fatalf("termination = %s, want completed（超限不中断运行）", termination.Reason)
 	}
 }
 
 func TestSubagentChildBudgetIndependent(t *testing.T) {
 	tool := newResearchSubagentTool()
-	tool.limits = RunLimits{MaxTurns: 1, MaxCostUSD: 0.3}
+	tool.limits = governor.Limits{MaxTurns: 1, MaxCostUSD: 0.3}
 	provider := &subagentScriptProvider{costUSD: 0.01}
 	registry, _ := newSubagentFixture(t, provider, tool)
 
-	result, governor, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil)
+	result, gov, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("run() error = %v（子预算触顶不应中断父运行）", err)
 	}
@@ -397,7 +398,7 @@ func TestSubagentChildBudgetIndependent(t *testing.T) {
 		t.Fatal("child budget exhaustion must surface as IsError tool result")
 	}
 	// 父 debit 不因子触顶而跳过：父 Totals 含子已消耗。
-	if termination := governor.termination(nil); termination.Totals.Invocations < 3 {
+	if termination := gov.Termination(nil); termination.Totals.Invocations < 3 {
 		t.Fatalf("totals invocations = %d, want >= 3（父 2 + 子 1）", termination.Totals.Invocations)
 	}
 }
@@ -406,7 +407,7 @@ func TestSubagentDepthGuard(t *testing.T) {
 	provider := &subagentScriptProvider{costUSD: 0.01}
 	_, tool := newSubagentFixture(t, provider, newResearchSubagentTool())
 
-	_, err := tool.Execute(withSubagentDepth(context.Background(), maxSubagentDepth),
+	_, err := tool.Execute(governor.WithSubagentDepth(context.Background(), governor.MaxSubagentDepth),
 		json.RawMessage(`{"task":"x"}`), nil)
 	if err == nil {
 		t.Fatal("nested subagent call must be rejected")
@@ -467,7 +468,7 @@ func TestSubagentRejectsNonVisibleToolCall(t *testing.T) {
 		childTools: defs,
 	})
 
-	_, _, err = runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil)
+	_, _, err = runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("run() error = %v（可见性拒绝不应中断运行）", err)
 	}
@@ -547,7 +548,7 @@ func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 	})
 
 	listener := &captureToolListener{}
-	result, _, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, listener)
+	result, _, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, listener)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -587,23 +588,23 @@ func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 }
 
 func TestBatchBudgetDebitAfterExhaustedStillAccumulates(t *testing.T) {
-	governor := newRunGovernor(RunLimits{MaxCostUSD: 0.10})
+	gov := governor.New(governor.Limits{MaxCostUSD: 0.10})
 	_, cancel := context.WithCancelCause(context.Background())
-	account := &batchBudget{governor: governor, cancel: cancel}
-	invocation := func(cost float64) ModelInvocation {
-		return ModelInvocation{Usage: ai.Usage{InputTokens: 100, OutputTokens: 50, CostUSD: cost}}
+	account := governor.NewBatchBudget(gov, cancel)
+	invocation := func(cost float64) governor.Invocation {
+		return governor.Invocation{Usage: ai.Usage{InputTokens: 100, OutputTokens: 50, CostUSD: cost}}
 	}
 
-	firstErr := account.debit(invocation(0.15)) // 触顶
+	firstErr := account.Debit(invocation(0.15)) // 触顶
 	if firstErr == nil {
 		t.Fatal("first debit must trip the parent budget")
 	}
-	secondErr := account.debit(invocation(0.15)) // 触顶后的在飞调用
+	secondErr := account.Debit(invocation(0.15)) // 触顶后的在飞调用
 	if secondErr == nil {
 		t.Fatal("subsequent debit must still report the first budget error")
 	}
 	// 在飞调用照常累加 Totals（账本与 Totals 一致）。
-	termination := governor.termination(secondErr)
+	termination := gov.Termination(secondErr)
 	if termination.Totals.Invocations != 2 || termination.Totals.CostUSD < 0.29 {
 		t.Fatalf("totals = %+v, want 2 invocations and cost ~0.30", termination.Totals)
 	}
@@ -665,7 +666,7 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 		childTools: defs,
 	})
 
-	if _, _, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil); err != nil {
+	if _, _, err := runParentForTest(t, context.Background(), provider, registry, governor.Limits{}, nil); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 	// 跨子运行的 MCP 并发是有意行为，但并发量受 toolexec.Scheduler maxParallel 约束。
@@ -675,18 +676,18 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 }
 
 func TestSubagentLimitScopeAttribution(t *testing.T) {
-	newToolCtx := func(limits RunLimits) (context.Context, context.CancelCauseFunc) {
+	newToolCtx := func(limits governor.Limits) (context.Context, context.CancelCauseFunc) {
 		ctx, cancel := context.WithCancelCause(context.Background())
-		account := &batchBudget{governor: newRunGovernor(limits), cancel: cancel}
-		return withInvocationRecorder(withBatchBudget(ctx, account), &invocationRecorder{}), cancel
+		account := governor.NewBatchBudget(governor.New(limits), cancel)
+		return governor.WithInvocationRecorder(governor.WithBatchBudget(ctx, account), governor.NewInvocationRecorder()), cancel
 	}
 
 	t.Run("simultaneous child and parent trip marks child", func(t *testing.T) {
 		tool := newResearchSubagentTool()
-		tool.limits = RunLimits{MaxTurns: 6, MaxCostUSD: 0.10}
+		tool.limits = governor.Limits{MaxTurns: 6, MaxCostUSD: 0.10}
 		provider := &subagentScriptProvider{costUSD: 0.30} // 单次调用同时越过子、父预算
 		_, tool = newSubagentFixture(t, provider, tool)
-		ctx, cancel := newToolCtx(RunLimits{MaxCostUSD: 0.10})
+		ctx, cancel := newToolCtx(governor.Limits{MaxCostUSD: 0.10})
 		defer cancel(nil)
 
 		output, _ := tool.Execute(ctx, json.RawMessage(`{"task":"调研"}`), nil)
@@ -699,10 +700,10 @@ func TestSubagentLimitScopeAttribution(t *testing.T) {
 
 	t.Run("parent-only trip marks parent", func(t *testing.T) {
 		tool := newResearchSubagentTool()
-		tool.limits = RunLimits{MaxTurns: 6, MaxCostUSD: 1.0} // 子预算充足
+		tool.limits = governor.Limits{MaxTurns: 6, MaxCostUSD: 1.0} // 子预算充足
 		provider := &subagentScriptProvider{costUSD: 0.30}
 		_, tool = newSubagentFixture(t, provider, tool)
-		ctx, cancel := newToolCtx(RunLimits{MaxCostUSD: 0.10})
+		ctx, cancel := newToolCtx(governor.Limits{MaxCostUSD: 0.10})
 		defer cancel(nil)
 
 		output, _ := tool.Execute(ctx, json.RawMessage(`{"task":"调研"}`), nil)
@@ -716,8 +717,8 @@ func TestSubagentLimitScopeAttribution(t *testing.T) {
 	t.Run("cascaded cancel marks parent", func(t *testing.T) {
 		provider := &subagentScriptProvider{costUSD: 0.01}
 		_, tool := newSubagentFixture(t, provider, newResearchSubagentTool())
-		ctx, cancel := newToolCtx(RunLimits{MaxCostUSD: 100})
-		cancel(errParentBudgetExhausted) // sibling 触发父预算，本运行被级联取消
+		ctx, cancel := newToolCtx(governor.Limits{MaxCostUSD: 100})
+		cancel(governor.ErrParentBudgetExhausted) // sibling 触发父预算，本运行被级联取消
 
 		output, _ := tool.Execute(ctx, json.RawMessage(`{"task":"调研"}`), nil)
 		details, _ := output.Details.(map[string]any)
@@ -752,13 +753,13 @@ func TestSubagentInflightSettledAfterBudgetTrip(t *testing.T) {
 		childTools: defs,
 	})
 
-	result, governor, err := runParentForTest(t, context.Background(), provider, registry,
-		RunLimits{MaxCostUSD: 0.10}, nil)
+	result, gov, err := runParentForTest(t, context.Background(), provider, registry,
+		governor.Limits{MaxCostUSD: 0.10}, nil)
 	if err == nil {
 		t.Fatal("run() should fail with parent budget error")
 	}
-	termination := governor.termination(err)
-	if termination.Reason != RunTerminationMaxCost {
+	termination := gov.Termination(err)
+	if termination.Reason != governor.TerminationMaxCost {
 		t.Fatalf("reason = %s, want max_cost", termination.Reason)
 	}
 	// 硬不变量：账本条目数 == Totals.Invocations（触顶后在飞调用照常入账）。
@@ -803,13 +804,13 @@ func TestSubagentCancelVsBudgetRacePrefersParentCancel(t *testing.T) {
 		childTools: defs,
 	})
 
-	_, governor, err := runParentForTest(t, ctx, provider, registry,
-		RunLimits{MaxCostUSD: 0.15}, nil)
+	_, gov, err := runParentForTest(t, ctx, provider, registry,
+		governor.Limits{MaxCostUSD: 0.15}, nil)
 	if err == nil {
 		t.Fatal("run() should fail")
 	}
-	termination := governor.termination(err)
-	if termination.Reason != RunTerminationCanceled {
+	termination := gov.Termination(err)
+	if termination.Reason != governor.TerminationCanceled {
 		t.Fatalf("reason = %s, want canceled（父 ctx 取消优先于预算触顶）", termination.Reason)
 	}
 	// 全部已计量调用入账：父 action + 两个子 action（触顶与取消都不漏账）。

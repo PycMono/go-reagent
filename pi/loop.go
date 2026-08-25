@@ -11,6 +11,7 @@ import (
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -46,7 +47,7 @@ func WithLoopProviderIdentity(providerID, model string) LoopOption {
 
 type loopResult struct {
 	newMessages []ai.Message
-	invocations []ModelInvocation
+	invocations []governor.Invocation
 }
 
 // NewLoop creates the state-machine boundary for Agent execution.
@@ -82,7 +83,7 @@ type invocationObserver func(usage ai.Usage, requestIndex uint32, finishReason s
 // runState 是一次 Run 的全部可变状态。
 type runState struct {
 	newMessages    []ai.Message
-	invocations    []ModelInvocation
+	invocations    []governor.Invocation
 	contextHistory []ai.Message
 	availableTools ai.ToolDefinitions
 	callSequence   uint32
@@ -92,7 +93,7 @@ func (l *Loop) run(
 	ctx context.Context,
 	runContext harness.Context,
 	listener EventListener,
-	governor *runGovernor,
+	gov *governor.Governor,
 ) (loopResult, error) {
 	if err := ctx.Err(); err != nil {
 		return loopResult{}, fmt.Errorf("agent 运行已取消: %w", err)
@@ -100,13 +101,13 @@ func (l *Loop) run(
 
 	state := &runState{
 		newMessages:    make([]ai.Message, 0),
-		invocations:    make([]ModelInvocation, 0),
+		invocations:    make([]governor.Invocation, 0),
 		contextHistory: append([]ai.Message(nil), runContext.Messages...),
 	}
 	finish := func(err error) (loopResult, error) {
 		return loopResult{
 			newMessages: append([]ai.Message(nil), state.newMessages...),
-			invocations: append([]ModelInvocation(nil), state.invocations...),
+			invocations: append([]governor.Invocation(nil), state.invocations...),
 		}, err
 	}
 
@@ -118,12 +119,12 @@ func (l *Loop) run(
 	// 记账顺序：校验 Usage → 立即入账并累加预算 → 契约校验 → 固定
 	// Outcome。observeCompaction 返回 finalizer，由调用方在契约判定后调用。
 	observeCompaction := invocationObserver(func(usage ai.Usage, requestIndex uint32, finishReason string) (func(error), error) {
-		index := l.recordInvocation(ctx, state, ModelInvocationPhaseCompaction, usage, requestIndex, finishReason)
+		index := l.recordInvocation(ctx, state, governor.PhaseCompaction, usage, requestIndex, finishReason)
 		finalize := func(contractErr error) { l.finalizeInvocation(ctx, state, index, contractErr) }
-		return finalize, governor.observe(state.invocations[index])
+		return finalize, gov.Observe(state.invocations[index])
 	})
 	// 根运行创建请求序号器，子代理运行复用父 Run 的。
-	sequencer, ctx := sequencerFromCtx(ctx)
+	sequencer, ctx := governor.SequencerFromCtx(ctx)
 	compactionRt := newCompactionRuntime(l.compaction, runContext.CurrentInputIndex, sequencer)
 
 	for {
@@ -132,11 +133,11 @@ func (l *Loop) run(
 		}
 
 		// 防止死循环，退出机制
-		if err := governor.checkTurnLimit(); err != nil {
+		if err := gov.CheckTurnLimit(); err != nil {
 			return finish(err)
 		}
 
-		done, err := l.executeTurn(ctx, state, governor, listener, compactionRt, observeCompaction)
+		done, err := l.executeTurn(ctx, state, gov, listener, compactionRt, observeCompaction)
 		if done || err != nil {
 			return finish(err)
 		}
@@ -149,7 +150,7 @@ func (l *Loop) run(
 func (l *Loop) recordInvocation(
 	ctx context.Context,
 	state *runState,
-	phase ModelInvocationPhase,
+	phase governor.InvocationPhase,
 	usage ai.Usage,
 	requestIndex uint32,
 	finishReason string,
@@ -158,11 +159,11 @@ func (l *Loop) recordInvocation(
 		usage.CostQuality = ai.CostQualityEstimated
 	}
 	state.callSequence++
-	state.invocations = append(state.invocations, ModelInvocation{
+	state.invocations = append(state.invocations, governor.Invocation{
 		Sequence:             state.callSequence,
 		Phase:                phase,
 		Usage:                usage,
-		Outcome:              ModelInvocationAccepted,
+		Outcome:              governor.OutcomeAccepted,
 		ProviderRequestIndex: requestIndex,
 		FinishReason:         finishReason,
 	})
@@ -175,7 +176,7 @@ func (l *Loop) finalizeInvocation(ctx context.Context, state *runState, index in
 	invocation := &state.invocations[index]
 	acceptance := observability.AcceptanceAccepted
 	if contractErr != nil {
-		invocation.Outcome = ModelInvocationContractInvalid
+		invocation.Outcome = governor.OutcomeContractInvalid
 		acceptance = observability.AcceptanceContractInvalid
 	}
 	observability.RecordModelInvocation(ctx,
@@ -264,13 +265,13 @@ func (l *Loop) planToolBatch(
 func (l *Loop) executeTurn(
 	ctx context.Context,
 	state *runState,
-	governor *runGovernor,
+	gov *governor.Governor,
 	listener EventListener,
 	rt *compactionRuntime,
 	observeCompaction invocationObserver,
 ) (done bool, err error) {
-	governor.startTurn()
-	turnCount := governor.getTurns()
+	gov.StartTurn()
+	turnCount := gov.Turns()
 	logsdk.Info(ctx, fmt.Sprintf("========== [Turn %d] 开始 ==========", turnCount),
 		logsdk.Any("component", "engine"), logsdk.Any("turn", turnCount))
 
@@ -310,9 +311,9 @@ func (l *Loop) executeTurn(
 		}
 
 		// 可信 Usage 先于契约校验入账并累加预算。
-		actionIndex := l.recordInvocation(ctx, state, ModelInvocationPhaseAction,
+		actionIndex := l.recordInvocation(ctx, state, governor.PhaseAction,
 			*actionResp.Usage, generated.requestIndex, string(actionResp.FinishReason))
-		actionBudgetErr := governor.observe(state.invocations[actionIndex])
+		actionBudgetErr := gov.Observe(state.invocations[actionIndex])
 		actionContractErr := actionResp.ValidateAction()
 		l.finalizeInvocation(ctx, state, actionIndex, actionContractErr)
 		if actionContractErr != nil {
@@ -367,9 +368,9 @@ func (l *Loop) executeTurn(
 		// 每个工具批次创建独立的预算账户与取消源。
 		batchCtx, cancel := context.WithCancelCause(ctx)
 		defer cancel(nil)
-		account := &batchBudget{governor: governor, cancel: cancel}
-		recorder := &invocationRecorder{}
-		scheduleCtx := withInvocationRecorder(withBatchBudget(batchCtx, account), recorder)
+		account := governor.NewBatchBudget(gov, cancel)
+		recorder := governor.NewInvocationRecorder()
+		scheduleCtx := governor.WithInvocationRecorder(governor.WithBatchBudget(batchCtx, account), recorder)
 
 		// 被拒绝的调用不进入调度。批次上限拒绝按原始下标顺序补发完整事件
 		// （SSE 事件流完整且顺序确定）；可见性拒绝保持静默（对齐未注册工具
@@ -386,10 +387,10 @@ func (l *Loop) executeTurn(
 		scheduled, scheduleErr := l.scheduler.Schedule(scheduleCtx, runnable, state.availableTools, observer)
 
 		// 结算：所有返回路径强制执行。
-		// 只追加账本，不再 observe——预算已经 batchBudget 实时扣减。
-		for _, report := range recorder.drain() {
+		// 只追加账本，不再 observe——预算已经 governor.BatchBudget 实时扣减。
+		for _, report := range recorder.Drain() {
 			for _, childInv := range report.Invocations {
-				index := l.recordInvocation(ctx, state, ModelInvocationPhaseSubagent,
+				index := l.recordInvocation(ctx, state, governor.PhaseSubagent,
 					childInv.Usage, childInv.ProviderRequestIndex, childInv.FinishReason)
 				state.invocations[index].Outcome = childInv.Outcome
 			}
@@ -401,8 +402,8 @@ func (l *Loop) executeTurn(
 			done = true
 			return fmt.Errorf("agent 运行已取消: %w", err)
 		}
-		if errors.Is(context.Cause(batchCtx), errParentBudgetExhausted) {
-			if budgetErr := governor.firstBudgetError(); budgetErr != nil {
+		if errors.Is(context.Cause(batchCtx), governor.ErrParentBudgetExhausted) {
+			if budgetErr := gov.FirstBudgetError(); budgetErr != nil {
 				done = true
 				return budgetErr
 			}

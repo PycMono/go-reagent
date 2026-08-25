@@ -8,6 +8,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -46,7 +47,7 @@ func TestRunnerEmitsConversationSpans(t *testing.T) {
 		ID: "pk-1", ConversationID: "conversation", UserID: "user", Version: 1,
 	}}
 	runtime := &runnerRuntimeFake{}
-	runner := NewRunner(runtime, store, 100, pi.RunLimits{})
+	runner := NewRunner(runtime, store, 100, governor.Limits{})
 
 	tracer := otel.Tracer("test")
 	ctx, parent := tracer.Start(context.Background(), piobservability.SpanNameConversationRun)
@@ -86,7 +87,7 @@ func TestRunnerPersistSpanRecordsError(t *testing.T) {
 		appendErr:    errors.New("deadlock detected in innodb"),
 	}
 	runtime := &runnerRuntimeFake{}
-	runner := NewRunner(runtime, store, 100, pi.RunLimits{})
+	runner := NewRunner(runtime, store, 100, governor.Limits{})
 
 	_, err := runner.Run(context.Background(), validConversationRunRequest(), nil)
 	if err == nil {
@@ -113,13 +114,13 @@ func TestRunnerWritesTraceIDToLedger(t *testing.T) {
 		ID: "pk-1", ConversationID: "conversation", UserID: "user", Version: 1,
 	}}
 	runtime := &runnerRuntimeFake{result: pi.RunResult{
-		Invocations: []pi.ModelInvocation{{
-			Sequence: 1, Phase: pi.ModelInvocationPhaseAction,
-			Outcome: pi.ModelInvocationAccepted, ProviderRequestIndex: 1,
+		Invocations: []governor.Invocation{{
+			Sequence: 1, Phase: governor.PhaseAction,
+			Outcome: governor.OutcomeAccepted, ProviderRequestIndex: 1,
 			Usage: ai.Usage{PlatformID: "test", Model: "model"},
 		}},
 	}}
-	runner := NewRunner(runtime, store, 100, pi.RunLimits{})
+	runner := NewRunner(runtime, store, 100, governor.Limits{})
 
 	tracer := otel.Tracer("test")
 	ctx, parent := tracer.Start(context.Background(), piobservability.SpanNameConversationRun)
@@ -145,7 +146,7 @@ func TestRunnerWritesTraceIDToLedger(t *testing.T) {
 	storeNoTrace := &runnerStoreFake{conversation: conversationentity.Conversation{
 		ID: "pk-2", ConversationID: "conversation", UserID: "user", Version: 1,
 	}}
-	if _, err := NewRunner(runtime, storeNoTrace, 100, pi.RunLimits{}).Run(
+	if _, err := NewRunner(runtime, storeNoTrace, 100, governor.Limits{}).Run(
 		context.Background(), validConversationRunRequest(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestRunnerPersistsTerminalStateWithDetachedContext(t *testing.T) {
 			Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("partial")},
 		}}},
 	}
-	runner := NewRunner(runtime, store, 100, pi.RunLimits{})
+	runner := NewRunner(runtime, store, 100, governor.Limits{})
 
 	_, err := runner.Run(ctx, validConversationRunRequest(), nil)
 	if !errors.Is(err, context.Canceled) {

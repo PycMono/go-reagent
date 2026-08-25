@@ -8,6 +8,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 )
 
 func messagesToDomain(messages []ai.Message, runID string) []*conversationentity.Message {
@@ -112,7 +113,7 @@ func historyTextContent(blocks []conversationentity.ContentBlock) (string, error
 // 时传空串并写 NULL。新 Invocation 显式写入 RequestIndex、Outcome 和
 // CostQuality，不依赖数据库默认值；TTFT 只复制 Usage.TTFTMS（NULL/0 语义
 // 由指针保持）。
-func invocationsToDomain(invocations []pi.ModelInvocation, runID, traceID string) []*conversationentity.ModelInvocation {
+func invocationsToDomain(invocations []governor.Invocation, runID, traceID string) []*conversationentity.ModelInvocation {
 	if invocations == nil {
 		return nil
 	}

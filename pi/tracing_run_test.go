@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -182,7 +183,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Termination.Reason != RunTerminationCompleted {
+	if result.Termination.Reason != governor.TerminationCompleted {
 		t.Fatalf("termination = %v", result.Termination)
 	}
 
@@ -193,7 +194,7 @@ func TestRunBuildsFullSpanTree(t *testing.T) {
 	}
 	root := agentSpans[0]
 	if attrOf(root, observability.AttrGenAIOperationName) != "invoke_agent" ||
-		attrOf(root, observability.AttrTerminationReason) != string(RunTerminationCompleted) {
+		attrOf(root, observability.AttrTerminationReason) != string(governor.TerminationCompleted) {
 		t.Fatalf("invoke_agent 属性错误: %v", root.Attributes)
 	}
 
@@ -356,7 +357,7 @@ func TestRunCanceledMarksCanceled(t *testing.T) {
 	}
 	spans := spansByName(exporter)
 	root := spans[observability.AgentSpanName(observability.AgentName)][0]
-	if attrOf(root, observability.AttrTerminationReason) != string(RunTerminationCanceled) {
+	if attrOf(root, observability.AttrTerminationReason) != string(governor.TerminationCanceled) {
 		t.Fatalf("termination = %v", attrOf(root, observability.AttrTerminationReason))
 	}
 	if fmt.Sprint(attrOf(root, observability.AttrErrorType)) != string(pierrors.ErrorCodeCanceled) {
@@ -381,7 +382,7 @@ func TestGenerateOverflowRecoverySpans(t *testing.T) {
 		nil, harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: false},
 		WithLoopProviderIdentity("test", "fake"),
 	)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 	var observed []ai.Usage
 
 	result, err := loop.generateWithSpan(context.Background(), observability.GenerationPhaseAction,
@@ -500,7 +501,7 @@ func TestParallelToolsShareTurnParentAndOverlap(t *testing.T) {
 // ---------- Ledger 正确性 ----------
 
 // TestContractInvalidStillRecorded 验证：已取得可信 Usage 的调用即使契约
-// 校验失败也必须进入 Invocations 与 RunTotals，Outcome 标记为
+// 校验失败也必须进入 Invocations 与 governor.Totals，Outcome 标记为
 // contract_invalid，且返回契约错误。
 func TestContractInvalidStillRecorded(t *testing.T) {
 	installRunTracer(t)
@@ -518,7 +519,7 @@ func TestContractInvalidStillRecorded(t *testing.T) {
 		t.Fatalf("契约非法仍必须入账，invocations = %d", len(result.Invocations))
 	}
 	invocation := result.Invocations[0]
-	if invocation.Outcome != ModelInvocationContractInvalid {
+	if invocation.Outcome != governor.OutcomeContractInvalid {
 		t.Fatalf("outcome = %q, want contract_invalid", invocation.Outcome)
 	}
 	if invocation.ProviderRequestIndex != 1 {
@@ -555,7 +556,7 @@ func TestLedgerRequestIndexSeparatesFromSequence(t *testing.T) {
 		t.Fatalf("sequence/request_index = %d/%d, want 1/2",
 			result.Invocations[0].Sequence, result.Invocations[0].ProviderRequestIndex)
 	}
-	if result.Invocations[0].Outcome != ModelInvocationAccepted {
+	if result.Invocations[0].Outcome != governor.OutcomeAccepted {
 		t.Fatalf("outcome = %q", result.Invocations[0].Outcome)
 	}
 }

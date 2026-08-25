@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/middleware"
@@ -105,7 +106,7 @@ func TestNotifierAlertsOnBudgetTermination(t *testing.T) {
 	agent := newNotifyingAgent(t, provider, notifier)
 
 	request := runInput()
-	request.Limits = RunLimits{MaxTurns: 1}
+	request.Limits = governor.Limits{MaxTurns: 1}
 	if _, err := agent.Run(context.Background(), request, nil); err == nil {
 		t.Fatal("Run() error = nil, want run limit exceeded")
 	}

@@ -17,6 +17,7 @@ import (
 	agentprofileentity "github.com/PycMono/go-reagent/domain/entity/agentprofile"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
@@ -220,11 +221,11 @@ func firstRunes(value string, limit int) string {
 	return string([]rune(value)[:limit])
 }
 
-func runErrorVO(err error, termination pi.RunTermination) *vo.RunErrorVO {
+func runErrorVO(err error, termination governor.Termination) *vo.RunErrorVO {
 	// 预算终止：Message 是明确但不含价格、Token 或模型响应正文的用户文案；
 	// Reason 保留结构化终止原因供客户端区分。
 	switch termination.Reason {
-	case pi.RunTerminationMaxTurns, pi.RunTerminationMaxCost, pi.RunTerminationMaxTotalTokens:
+	case governor.TerminationMaxTurns, governor.TerminationMaxCost, governor.TerminationMaxTotalTokens:
 		return &vo.RunErrorVO{
 			Code:    commonerrors.ErrConflict.Code(),
 			Message: "本轮已达到运行资源上限，请重新发送",
@@ -240,8 +241,8 @@ func runErrorVO(err error, termination pi.RunTermination) *vo.RunErrorVO {
 	return &vo.RunErrorVO{Code: commonerrors.ErrInternal.Code(), Message: "run failed", Reason: terminationReason(termination)}
 }
 
-func terminationReason(termination pi.RunTermination) string {
-	if termination.Reason == "" || termination.Reason == pi.RunTerminationCompleted {
+func terminationReason(termination governor.Termination) string {
+	if termination.Reason == "" || termination.Reason == governor.TerminationCompleted {
 		return ""
 	}
 	return string(termination.Reason)
