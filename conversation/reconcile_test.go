@@ -11,6 +11,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/toolexec"
@@ -104,7 +105,7 @@ func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
 	agent := pi.New(builder, loop, toolRuntime)
 
 	store := &runnerStoreFake{conversation: conversationentity.Conversation{ID: "pk-1", ConversationID: "conversation", UserID: "user", Version: 1}}
-	runner := NewRunner(agent, store, 100, pi.RunLimits{})
+	runner := NewRunner(agent, store, 100, governor.Limits{})
 
 	// Sampling 1.0：conversation.run SpanContext 有效。
 	tracer := otel.Tracer("test")

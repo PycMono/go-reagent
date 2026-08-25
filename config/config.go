@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/governor"
 )
 
 const (
@@ -73,8 +73,8 @@ type ObservabilityContentConfig struct {
 }
 
 type AgentConfig struct {
-	WorkspaceDir string       `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
-	Limits       pi.RunLimits `json:"limits" yaml:"limits" toml:"limits"`
+	WorkspaceDir string          `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	Limits       governor.Limits `json:"limits" yaml:"limits" toml:"limits"`
 	// EnableContextPrune 显式启用主动上下文压缩的 L1 只读工具结果裁剪。
 	EnableContextPrune bool `json:"enable_context_prune" yaml:"enable_context_prune" toml:"enable_context_prune"`
 }

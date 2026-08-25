@@ -9,6 +9,7 @@ import (
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -27,17 +28,17 @@ const compactionSystemPrompt = `请总结所提供的早期对话，以便另一
 // 创建，显式共享给主动（maybeCompact）与 reactive（recoverOverflow）路径；
 // 仅在 Loop 的单 goroutine 内使用，不落回共享 Loop。
 //
-// requestIndex 经 Run 级共享 requestSequencer 分配：根运行创建并经
+// requestIndex 经 Run 级共享 governor.Sequencer 分配：根运行创建并经
 // ctx 传递，子代理运行复用同一序号空间，保证 ProviderRequestIndex 在整个
 // Run（含子代理）内唯一。
 type compactionRuntime struct {
 	meter     harness.TokenMeter
 	cfg       harness.CompactionConfig
 	state     harness.CompactionState
-	sequencer *requestSequencer
+	sequencer *governor.Sequencer
 }
 
-func newCompactionRuntime(cfg harness.CompactionConfig, currentInputIndex int, sequencer *requestSequencer) *compactionRuntime {
+func newCompactionRuntime(cfg harness.CompactionConfig, currentInputIndex int, sequencer *governor.Sequencer) *compactionRuntime {
 	return &compactionRuntime{
 		cfg:       cfg,
 		state:     harness.CompactionState{CurrentInputIndex: currentInputIndex},
@@ -48,7 +49,7 @@ func newCompactionRuntime(cfg harness.CompactionConfig, currentInputIndex int, s
 // nextRequestIndex 返回下一次物理 Provider 请求的 Run 内序号（从 1 开始）；
 // 序号器回绕（实际不可达）返回内部错误。
 func (rt *compactionRuntime) nextRequestIndex() (uint32, error) {
-	return rt.sequencer.next()
+	return rt.sequencer.Next()
 }
 
 // compactionOutcome 是一次 L2 摘要尝试的结果；消息与状态必须同时生效或

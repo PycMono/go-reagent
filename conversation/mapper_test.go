@@ -9,6 +9,7 @@ import (
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 )
 
 func TestMessageDomainMappingPreservesHistoricalContent(t *testing.T) {
@@ -75,9 +76,9 @@ func historyTextPayload(content string) conversationentity.MessagePayload {
 }
 
 func TestInvocationDomainMappingPreservesUsage(t *testing.T) {
-	want := []pi.ModelInvocation{{
+	want := []governor.Invocation{{
 		Sequence: 2,
-		Phase:    pi.ModelInvocationPhaseAction,
+		Phase:    governor.PhaseAction,
 		Usage: ai.Usage{
 			InputTokens: 120, OutputTokens: 30,
 			InputPriceUSDPerMillionTokens: 0.15, OutputPriceUSDPerMillionTokens: 0.60,

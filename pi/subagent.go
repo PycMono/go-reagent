@@ -10,6 +10,7 @@ import (
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -22,7 +23,7 @@ type SubagentTool struct {
 	description  string   // 给父模型看的委派指引（Definition().Description）
 	systemPrompt string   // 子代理 persona（子运行的 system 消息）
 	tools        []string // 子运行工具白名单
-	limits       RunLimits
+	limits       governor.Limits
 	bound        atomic.Pointer[subagentPipeline] // 晚绑定；nil = 未绑定
 }
 
@@ -48,7 +49,7 @@ func newResearchSubagentTool() *SubagentTool {
 5. 完成后输出精炼报告：结论 + 关键证据（附来源），不超过 500 字。
    主对话看不到你的检索过程，报告必须自包含。`,
 		tools:  []string{"web_search_exa", "web_fetch_exa"},
-		limits: RunLimits{MaxTurns: 6, MaxCostUSD: 0.3, MaxTotalTokens: 200_000},
+		limits: governor.Limits{MaxTurns: 6, MaxCostUSD: 0.3, MaxTotalTokens: 200_000},
 	}
 }
 
@@ -104,7 +105,7 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeInternal, "subagent",
 			errors.New("subagent tool is not bound"))
 	}
-	if subagentDepth(ctx) >= maxSubagentDepth {
+	if governor.SubagentDepth(ctx) >= governor.MaxSubagentDepth {
 		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeRequestInvalid, "subagent",
 			errors.New("subagent nesting depth exceeded"))
 	}
@@ -134,8 +135,8 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 		CurrentInputIndex: 1,
 	}
 
-	governor := newRunGovernor(t.limits)
-	governor.parent = batchBudgetFromCtx(ctx)
+	gov := governor.New(t.limits)
+	gov.SetParent(governor.BatchBudgetFromCtx(ctx))
 	listener := &subagentEventAdapter{emit: emit, agent: t.name}
 
 	var result loopResult
@@ -145,10 +146,10 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 			contexttracing.KV(observability.AttrGenAIAgentName, t.name),
 			contexttracing.KV(observability.AttrSubagentName, t.name),
 		)
-		runCtx := withSubagentDepth(spanCtx, subagentDepth(ctx)+1)
+		runCtx := governor.WithSubagentDepth(spanCtx, governor.SubagentDepth(ctx)+1)
 		var err error
-		result, err = pipeline.childLoop.run(runCtx, childContext, listener, governor)
-		termination := governor.termination(err)
+		result, err = pipeline.childLoop.run(runCtx, childContext, listener, gov)
+		termination := gov.Termination(err)
 		contexttracing.WithKV(spanCtx,
 			contexttracing.KV(observability.AttrTerminationReason, string(termination.Reason)),
 			contexttracing.KV(observability.AttrRunTurns, termination.Totals.Turns),
@@ -160,11 +161,11 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
 
 	// 无论成败，只要有已计量调用即上报父运行结算阶段。
-	if recorder := recorderFromCtx(ctx); recorder != nil {
-		recorder.record(subagentRunReport{Agent: t.name, Invocations: result.invocations})
+	if recorder := governor.RecorderFromCtx(ctx); recorder != nil {
+		recorder.Record(governor.RunReport{Agent: t.name, Invocations: result.invocations})
 	}
 
-	termination := governor.termination(runErr)
+	termination := gov.Termination(runErr)
 	details := map[string]any{
 		"agent":              t.name,
 		"termination_reason": string(termination.Reason),
@@ -179,15 +180,15 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 	//   - 父子同时触顶时 observe 以子错误优先返回，故标 child；
 	//   - 其余（sibling 触发父预算导致本运行被级联取消）→ parent。
 	parentFirstErr := error(nil)
-	if governor.parent != nil {
-		parentFirstErr = governor.parent.firstBudgetError()
+	if gov.Parent() != nil {
+		parentFirstErr = gov.Parent().FirstBudgetError()
 	}
 	switch {
 	case termination.Limit != "" && parentFirstErr != nil && errors.Is(runErr, parentFirstErr):
 		details["limit_scope"] = "parent"
 	case termination.Limit != "":
 		details["limit_scope"] = "child"
-	case errors.Is(context.Cause(ctx), errParentBudgetExhausted):
+	case errors.Is(context.Cause(ctx), governor.ErrParentBudgetExhausted):
 		details["limit_scope"] = "parent"
 	}
 

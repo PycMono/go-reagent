@@ -14,6 +14,7 @@ import (
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
@@ -35,10 +36,10 @@ type runner struct {
 	runtime      pi.Runner
 	repository   conversationrepo.IConversationRepository
 	historyLimit int
-	limits       pi.RunLimits
+	limits       governor.Limits
 }
 
-func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepository, historyLimit int, limits pi.RunLimits) Runner {
+func NewRunner(runtime pi.Runner, repository conversationrepo.IConversationRepository, historyLimit int, limits governor.Limits) Runner {
 	return &runner{runtime: runtime, repository: repository, historyLimit: historyLimit, limits: limits}
 }
 

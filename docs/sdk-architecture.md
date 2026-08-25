@@ -6,7 +6,8 @@ go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Co
 
 ```text
 pi/ai <- pi/harness <- pi
-pi/ai <- pi/middleware <- pi
+pi/ai <- pi/middleware <- pi/toolexec <- pi/extension <- pi
+pi/ai <- pi/governor <---------------- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers + pi/middleware
 cmd/server -> config + conversation + infrastructure + pi
@@ -14,13 +15,16 @@ cmd/server -> config + conversation + infrastructure + pi
 
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
 - `pi/ai/providers`：Provider 配置，以及 OpenAI/Anthropic 官方 SDK 适配器。
-- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、Scheduler、Registry、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
+- `pi/toolexec`：Tool 执行域——注册（`Registry`）、经中间件链执行单个调用（`Executor`）、批量调度（`Scheduler`）与执行生命周期事件（`Event`/`Result`）。
 - `pi/middleware`：Tool 执行链的中间件机制与内置 Handler（tracing、panic 恢复、schema 校验、日志、事件转发、权限拦截），详见「Tool 中间件与权限拦截」。
+- `pi/governor`：Run 治理域——资源上限（`Limits`）、预算累计与准入（`Governor`）、终止分类（`Termination`）、模型调用计量（`Invocation`）及父子运行间传递这些原语的 ctx 管道件。
+- `pi/extension`：扩展契约（`Extension`/`API`/`Closer`）与启动期注册运行时；`pi/mcp` 依赖本包而非根 `pi`。
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
 - `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`/`NewExtraToolHandlers`）。
 - `cmd/server`：唯一进程入口与组合根，直接组合 `pi`、基础设施、Conversation 业务和 Gin；`application/service/chat`：Conversation 用例。
 
-`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness`、`pi/middleware` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
+`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness`、`pi/middleware`、`pi/toolexec`、`pi/governor`、`pi/extension` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
 ## Pi SDK 契约
 
@@ -68,12 +72,12 @@ type Runner interface {
 	Run(context.Context, RunRequest, EventListener) (RunResult, error)
 }
 
-func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
+func New(*harness.ContextBuilder, *Loop, toolexec.Executor) *Agent
 ```
 
 `pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。`pi.CoreRegister` 只组装 Agent Core，`pi.ReadOnlyToolsRegister` 提供 Workspace 和 `read`，`pi.CodingToolsRegister` 提供完整本地 Coding 工具；`pi.Register` 保留为 Core 与 Coding 工具的兼容聚合。
 
-`pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations` 会按调用顺序返回本次运行所有已完成的 Thinking/Compaction/Action 模型调用及其 Usage、成本与耗时。
+`pi.RunResult` 直接定义在根包；除 `NewMessages` 外，`Invocations`（`governor.Invocation`）会按调用顺序返回本次运行所有已完成的 Thinking/Compaction/Action 模型调用及其 Usage、成本与耗时。
 
 ## 配置
 
@@ -102,7 +106,7 @@ func New(*harness.ContextBuilder, *Loop, ToolRuntime) *Agent
 
 - 只重试已分类的 Provider 瞬态错误和限流错误，等待 500 ms、1 s 后各重试一次；
 - 结构化 Context Overflow 触发一次 32 KiB 有界旧历史摘要，并只重试一次原请求；
-- Compaction 摘要的 Usage 以 `compaction` ModelInvocation 返回；
+- Compaction 摘要的 Usage 以 `compaction` governor.Invocation 返回；
 - Tool Recovery Hint 由 ErrorCode 生成，只存在于下一次 Provider Context；
 - EventListener、`NewMessages` 和 Conversation 持久化继续保留原始 Tool Result；
 - 取消、超时、鉴权、配额、非法请求和未知 Provider 错误立即终止。

@@ -7,6 +7,7 @@ import (
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -41,10 +42,10 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 	startedAt := time.Now()
 	err = contexttracing.WithSpan(ctx, observability.AgentSpanName(observability.AgentName), func(ctx context.Context) (runErr error) {
 		defer func() {
-			// 终止原因与 RunTotals 无论成败都写入。
+			// 终止原因与 governor.Totals 无论成败都写入。
 			reason := string(result.Termination.Reason)
 			if reason == "" {
-				reason = string(RunTerminationError)
+				reason = string(governor.TerminationError)
 			}
 			fields := []contexttracing.Field{
 				contexttracing.OperationName("invoke_agent"),
@@ -62,7 +63,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 		}()
 
 		fail := func(failErr error) error {
-			result.Termination = terminationFromError(failErr, RunTotals{})
+			result.Termination = governor.TerminationFromError(failErr, governor.Totals{})
 			return failErr
 		}
 		if err := ctx.Err(); err != nil {
@@ -88,7 +89,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 			return fail(err)
 		}
 
-		governor := newRunGovernor(request.Limits)
+		gov := governor.New(request.Limits)
 		if listener == nil {
 			listener = nopListener{}
 		}
@@ -100,10 +101,10 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 				{Name: "alerts", Order: 100, Listener: &alertListener{notifiers: a.notifiers}},
 			})
 		}
-		loopResult, runErr := a.loop.run(ctx, runContext, listener, governor)
+		loopResult, runErr := a.loop.run(ctx, runContext, listener, gov)
 		result.NewMessages = loopResult.newMessages
-		result.Invocations = append([]ModelInvocation(nil), loopResult.invocations...)
-		result.Termination = governor.termination(runErr)
+		result.Invocations = append([]governor.Invocation(nil), loopResult.invocations...)
+		result.Termination = gov.Termination(runErr)
 		return runErr
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
 	// 在 WithSpan 之外告警：覆盖 prepare 失败等 loop 之前的提前返回路径
@@ -115,18 +116,18 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 // notifyTermination 把异常终止翻译为运行告警：错误/超时/预算终止告警，
 // 正常完成与用户主动取消不告警。Summary 只含终止原因与累计用量，不含
 // 消息正文或错误细节，告警通道可直接转发。
-func (a *Agent) notifyTermination(ctx context.Context, termination RunTermination) {
+func (a *Agent) notifyTermination(ctx context.Context, termination governor.Termination) {
 	if len(a.notifiers) == 0 {
 		return
 	}
 	var notification Notification
 	switch termination.Reason {
-	case RunTerminationError, RunTerminationDeadline, RunTerminationLoopDetected:
+	case governor.TerminationError, governor.TerminationDeadline, governor.TerminationLoopDetected:
 		notification = Notification{
 			Kind:    NotificationRunError,
 			Summary: fmt.Sprintf("Agent 运行异常终止（%s）", termination.Reason),
 		}
-	case RunTerminationMaxTurns, RunTerminationMaxCost, RunTerminationMaxTotalTokens:
+	case governor.TerminationMaxTurns, governor.TerminationMaxCost, governor.TerminationMaxTotalTokens:
 		notification = Notification{
 			Kind: NotificationRunLimit,
 			Summary: fmt.Sprintf("Agent 运行触发预算上限（%s）：%d 轮 / %d 次调用 / %d tokens / $%.6f",

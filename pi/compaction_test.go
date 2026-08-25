@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
@@ -123,7 +124,7 @@ func TestMaybeCompactSkipsWhenWindowUnknown(t *testing.T) {
 	loop := compactTestLoop(harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: true})
 	messages := compactTestMessages(10)
 
-	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, newRequestSequencer()))
+	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, governor.NewSequencer()))
 	if got[3].Content[0].Text != messages[3].Content[0].Text {
 		t.Fatal("window = 0 must skip the proactive path")
 	}
@@ -135,7 +136,7 @@ func TestMaybeCompactSkipsWhenPruneDisabled(t *testing.T) {
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 22000, EnablePrune: false})
 	messages := compactTestMessages(10)
 
-	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, newRequestSequencer()))
+	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, governor.NewSequencer()))
 	if got[3].Content[0].Text != messages[3].Content[0].Text {
 		t.Fatal("EnablePrune = false must skip L1")
 	}
@@ -148,7 +149,7 @@ func TestMaybeCompactSkipsBelowPruneRatio(t *testing.T) {
 	loop := compactTestLoop(harness.CompactionConfig{ContextWindowTokens: 1 << 30, EnablePrune: true})
 	messages := compactTestMessages(2)
 
-	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, newRequestSequencer()))
+	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, governor.NewSequencer()))
 	for index := range messages {
 		if !reflect.DeepEqual(got[index], messages[index]) {
 			t.Fatalf("message %d changed below the prune ratio", index)
@@ -162,7 +163,7 @@ func TestMaybeCompactPrunesOldGroupsAbovePruneRatio(t *testing.T) {
 	messages := compactTestMessages(10)
 	original := messages[3].Content[0].Text
 
-	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, newRequestSequencer()))
+	got := mustMaybeCompact(t, loop, messages, nil, newCompactionRuntime(loop.compaction, 1, governor.NewSequencer()))
 
 	// 10 组中保护最近 3 组，前 7 组应被裁剪；L1 后已低于 L2 水位，不调摘要。
 	prunedCount := 0
@@ -187,7 +188,7 @@ func TestMaybeCompactAccountsForActionTools(t *testing.T) {
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 20000, EnablePrune: true})
 	// 无 tools 时低于水位，携带大 schema 的 tools 时超过水位。
 	messages := compactTestMessages(5)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	got := mustMaybeCompact(t, loop, messages, nil, rt)
 	if !reflect.DeepEqual(got[3], messages[3]) {
@@ -224,7 +225,7 @@ func TestMaybeCompactProactiveL2ReplacesHistory(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 16000, EnablePrune: true})
 	messages := compactTextHistory(8)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	observed := 0
 	got, err := loop.maybeCompact(context.Background(), messages, nil, rt, testObserveCompaction(func(ai.Usage) error {
@@ -269,7 +270,7 @@ func TestMaybeCompactProactiveL2FailOpenKeepsHistory(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 16000, EnablePrune: true})
 	messages := compactTextHistory(8)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	got, err := loop.maybeCompact(context.Background(), messages, nil, rt, nil)
 	if err != nil {
@@ -292,7 +293,7 @@ func TestMaybeCompactProactiveL2ObserverErrorIsFatal(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 16000, EnablePrune: true})
 	messages := compactTextHistory(8)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	observerErr := errors.New("budget exceeded")
 	_, err := loop.maybeCompact(context.Background(), messages, nil, rt, testObserveCompaction(func(ai.Usage) error {
@@ -312,7 +313,7 @@ func TestGenerateReactiveL1RespectsEnablePrune(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: false})
 	messages := compactTestMessages(6)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	result, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
@@ -341,7 +342,7 @@ func TestGenerateReactiveL1RetriesImmediatelyUnknownWindow(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: true})
 	messages := compactTestMessages(6)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
@@ -363,7 +364,7 @@ func TestGenerateReactiveKnownWindowRetriesBelowThreshold(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 20000, EnablePrune: true})
 	messages := compactTestMessages(10)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
 	if err != nil {
@@ -386,7 +387,7 @@ func TestGenerateReactiveFallsBackToL1WhenL2HasNoRange(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 20000, EnablePrune: true})
 	messages := compactTestMessages(5)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 	bigTools := []ai.ToolDefinition{
 		{Name: "read", Description: strings.Repeat("s", 64*1024), InputSchema: map[string]any{"type": "object"}},
 	}
@@ -425,7 +426,7 @@ func TestGenerateReactiveRecordsUsageBeforeContentValidation(t *testing.T) {
 		)
 	}
 	messages = append(messages, compactTestMessages(5)[2:]...)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	observed := 0
 	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
@@ -458,7 +459,7 @@ func TestGenerateReactiveObserverErrorIsFatal(t *testing.T) {
 	}}
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: 0, EnablePrune: false})
 	messages := compactTextHistory(8)
-	rt := newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	budgetErr := errors.New("budget exceeded")
 	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
@@ -475,7 +476,7 @@ func TestGenerateReactiveObserverErrorIsFatal(t *testing.T) {
 func TestMaybeCompactDoesNotCommitStateWithoutTokenProgress(t *testing.T) {
 	// checkpoint 仅按字节略小、token 估算持平时：消息与状态都不得提交。
 	messages := compactTextHistory(8)
-	rt := newCompactionRuntime(harness.CompactionConfig{}, 1, newRequestSequencer())
+	rt := newCompactionRuntime(harness.CompactionConfig{}, 1, governor.NewSequencer())
 	plan, err := harness.BuildCompactionPlan(messages, rt.state, harness.PlanOptions{
 		RetainRecentUnits: harness.DefaultRetainRecentUnits,
 	})
@@ -504,7 +505,7 @@ func TestMaybeCompactDoesNotCommitStateWithoutTokenProgress(t *testing.T) {
 	pressure := int64(total/4) + harness.DefaultReserveOutputTokens + harness.DefaultSafetyMarginTokens
 	window := pressure * 5 / 4
 	loop := NewLoopWithCompaction(provider, nil, harness.CompactionConfig{ContextWindowTokens: window, EnablePrune: true})
-	rt = newCompactionRuntime(loop.compaction, 1, newRequestSequencer())
+	rt = newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	got, err := loop.maybeCompact(context.Background(), messages, nil, rt, nil)
 	if err != nil {
