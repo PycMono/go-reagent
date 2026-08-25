@@ -14,6 +14,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 // Loop owns provider phases, message history, validation, and tool scheduling.
@@ -24,7 +25,7 @@ import (
 // 包级 Metrics）：Runtime 未安装时全部 Noop，Loop 不持有门面或开关。
 type Loop struct {
 	provider   ai.Provider
-	scheduler  *Scheduler
+	scheduler  *toolexec.Scheduler
 	compaction harness.CompactionConfig
 	// providerID 与 model 只用于 Metrics Label（与 Ledger Usage.PlatformID
 	// 口径一致），不参与任何业务决策；未装配时记录为 unknown。
@@ -49,7 +50,7 @@ type loopResult struct {
 }
 
 // NewLoop creates the state-machine boundary for Agent execution.
-func NewLoop(provider ai.Provider, scheduler *Scheduler, options ...LoopOption) *Loop {
+func NewLoop(provider ai.Provider, scheduler *toolexec.Scheduler, options ...LoopOption) *Loop {
 	return NewLoopWithCompaction(provider, scheduler, harness.CompactionConfig{}, options...)
 }
 
@@ -57,7 +58,7 @@ func NewLoop(provider ai.Provider, scheduler *Scheduler, options ...LoopOption) 
 // 零值配置关闭主动压缩与 L1，reactive 兜底始终启用。
 func NewLoopWithCompaction(
 	provider ai.Provider,
-	scheduler *Scheduler,
+	scheduler *toolexec.Scheduler,
 	compaction harness.CompactionConfig,
 	options ...LoopOption,
 ) *Loop {
@@ -193,7 +194,7 @@ func labelOrUnknown(value string) string {
 }
 
 // maxSubagentCallsPerBatch 是单个工具批次允许执行的子代理调用上限
-// （Scheduler 对 wave 内每个调用都创建 goroutine，maxParallel 只限并发
+// （toolexec.Scheduler 对 wave 内每个调用都创建 goroutine，maxParallel 只限并发
 // 不限总数）。超出的调用不调度，确定性生成 IsError 结果。
 const maxSubagentCallsPerBatch = 8
 
@@ -212,17 +213,17 @@ const maxSubagentCallsPerBatch = 8
 func (l *Loop) planToolBatch(
 	calls []ai.ToolCall,
 	availableTools ai.ToolDefinitions,
-) (runnable []ai.ToolCall, origin []int, rejected map[int]ToolResult, silent map[int]bool) {
+) (runnable []ai.ToolCall, origin []int, rejected map[int]toolexec.Result, silent map[int]bool) {
 	runnable = make([]ai.ToolCall, 0, len(calls))
 	origin = make([]int, 0, len(calls))
 	subagentSeen := 0
 	for index, call := range calls {
 		if !availableTools.Has(call.Name) {
 			if rejected == nil {
-				rejected = make(map[int]ToolResult)
+				rejected = make(map[int]toolexec.Result)
 				silent = make(map[int]bool)
 			}
-			rejected[index] = ToolResult{
+			rejected[index] = toolexec.Result{
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
 				Content: []ai.ContentBlock{ai.TextBlock(
@@ -237,10 +238,10 @@ func (l *Loop) planToolBatch(
 			subagentSeen++
 			if subagentSeen > maxSubagentCallsPerBatch {
 				if rejected == nil {
-					rejected = make(map[int]ToolResult)
+					rejected = make(map[int]toolexec.Result)
 					silent = make(map[int]bool)
 				}
-				rejected[index] = ToolResult{
+				rejected[index] = toolexec.Result{
 					ToolCallID: call.ID,
 					ToolName:   call.Name,
 					Content: []ai.ContentBlock{ai.TextBlock(
@@ -359,7 +360,7 @@ func (l *Loop) executeTurn(
 			logsdk.Any("rejected_count", len(rejected)),
 			logsdk.Any("execution_mode", mode),
 		)
-		observer := func(ctx context.Context, event ToolEvent) {
+		observer := func(ctx context.Context, event toolexec.Event) {
 			listener.OnEvent(ctx, NewAgentToolEvent(event))
 		}
 
@@ -378,8 +379,8 @@ func (l *Loop) executeTurn(
 				continue
 			}
 			call := actionResp.ToolCalls[index]
-			observer(batchCtx, NewToolStart(call))
-			observer(batchCtx, NewToolEnd(call, rejected[index]))
+			observer(batchCtx, toolexec.NewStartEvent(call))
+			observer(batchCtx, toolexec.NewEndEvent(call, rejected[index]))
 		}
 
 		scheduled, scheduleErr := l.scheduler.Schedule(scheduleCtx, runnable, state.availableTools, observer)
@@ -416,7 +417,7 @@ func (l *Loop) executeTurn(
 		}
 
 		// 按原始下标合并调度结果与合成拒绝结果。
-		results := make([]ToolResult, len(actionResp.ToolCalls))
+		results := make([]toolexec.Result, len(actionResp.ToolCalls))
 		for index, result := range scheduled {
 			results[origin[index]] = result
 		}

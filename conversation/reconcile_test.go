@@ -13,6 +13,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.opentelemetry.io/otel"
 )
 
@@ -93,12 +94,12 @@ func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	toolRuntime, err := pi.NewToolRuntime(pi.ToolRuntimeOptions{})
+	toolRuntime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	traced := piobservability.NewTracingProvider(reconProvider{}, "openai", "test", "fake")
-	loop := pi.NewLoop(traced, pi.NewScheduler(toolRuntime, 1), pi.WithLoopProviderIdentity("test", "fake"))
+	loop := pi.NewLoop(traced, toolexec.NewScheduler(toolRuntime, 1), pi.WithLoopProviderIdentity("test", "fake"))
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	agent := pi.New(builder, loop, toolRuntime)
 

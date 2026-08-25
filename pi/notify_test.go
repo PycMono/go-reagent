@@ -12,6 +12,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/middleware"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 type recordingNotifier struct {
@@ -32,13 +33,13 @@ func newNotifyingAgent(t *testing.T, provider ai.Provider, notifiers ...Notifier
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: middleware.Defaults()})
+	toolRuntime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{Middlewares: middleware.Defaults()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, toolexec.NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	return New(builder, loop, toolRuntime, notifiers...)
 }
 
@@ -72,14 +73,14 @@ func TestNotifierAlertsOnRunError(t *testing.T) {
 // 路径，同样必须告警。
 func TestNotifierAlertsOnPrepareFailure(t *testing.T) {
 	workDir := t.TempDir() // 不写 AGENTS.md，prepare 必然失败
-	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: middleware.Defaults()})
+	toolRuntime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{Middlewares: middleware.Defaults()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	provider := &scriptedProvider{}
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, toolexec.NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	notifier := &recordingNotifier{}
 	agent := New(builder, loop, toolRuntime, notifier)
 
@@ -118,17 +119,17 @@ func TestNotifierAlertsOnToolError(t *testing.T) {
 	recorder := listener.notifiers[0].(*recordingNotifier)
 
 	listener.OnEvent(context.Background(), NewMessageEndEvent(*actionMessage("正常回复")))
-	listener.OnEvent(context.Background(), NewAgentToolEvent(NewToolEnd(
+	listener.OnEvent(context.Background(), NewAgentToolEvent(toolexec.NewEndEvent(
 		ai.ToolCall{ID: "c1", Name: "read"},
-		ToolResult{ToolCallID: "c1", ToolName: "read", IsError: false},
+		toolexec.Result{ToolCallID: "c1", ToolName: "read", IsError: false},
 	)))
 	if len(recorder.notifications) != 0 {
 		t.Fatalf("非失败事件不应告警：%#v", recorder.notifications)
 	}
 
-	listener.OnEvent(context.Background(), NewAgentToolEvent(NewToolEnd(
+	listener.OnEvent(context.Background(), NewAgentToolEvent(toolexec.NewEndEvent(
 		ai.ToolCall{ID: "c2", Name: "read"},
-		ToolResult{ToolCallID: "c2", ToolName: "read", IsError: true, ErrorCode: "tool_invalid_arguments"},
+		toolexec.Result{ToolCallID: "c2", ToolName: "read", IsError: true, ErrorCode: "tool_invalid_arguments"},
 	)))
 	if len(recorder.notifications) != 1 || recorder.notifications[0].Kind != NotificationToolError {
 		t.Fatalf("notifications = %#v, want one tool_error", recorder.notifications)

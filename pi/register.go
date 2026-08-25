@@ -39,7 +39,7 @@ type agentParams struct {
 	fx.In
 	Builder     *harness.ContextBuilder
 	Loop        *Loop
-	ToolRuntime ToolRuntime
+	ToolRuntime toolexec.Executor
 	Notifiers   []Notifier `group:"agent_notifiers"`
 }
 
@@ -108,18 +108,18 @@ type subagentBinderParams struct {
 	// 注册 MCP 工具并 freeze 之后执行。
 	Runtime     *extensionRuntime
 	Tools       []ai.Tool `group:"agent_tools"`
-	ToolRuntime ToolRuntime
+	ToolRuntime toolexec.Executor
 	Provider    ai.Provider
 	Compaction  harness.CompactionConfig `optional:"true"`
 	Platform    providers.Options
 }
 
 // subagentBinder 在启动期 freeze 后校验定义并原子绑定子管线（全有或全无）。
-// 子 Scheduler 复用共享 ToolRuntime：执行边界由 Loop 的可见性校验保证
+// 子 toolexec.Scheduler 复用共享 toolexec.Executor：执行边界由 Loop 的可见性校验保证
 // （availableTools = 白名单 defs 快照）。
 type subagentBinder struct {
 	registry    *toolexec.Registry
-	toolRuntime ToolRuntime
+	toolRuntime toolexec.Executor
 	tools       []*SubagentTool
 	provider    ai.Provider
 	compaction  harness.CompactionConfig
@@ -173,7 +173,7 @@ func (b *subagentBinder) start(_ context.Context) error {
 			return fmt.Errorf("subagent %q: placeholder tool %q is missing from the registry",
 				tool.name, subagentToolName(tool.name))
 		}
-		scheduler := NewScheduler(b.toolRuntime, defaultMaxParallelTools)
+		scheduler := toolexec.NewScheduler(b.toolRuntime, defaultMaxParallelTools)
 		childLoop := NewLoopWithCompaction(b.provider, scheduler, b.compaction,
 			WithLoopProviderIdentity(b.platform.ID, b.platform.Model))
 		pipelines = append(pipelines, &subagentPipeline{childLoop: childLoop, childTools: defs})
@@ -233,19 +233,19 @@ type toolRuntimeParams struct {
 	Extra ExtraToolHandlers `optional:"true"`
 }
 
-func newFXToolRuntime(params toolRuntimeParams) ToolRuntime {
+func newFXToolRuntime(params toolRuntimeParams) toolexec.Executor {
 	handlers := append(middleware.Defaults(), params.Extra...)
 	return toolexec.NewExecutorFromRegistry(params.Registry, handlers)
 }
 
-func newScheduler(toolRuntime ToolRuntime) *Scheduler {
-	return NewScheduler(toolRuntime, defaultMaxParallelTools)
+func newScheduler(toolRuntime toolexec.Executor) *toolexec.Scheduler {
+	return toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools)
 }
 
 type loopParams struct {
 	fx.In
 	Provider  ai.Provider
-	Scheduler *Scheduler
+	Scheduler *toolexec.Scheduler
 	// Compaction 是可选的压缩配置；未提供时使用零值（主动压缩与 L1 关闭）。
 	// 值类型与装配层提供的 harness.CompactionConfig 精确匹配——fx 不做
 	// 值/指针隐式转换，类型不一致会让 optional 字段静默落空。

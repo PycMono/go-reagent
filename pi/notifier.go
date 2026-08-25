@@ -14,7 +14,7 @@ const (
 	NotificationRunError NotificationKind = "run_error"
 	// NotificationRunLimit 是 run 触发请求级预算上限（轮次/成本/Token）。
 	NotificationRunLimit NotificationKind = "run_limit"
-	// NotificationToolError 是单次工具执行失败（ToolResult.IsError）。
+	// NotificationToolError 是单次工具执行失败（toolexec.Result.IsError）。
 	NotificationToolError NotificationKind = "tool_error"
 )
 

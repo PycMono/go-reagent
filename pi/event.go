@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 type AgentEventType string
@@ -22,19 +23,19 @@ const (
 
 type AgentEvent struct {
 	Type    AgentEventType   `json:"type"`
-	Tool    *ToolEvent       `json:"tool,omitempty"`
+	Tool    *toolexec.Event  `json:"tool,omitempty"`
 	Delta   *ai.ContentBlock `json:"delta,omitempty"`
 	Message *ai.Message      `json:"message,omitempty"`
 }
 
-func NewAgentToolEvent(event ToolEvent) AgentEvent {
+func NewAgentToolEvent(event toolexec.Event) AgentEvent {
 	var eventType AgentEventType
 	switch event.Phase {
-	case ToolEventStart:
+	case toolexec.EventStart:
 		eventType = AgentEventToolStart
-	case ToolEventUpdate:
+	case toolexec.EventUpdate:
 		eventType = AgentEventToolUpdate
-	case ToolEventEnd:
+	case toolexec.EventEnd:
 		eventType = AgentEventToolEnd
 	}
 

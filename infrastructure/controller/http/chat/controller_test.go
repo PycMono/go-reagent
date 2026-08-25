@@ -19,6 +19,7 @@ import (
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"github.com/gin-gonic/gin"
 )
 
@@ -232,8 +233,8 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		}
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
 		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{skillCall}}))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolStart(skillCall)))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolEnd(skillCall, pi.ToolResult{
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(skillCall)))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(skillCall, toolexec.Result{
 			ToolCallID: skillCall.ID, ToolName: skillCall.Name,
 			Content: []ai.ContentBlock{ai.TextBlock("private skill instructions")},
 		})))
@@ -241,11 +242,11 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		fileCall := ai.ToolCall{ID: "call-file", Name: "read", Arguments: []byte(`{"path":"README.md"}`)}
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
 		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{fileCall}}))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolStart(fileCall)))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolUpdate(fileCall, ai.ToolUpdate{
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(fileCall)))
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewUpdateEvent(fileCall, ai.ToolUpdate{
 			Content: []ai.ContentBlock{ai.TextBlock("private streamed file body")}, Details: "private details",
 		})))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(pi.NewToolEnd(fileCall, pi.ToolResult{
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(fileCall, toolexec.Result{
 			ToolCallID: fileCall.ID, ToolName: fileCall.Name,
 			Content: []ai.ContentBlock{ai.TextBlock("private file body")},
 		})))
