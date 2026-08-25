@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -29,6 +30,12 @@ func (config *Config) normalizeAndValidate() error {
 		return errors.New("snowflake_node_id 必须在 0 到 1023 之间")
 	}
 	if err := config.Notice.normalizeAndValidate(); err != nil {
+		return err
+	}
+	if err := config.Permissions.normalizeAndValidate(); err != nil {
+		return err
+	}
+	if err := config.Tools.normalizeAndValidate(); err != nil {
 		return err
 	}
 	if err := config.Conversation.normalizeAndValidate(&config.MySQL); err != nil {
@@ -429,6 +436,66 @@ func (config *NoticeConfig) normalizeAndValidate() error {
 	parsed, err := url.Parse(config.WeCom.WebhookURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
 		return errors.New("notice.wecom.webhook_url 必须是带 Host 的 HTTPS URL")
+	}
+	return nil
+}
+
+// PermissionEffectDeny 是本期唯一支持的权限处置；allow/ask 预留。
+const PermissionEffectDeny = "deny"
+
+func (config *PermissionsConfig) normalizeAndValidate() error {
+	for index := range config.Rules {
+		rule := &config.Rules[index]
+		rule.Tool = strings.TrimSpace(rule.Tool)
+		rule.Effect = strings.TrimSpace(rule.Effect)
+		rule.Reason = strings.TrimSpace(rule.Reason)
+		if rule.Tool == "" {
+			return fmt.Errorf("permissions.rules[%d].tool 不能为空", index)
+		}
+		if rule.Effect != PermissionEffectDeny {
+			return fmt.Errorf("permissions.rules[%d].effect 本期仅接受 %q", index, PermissionEffectDeny)
+		}
+		if len(rule.Patterns) == 0 {
+			return fmt.Errorf("permissions.rules[%d].patterns 至少配置一条", index)
+		}
+		for _, pattern := range rule.Patterns {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("permissions.rules[%d] 正则 %q 编译失败: %w", index, pattern, err)
+			}
+		}
+	}
+	return nil
+}
+
+const (
+	maxToolRetryAttempts      = 5
+	defaultToolRetryBackoffMs = 200
+)
+
+func (config *ToolsConfig) normalizeAndValidate() error {
+	if config.TimeoutSeconds < 0 {
+		return errors.New("tools.timeout_seconds 不能为负数")
+	}
+	retry := &config.Retry
+	if retry.Attempts < 0 || retry.Attempts > maxToolRetryAttempts {
+		return fmt.Errorf("tools.retry.attempts 必须在 0 到 %d 之间", maxToolRetryAttempts)
+	}
+	if retry.BackoffMs < 0 {
+		return errors.New("tools.retry.backoff_ms 不能为负数")
+	}
+	if retry.Attempts > 1 {
+		if len(retry.Tools) == 0 {
+			return errors.New("tools.retry.attempts > 1 时 tools.retry.tools 白名单必填")
+		}
+		if retry.BackoffMs == 0 {
+			retry.BackoffMs = defaultToolRetryBackoffMs
+		}
+	}
+	for index := range retry.Tools {
+		retry.Tools[index] = strings.TrimSpace(retry.Tools[index])
+		if retry.Tools[index] == "" {
+			return fmt.Errorf("tools.retry.tools[%d] 不能为空", index)
+		}
 	}
 	return nil
 }

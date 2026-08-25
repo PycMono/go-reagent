@@ -811,3 +811,74 @@ func TestLoadConfigParsesContextWindowTokens(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadConfigParsesAndValidatesPermissions(t *testing.T) {
+	base := func(permissions string) string {
+		return `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"agent":{"limits":{"max_turns":5}},"redis":{"addr":["127.0.0.1:6379"],"db":0,"pool_size":5},"permissions":` + permissions + `}`
+	}
+	t.Run("accepts and normalizes deny rules", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, base(`{"rules":[{"tool":" exec ","effect":"deny","patterns":["rm\\s+-rf","sudo\\s"],"reason":" 高危命令 "}]}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rule := cfg.Permissions.Rules[0]
+		if rule.Tool != "exec" || rule.Effect != "deny" || rule.Reason != "高危命令" {
+			t.Fatalf("rule = %#v", rule)
+		}
+	})
+	rejections := []struct {
+		name        string
+		permissions string
+		want        string
+	}{
+		{name: "empty tool", permissions: `{"rules":[{"tool":" ","effect":"deny","patterns":["x"]}]}`, want: "tool"},
+		{name: "unsupported effect", permissions: `{"rules":[{"tool":"exec","effect":"ask","patterns":["x"]}]}`, want: "effect"},
+		{name: "empty patterns", permissions: `{"rules":[{"tool":"exec","effect":"deny"}]}`, want: "patterns"},
+		{name: "invalid regex", permissions: `{"rules":[{"tool":"exec","effect":"deny","patterns":["["]}]}`, want: "正则"},
+	}
+	for _, rejection := range rejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, base(rejection.permissions)))
+			if err == nil || !strings.Contains(err.Error(), rejection.want) {
+				t.Fatalf("Load() error = %v, want contains %q", err, rejection.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigParsesAndValidatesTools(t *testing.T) {
+	base := func(tools string) string {
+		return `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"agent":{"limits":{"max_turns":5}},"redis":{"addr":["127.0.0.1:6379"],"db":0,"pool_size":5},"tools":` + tools + `}`
+	}
+	t.Run("accepts and normalizes retry backoff", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, base(`{"timeout_seconds":30,"retry":{"attempts":3,"tools":[" mcp_search "]}}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Tools.TimeoutSeconds != 30 {
+			t.Fatalf("TimeoutSeconds = %d, want 30", cfg.Tools.TimeoutSeconds)
+		}
+		retry := cfg.Tools.Retry
+		if retry.Attempts != 3 || retry.BackoffMs != 200 || !slices.Equal(retry.Tools, []string{"mcp_search"}) {
+			t.Fatalf("Retry = %#v", retry)
+		}
+	})
+	rejections := []struct {
+		name  string
+		tools string
+		want  string
+	}{
+		{name: "negative timeout", tools: `{"timeout_seconds":-1}`, want: "timeout_seconds"},
+		{name: "attempts too large", tools: `{"retry":{"attempts":6,"tools":["x"]}}`, want: "attempts"},
+		{name: "retry without whitelist", tools: `{"retry":{"attempts":2}}`, want: "tools"},
+		{name: "empty whitelist entry", tools: `{"retry":{"attempts":2,"tools":[" "]}}`, want: "tools[0]"},
+	}
+	for _, rejection := range rejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, base(rejection.tools)))
+			if err == nil || !strings.Contains(err.Error(), rejection.want) {
+				t.Fatalf("Load() error = %v, want contains %q", err, rejection.want)
+			}
+		})
+	}
+}

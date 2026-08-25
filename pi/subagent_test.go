@@ -12,6 +12,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/middleware"
 )
 
 // stubTool 是测试用的最小 ai.Tool 实现。
@@ -161,7 +162,7 @@ func newSubagentFixture(t *testing.T, provider ai.Provider, tool *SubagentTool) 
 		}
 		defs = append(defs, entry.definition)
 	}
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	childLoop := NewLoopWithCompaction(provider,
 		NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{})
 	tool.bound.Store(&subagentPipeline{childLoop: childLoop, childTools: defs})
@@ -177,7 +178,7 @@ func runParentForTest(
 	listener EventListener,
 ) (loopResult, *runGovernor, error) {
 	t.Helper()
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	parentLoop := NewLoop(provider, NewScheduler(toolRuntime, defaultMaxParallelTools))
 	runContext := harness.Context{
 		Messages: []ai.Message{
@@ -280,7 +281,7 @@ func TestSubagentParentBudgetTripTerminatesAsMaxCost(t *testing.T) {
 	// 子调用成本单独放大：给子 Provider 包一层。
 	childProvider := &subagentScriptProvider{costUSD: 0.30}
 	tool.bound.Load().childLoop = NewLoopWithCompaction(childProvider,
-		NewScheduler(newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations()),
+		NewScheduler(newToolRuntimeFromRegistry(registry, middleware.Defaults()),
 			defaultMaxParallelTools),
 		harness.CompactionConfig{})
 
@@ -449,7 +450,7 @@ func TestSubagentRejectsNonVisibleToolCall(t *testing.T) {
 
 	// 子模型发起白名单外的 read 调用（幻觉或注入诱导）。
 	provider := &subagentScriptProvider{costUSD: 0.01, childFirstTool: "read"}
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
 		entry, _ := registry.lookup(name)
@@ -534,7 +535,7 @@ func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 		entry, _ := registry.lookup(name)
 		defs = append(defs, entry.definition)
 	}
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	tool.bound.Store(&subagentPipeline{
 		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
@@ -648,7 +649,7 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
 		entry, _ := registry.lookup(name)
@@ -735,7 +736,7 @@ func TestSubagentInflightSettledAfterBudgetTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
 		entry, _ := registry.lookup(name)
@@ -786,7 +787,7 @@ func TestSubagentCancelVsBudgetRacePrefersParentCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
 		entry, _ := registry.lookup(name)

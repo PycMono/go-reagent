@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
+	"github.com/PycMono/go-reagent/pi/middleware"
 	"go.uber.org/fx"
 )
 
@@ -218,8 +219,22 @@ func newFXToolRegistry(params toolRegistryParams) (*toolRegistry, error) {
 	return newToolRegistry(params.Tools)
 }
 
-func newFXToolRuntime(registry *toolRegistry, _ *extensionRuntime) ToolRuntime {
-	return newToolRuntimeFromRegistry(registry, DefaultMiddlewareRegistrations())
+// ExtraToolHandlers 是装配层（组合根）追加在默认中间件链之后的扩展
+// Handler，如按配置挂载的权限拦截、重试与超时。fx 未提供时为零值，
+// 链保持纯默认。
+type ExtraToolHandlers []middleware.Handler
+
+type toolRuntimeParams struct {
+	fx.In
+	Registry *toolRegistry
+	// Ext 仅用于 fx 构造顺序约束：MCP 工具注册并 freeze 之后才建 Runtime。
+	Ext   *extensionRuntime
+	Extra ExtraToolHandlers `optional:"true"`
+}
+
+func newFXToolRuntime(params toolRuntimeParams) ToolRuntime {
+	handlers := append(middleware.Defaults(), params.Extra...)
+	return newToolRuntimeFromRegistry(params.Registry, handlers)
 }
 
 func newScheduler(toolRuntime ToolRuntime) *Scheduler {

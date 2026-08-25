@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/middleware"
 )
 
 type recordingNotifier struct {
@@ -31,7 +32,7 @@ func newNotifyingAgent(t *testing.T, provider ai.Provider, notifiers ...Notifier
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: DefaultMiddlewareRegistrations()})
+	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: middleware.Defaults()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestNotifierAlertsOnRunError(t *testing.T) {
 // 路径，同样必须告警。
 func TestNotifierAlertsOnPrepareFailure(t *testing.T) {
 	workDir := t.TempDir() // 不写 AGENTS.md，prepare 必然失败
-	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: DefaultMiddlewareRegistrations()})
+	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Middlewares: middleware.Defaults()})
 	if err != nil {
 		t.Fatal(err)
 	}
