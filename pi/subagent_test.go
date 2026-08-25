@@ -174,7 +174,7 @@ func newSubagentFixture(t *testing.T, provider ai.Provider, tool *SubagentTool, 
 	}
 	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	childLoop := NewLoopWithCompaction(provider,
-		NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{})
+		toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{})
 	tool.bound.Store(&subagentPipeline{childLoop: childLoop, childTools: defs})
 	return registry, tool
 }
@@ -189,7 +189,7 @@ func runParentForTest(
 ) (loopResult, *runGovernor, error) {
 	t.Helper()
 	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
-	parentLoop := NewLoop(provider, NewScheduler(toolRuntime, defaultMaxParallelTools))
+	parentLoop := NewLoop(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools))
 	runContext := harness.Context{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock("You are a test Agent.")}},
@@ -291,7 +291,7 @@ func TestSubagentParentBudgetTripTerminatesAsMaxCost(t *testing.T) {
 	// 子调用成本单独放大：给子 Provider 包一层。
 	childProvider := &subagentScriptProvider{costUSD: 0.30}
 	tool.bound.Load().childLoop = NewLoopWithCompaction(childProvider,
-		NewScheduler(toolexec.NewExecutorFromRegistry(registry, middleware.Defaults()),
+		toolexec.NewScheduler(toolexec.NewExecutorFromRegistry(registry, middleware.Defaults()),
 			defaultMaxParallelTools),
 		harness.CompactionConfig{})
 
@@ -424,7 +424,7 @@ func TestSubagentUnboundRejected(t *testing.T) {
 // captureToolListener 记录完整工具事件（用于断言合成拒绝结果的 ErrorCode 与 SSE 顺序）。
 type captureToolListener struct {
 	mu       sync.Mutex
-	toolEnds []ToolEvent
+	toolEnds []toolexec.Event
 }
 
 func (l *captureToolListener) OnEvent(_ context.Context, event AgentEvent) {
@@ -463,7 +463,7 @@ func TestSubagentRejectsNonVisibleToolCall(t *testing.T) {
 	}
 	tool.bound.Store(&subagentPipeline{
 		childLoop: NewLoopWithCompaction(provider,
-			NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
+			toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
 	})
 
@@ -542,7 +542,7 @@ func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 	}
 	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	tool.bound.Store(&subagentPipeline{
-		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
+		childLoop:  NewLoopWithCompaction(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
 	})
 
@@ -661,14 +661,14 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
-		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
+		childLoop:  NewLoopWithCompaction(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
 	})
 
 	if _, _, err := runParentForTest(t, context.Background(), provider, registry, RunLimits{}, nil); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	// 跨子运行的 MCP 并发是有意行为，但并发量受 Scheduler maxParallel 约束。
+	// 跨子运行的 MCP 并发是有意行为，但并发量受 toolexec.Scheduler maxParallel 约束。
 	if got := peak.Load(); got > int32(defaultMaxParallelTools) {
 		t.Fatalf("concurrent MCP executions peak = %d, want <= %d", got, defaultMaxParallelTools)
 	}
@@ -748,7 +748,7 @@ func TestSubagentInflightSettledAfterBudgetTrip(t *testing.T) {
 		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
-		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
+		childLoop:  NewLoopWithCompaction(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
 	})
 
@@ -799,7 +799,7 @@ func TestSubagentCancelVsBudgetRacePrefersParentCancel(t *testing.T) {
 		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
-		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
+		childLoop:  NewLoopWithCompaction(provider, toolexec.NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
 	})
 

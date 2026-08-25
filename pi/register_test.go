@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -74,7 +75,7 @@ func TestReadOnlyToolsRegisterExposesOnlyRead(t *testing.T) {
 
 func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 	provider := &registerTestProvider{}
-	runtime, err := NewToolRuntime(ToolRuntimeOptions{})
+	runtime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestNewLoopDisablesThinkingForDirectChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
-	loop := NewLoop(provider, NewScheduler(runtime, 1))
+	loop := NewLoop(provider, toolexec.NewScheduler(runtime, 1))
 	agent := New(builder, loop, runtime)
 
 	_, err = agent.Run(context.Background(), RunRequest{Input: Message{
@@ -158,7 +159,7 @@ func TestCoreRegisterAllowsEmptyToolGroup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var runtime ToolRuntime
+	var runtime toolexec.Executor
 	app := fxtest.New(
 		t,
 		CoreRegister,
@@ -184,7 +185,7 @@ func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	var events []string
-	var runtime ToolRuntime
+	var runtime toolexec.Executor
 	app := fxtest.New(
 		t,
 		CoreRegister,
@@ -213,7 +214,7 @@ func TestCoreRegisterAddsGroupedExtensionToolsBeforeUse(t *testing.T) {
 
 func resolveRegisteredToolNames(t *testing.T, register fx.Option) []string {
 	t.Helper()
-	var runtime ToolRuntime
+	var runtime toolexec.Executor
 	app := fxtest.New(
 		t,
 		register,

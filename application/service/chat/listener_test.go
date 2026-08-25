@@ -9,18 +9,19 @@ import (
 	"github.com/PycMono/go-reagent/common/vo"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 func TestRunListenerMapsPublicPiEvents(t *testing.T) {
 	events := make(chan vo.RunEventVO, 8)
 	listener := newRunListener("run-1", events)
-	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolStart(ai.ToolCall{
+	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewStartEvent(ai.ToolCall{
 		ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`),
 	})))
-	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolUpdate(ai.ToolCall{ID: "call-1", Name: "read"}, ai.ToolUpdate{
+	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewUpdateEvent(ai.ToolCall{ID: "call-1", Name: "read"}, ai.ToolUpdate{
 		Content: []ai.ContentBlock{ai.TextBlock("working")}, Details: "50%",
 	})))
-	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolEnd(ai.ToolCall{ID: "call-1", Name: "read"}, pi.ToolResult{
+	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewEndEvent(ai.ToolCall{ID: "call-1", Name: "read"}, toolexec.Result{
 		ToolCallID: "call-1", ToolName: "read", Content: []ai.ContentBlock{ai.TextBlock("file")},
 	})))
 	listener.OnEvent(context.Background(), pi.NewMessageStartEvent())
@@ -88,7 +89,7 @@ func TestRunListenerMayDropToolUpdatesWhenQueueIsFull(t *testing.T) {
 	listener := newRunListener("run-1", events)
 	done := make(chan struct{})
 	go func() {
-		listener.OnEvent(context.Background(), pi.NewAgentToolEvent(pi.NewToolUpdate(
+		listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewUpdateEvent(
 			ai.ToolCall{ID: "call"}, ai.ToolUpdate{Content: []ai.ContentBlock{ai.TextBlock("chunk")}},
 		)))
 		close(done)

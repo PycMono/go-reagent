@@ -2,8 +2,9 @@ package providers
 
 import (
 	"errors"
-	"github.com/PycMono/go-reagent/pi/ai"
 	"strings"
+
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 // Protocol identifies the wire protocol used by a model platform.

@@ -17,6 +17,7 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/middleware"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -128,13 +129,13 @@ func newTracedAgent(t *testing.T, provider ai.Provider, tools ...ai.Tool) *Agent
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	toolRuntime, err := NewToolRuntime(ToolRuntimeOptions{Tools: tools, Middlewares: middleware.Defaults()})
+	toolRuntime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{Tools: tools, Middlewares: middleware.Defaults()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
 	traced := observability.NewTracingProvider(provider, "openai", "test", "fake")
-	loop := NewLoop(traced, NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
+	loop := NewLoop(traced, toolexec.NewScheduler(toolRuntime, 2), WithLoopProviderIdentity("test", "fake"))
 	return New(builder, loop, toolRuntime)
 }
 

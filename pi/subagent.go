@@ -69,7 +69,7 @@ func (t *SubagentTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:         subagentToolName(t.name),
 		Description:  t.description,
-		ParallelSafe: true, // 多个子代理调用可批次并发（受 Scheduler maxParallel 限流）
+		ParallelSafe: true, // 多个子代理调用可批次并发（受 toolexec.Scheduler maxParallel 限流）
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

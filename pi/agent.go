@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 // Runner 定义无状态 Agent 的单次运行行为。
@@ -21,13 +22,13 @@ type Runner interface {
 type Agent struct {
 	builder     *harness.ContextBuilder
 	loop        *Loop
-	toolRuntime ToolRuntime
+	toolRuntime toolexec.Executor
 	notifiers   []Notifier
 }
 
 // New 根据下层运行依赖创建 Agent；notifiers 为可选的外部通知通道
 // （group:"agent_notifiers"），空切片表示无通知。
-func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime ToolRuntime, notifiers ...Notifier) *Agent {
+func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime toolexec.Executor, notifiers ...Notifier) *Agent {
 	return &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: notifiers}
 }
 
