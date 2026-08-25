@@ -13,6 +13,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/middleware"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 // stubTool 是测试用的最小 ai.Tool 实现。
@@ -141,28 +142,37 @@ func (p *subagentScriptProvider) Stream(_ context.Context, messages []ai.Message
 func usagePtr(usage ai.Usage) *ai.Usage { return &usage }
 
 // newSubagentFixture 构造手工冻结的 Registry（含 stub web 工具与已绑定的
-// 子代理工具），返回子代理工具与 Provider。
-func newSubagentFixture(t *testing.T, provider ai.Provider, tool *SubagentTool) (*toolRegistry, *SubagentTool) {
+// 子代理工具），返回子代理工具与 Provider。overrides 按名字替换默认的
+// stub web 工具（如需让工具执行有副作用，例如触发取消）。
+func newSubagentFixture(t *testing.T, provider ai.Provider, tool *SubagentTool, overrides ...ai.Tool) (*toolexec.Registry, *SubagentTool) {
 	t.Helper()
-	registry, err := newToolRegistry([]ai.Tool{
+	tools := []ai.Tool{
 		&stubTool{name: "web_search_exa"},
 		&stubTool{name: "web_fetch_exa"},
 		tool,
-	})
+	}
+	for _, override := range overrides {
+		for index, registered := range tools {
+			if registered.Definition().Name == override.Definition().Name {
+				tools[index] = override
+			}
+		}
+	}
+	registry, err := toolexec.NewRegistry(tools)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
+	registry.Freeze()
 
 	defs := make(ai.ToolDefinitions, 0, len(tool.tools))
 	for _, name := range tool.tools {
-		entry, ok := registry.lookup(name)
+		definition, _, ok := registry.Lookup(name)
 		if !ok {
 			t.Fatalf("tool %q missing", name)
 		}
-		defs = append(defs, entry.definition)
+		defs = append(defs, definition)
 	}
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	childLoop := NewLoopWithCompaction(provider,
 		NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{})
 	tool.bound.Store(&subagentPipeline{childLoop: childLoop, childTools: defs})
@@ -173,12 +183,12 @@ func runParentForTest(
 	t *testing.T,
 	ctx context.Context,
 	provider ai.Provider,
-	registry *toolRegistry,
+	registry *toolexec.Registry,
 	limits RunLimits,
 	listener EventListener,
 ) (loopResult, *runGovernor, error) {
 	t.Helper()
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	parentLoop := NewLoop(provider, NewScheduler(toolRuntime, defaultMaxParallelTools))
 	runContext := harness.Context{
 		Messages: []ai.Message{
@@ -281,7 +291,7 @@ func TestSubagentParentBudgetTripTerminatesAsMaxCost(t *testing.T) {
 	// 子调用成本单独放大：给子 Provider 包一层。
 	childProvider := &subagentScriptProvider{costUSD: 0.30}
 	tool.bound.Load().childLoop = NewLoopWithCompaction(childProvider,
-		NewScheduler(newToolRuntimeFromRegistry(registry, middleware.Defaults()),
+		NewScheduler(toolexec.NewExecutorFromRegistry(registry, middleware.Defaults()),
 			defaultMaxParallelTools),
 		harness.CompactionConfig{})
 
@@ -307,17 +317,12 @@ func TestSubagentParentBudgetTripTerminatesAsMaxCost(t *testing.T) {
 func TestSubagentCancelAccounting(t *testing.T) {
 	provider := &subagentScriptProvider{costUSD: 0.01}
 	ctx, cancel := context.WithCancel(context.Background())
-	registry, _ := newSubagentFixture(t, provider, newResearchSubagentTool())
 	// 子搜索工具执行时取消父 Run：在飞调用完成后取消链生效。
-	registry.tools["web_search_exa"] = toolEntry{
-		definition: ai.ToolDefinition{Name: "web_search_exa", InputSchema: map[string]any{"type": "object"}},
-		tool: &stubTool{name: "web_search_exa", execute: func(ctx context.Context, _ json.RawMessage) (ai.ToolOutput, error) {
+	registry, _ := newSubagentFixture(t, provider, newResearchSubagentTool(),
+		&stubTool{name: "web_search_exa", execute: func(ctx context.Context, _ json.RawMessage) (ai.ToolOutput, error) {
 			cancel()
 			return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("搜索结果")}}, nil
-		}},
-		validateArgs: func(json.RawMessage) error { return nil },
-		owner:        staticToolOwner,
-	}
+		}})
 
 	result, _, err := runParentForTest(t, ctx, provider, registry, RunLimits{}, nil)
 	if err == nil || !errors.Is(err, context.Canceled) {
@@ -434,7 +439,7 @@ func (l *captureToolListener) OnEvent(_ context.Context, event AgentEvent) {
 func TestSubagentRejectsNonVisibleToolCall(t *testing.T) {
 	var readExecuted atomic.Int32
 	tool := newResearchSubagentTool()
-	registry, err := newToolRegistry([]ai.Tool{
+	registry, err := toolexec.NewRegistry([]ai.Tool{
 		&stubTool{name: "read", execute: func(_ context.Context, _ json.RawMessage) (ai.ToolOutput, error) {
 			readExecuted.Add(1)
 			return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("本地文件内容")}}, nil
@@ -446,15 +451,15 @@ func TestSubagentRejectsNonVisibleToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
+	registry.Freeze()
 
 	// 子模型发起白名单外的 read 调用（幻觉或注入诱导）。
 	provider := &subagentScriptProvider{costUSD: 0.01, childFirstTool: "read"}
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
-		entry, _ := registry.lookup(name)
-		defs = append(defs, entry.definition)
+		definition, _, _ := registry.Lookup(name)
+		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
 		childLoop: NewLoopWithCompaction(provider,
@@ -520,7 +525,7 @@ func (p *mixedScriptProvider) Stream(ctx context.Context, messages []ai.Message,
 func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 	provider := &mixedScriptProvider{subagentScriptProvider: subagentScriptProvider{costUSD: 0.001}}
 	tool := newResearchSubagentTool()
-	registry, err := newToolRegistry([]ai.Tool{
+	registry, err := toolexec.NewRegistry([]ai.Tool{
 		&stubTool{name: "web_search_exa"},
 		&stubTool{name: "web_fetch_exa"},
 		&stubTool{name: "get_current_time", parallelSafe: true},
@@ -529,13 +534,13 @@ func TestSubagentMixedBatchOrderAndRejectedErrorCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
+	registry.Freeze()
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
-		entry, _ := registry.lookup(name)
-		defs = append(defs, entry.definition)
+		definition, _, _ := registry.Lookup(name)
+		defs = append(defs, definition)
 	}
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	tool.bound.Store(&subagentPipeline{
 		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
 		childTools: defs,
@@ -640,7 +645,7 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 		return ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("ok")}}, nil
 	}
 	tool := newResearchSubagentTool()
-	registry, err := newToolRegistry([]ai.Tool{
+	registry, err := toolexec.NewRegistry([]ai.Tool{
 		&stubTool{name: "web_search_exa", execute: blocking},
 		&stubTool{name: "web_fetch_exa", execute: blocking},
 		tool,
@@ -648,12 +653,12 @@ func TestSubagentConcurrentMCPCallsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	registry.Freeze()
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
-		entry, _ := registry.lookup(name)
-		defs = append(defs, entry.definition)
+		definition, _, _ := registry.Lookup(name)
+		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
 		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
@@ -727,7 +732,7 @@ func TestSubagentInflightSettledAfterBudgetTrip(t *testing.T) {
 	// 仍须完成并入账（账本与 Totals 一致是硬不变量）。
 	provider := &subagentScriptProvider{costUSD: 0.06, parentCallCount: 2}
 	tool := newResearchSubagentTool()
-	registry, err := newToolRegistry([]ai.Tool{
+	registry, err := toolexec.NewRegistry([]ai.Tool{
 		&stubTool{name: "web_search_exa"},
 		&stubTool{name: "web_fetch_exa"},
 		tool,
@@ -735,12 +740,12 @@ func TestSubagentInflightSettledAfterBudgetTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	registry.Freeze()
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
-		entry, _ := registry.lookup(name)
-		defs = append(defs, entry.definition)
+		definition, _, _ := registry.Lookup(name)
+		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
 		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),
@@ -774,7 +779,7 @@ func TestSubagentCancelVsBudgetRacePrefersParentCancel(t *testing.T) {
 	// 先于第二个子代理的 debit 执行，构造确定的"取消 × 触顶"竞态。
 	ctx, cancel := context.WithCancel(context.Background())
 	tool := newResearchSubagentTool()
-	registry, err := newToolRegistry([]ai.Tool{
+	registry, err := toolexec.NewRegistry([]ai.Tool{
 		&stubTool{name: "web_search_exa", execute: func(ctx context.Context, _ json.RawMessage) (ai.ToolOutput, error) {
 			cancel()
 			close(gate)
@@ -786,12 +791,12 @@ func TestSubagentCancelVsBudgetRacePrefersParentCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.freeze()
-	toolRuntime := newToolRuntimeFromRegistry(registry, middleware.Defaults())
+	registry.Freeze()
+	toolRuntime := toolexec.NewExecutorFromRegistry(registry, middleware.Defaults())
 	defs := ai.ToolDefinitions{}
 	for _, name := range newResearchSubagentTool().tools {
-		entry, _ := registry.lookup(name)
-		defs = append(defs, entry.definition)
+		definition, _, _ := registry.Lookup(name)
+		defs = append(defs, definition)
 	}
 	tool.bound.Store(&subagentPipeline{
 		childLoop:  NewLoopWithCompaction(provider, NewScheduler(toolRuntime, defaultMaxParallelTools), harness.CompactionConfig{}),

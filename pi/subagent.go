@@ -31,6 +31,9 @@ type subagentPipeline struct {
 	childTools ai.ToolDefinitions
 }
 
+// IsSubagentTool 实现 toolexec.SubagentTool 标记接口。
+func (t *SubagentTool) IsSubagentTool() bool { return true }
+
 // newResearchSubagentTool 创建内置查证子代理工具（未绑定占位）。
 func newResearchSubagentTool() *SubagentTool {
 	return &SubagentTool{

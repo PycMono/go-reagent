@@ -1,111 +1,111 @@
-package pi
+// Package toolexec 是 Tool 执行域：注册（Registry）、经中间件链执行单个
+// 调用（Executor）、批量调度（Scheduler）与执行生命周期事件（Event）。
+// 命名对齐 pi.dev 的 tool execution 词汇。
+package toolexec
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/middleware"
-	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-type ToolEventObserver func(context.Context, ToolEvent)
+// EventObserver 接收 Tool 执行的生命周期事件。
+type EventObserver func(context.Context, Event)
 
-type ToolRuntime interface {
+// Executor 查找并经中间件链执行单个 Tool 调用。
+type Executor interface {
 	Definitions() []ai.ToolDefinition
-	Execute(context.Context, ai.ToolCall, ToolEventObserver) (ToolResult, error)
+	Execute(context.Context, ai.ToolCall, EventObserver) (Result, error)
 }
 
-// ToolRuntimeOptions contains the immutable tool and middleware snapshot.
-type ToolRuntimeOptions struct {
+// ExecutorOptions contains the immutable tool and middleware snapshot.
+type ExecutorOptions struct {
 	Tools       []ai.Tool
 	Middlewares []middleware.Handler
 }
 
-type toolRuntime struct {
-	registry *toolRegistry
+type executor struct {
+	registry *Registry
 	handlers []middleware.Handler
 }
 
-func NewToolRuntime(options ToolRuntimeOptions) (ToolRuntime, error) {
-	registry, err := newToolRegistry(options.Tools)
+func NewExecutor(options ExecutorOptions) (Executor, error) {
+	registry, err := NewRegistry(options.Tools)
 	if err != nil {
 		return nil, err
 	}
-	registry.freeze()
-	return newToolRuntimeFromRegistry(registry, options.Middlewares), nil
+	registry.Freeze()
+	return NewExecutorFromRegistry(registry, options.Middlewares), nil
 }
 
-func newToolRuntimeFromRegistry(registry *toolRegistry, middlewares []middleware.Handler) ToolRuntime {
+func NewExecutorFromRegistry(registry *Registry, middlewares []middleware.Handler) Executor {
 	// 追加终端 handler 时复制切片，避免污染调用方的底层数组。
 	handlers := append([]middleware.Handler{}, middlewares...)
 	handlers = append(handlers, middleware.ExecuteTool)
-	return &toolRuntime{registry: registry, handlers: handlers}
+	return &executor{registry: registry, handlers: handlers}
 }
 
-func (r *toolRuntime) Definitions() []ai.ToolDefinition {
-	return r.registry.definitions()
+func (e *executor) Definitions() []ai.ToolDefinition {
+	return e.registry.Definitions()
 }
 
-func (r *toolRuntime) Execute(
+func (e *executor) Execute(
 	ctx context.Context,
 	call ai.ToolCall,
-	observer ToolEventObserver,
-) (ToolResult, error) {
+	observer EventObserver,
+) (Result, error) {
 	if err := ctx.Err(); err != nil {
-		return ToolResult{}, err
+		return Result{}, err
 	}
-	entry, ok := r.registry.lookup(call.Name)
+	toolEntry, ok := e.registry.lookup(call.Name)
 	if !ok {
 		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
-	observe(ctx, observer, NewToolStart(call))
+	observe(ctx, observer, NewStartEvent(call))
 	execution := &middleware.Execution{
 		Ctx:          ctx,
 		Call:         call,
-		Definition:   entry.definition,
-		Tool:         entry.tool,
+		Definition:   toolEntry.definition,
+		Tool:         toolEntry.tool,
 		Observer:     adaptUpdateObserver(observer),
-		ValidateArgs: entry.validateArgs,
+		ValidateArgs: toolEntry.validateArgs,
 	}
-	execution.Run(r.handlers)
+	execution.Run(e.handlers)
 	output, err := execution.Output, execution.Err
 	if contextErr := ctx.Err(); contextErr != nil {
 		err = contextErr
 	}
-	result := normalizeToolResult(call, output, err)
-	observe(ctx, observer, NewToolEnd(call, result))
+	result := normalizeResult(call, output, err)
+	observe(ctx, observer, NewEndEvent(call, result))
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return result, err
 	}
 	return result, nil
 }
 
-// adaptUpdateObserver 把 ToolEventObserver 适配为中间件包的 UpdateObserver，
-// ToolEvent 的构造留在主包，middleware 包不反向依赖 pi。
-func adaptUpdateObserver(observer ToolEventObserver) middleware.UpdateObserver {
+// adaptUpdateObserver 把 EventObserver 适配为中间件包的 UpdateObserver。
+func adaptUpdateObserver(observer EventObserver) middleware.UpdateObserver {
 	if observer == nil {
 		return nil
 	}
 	return func(ctx context.Context, call ai.ToolCall, update ai.ToolUpdate) {
-		observer(ctx, NewToolUpdate(call, update))
+		observer(ctx, NewUpdateEvent(call, update))
 	}
 }
 
-func observe(ctx context.Context, observer ToolEventObserver, event ToolEvent) {
+func observe(ctx context.Context, observer EventObserver, event Event) {
 	if observer != nil {
 		observer(ctx, event)
 	}
 }
 
-func normalizeToolResult(call ai.ToolCall, output ai.ToolOutput, err error) ToolResult {
+func normalizeResult(call ai.ToolCall, output ai.ToolOutput, err error) Result {
 	var errorCode pierrors.ErrorCode
 	if err != nil {
 		errorCode = pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", err))
@@ -117,7 +117,7 @@ func normalizeToolResult(call ai.ToolCall, output ai.ToolOutput, err error) Tool
 		output.Content = []ai.ContentBlock{ai.TextBlock("(no output)")}
 	}
 	output = limitToolOutput(output)
-	return ToolResult{
+	return Result{
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Content:    output.Content,
@@ -135,8 +135,8 @@ func toolErrorText(err error) string {
 	return err.Error()
 }
 
-func errorResult(call ai.ToolCall, err error) ToolResult {
-	return normalizeToolResult(call, ai.ToolOutput{}, err)
+func errorResult(call ai.ToolCall, err error) Result {
+	return normalizeResult(call, ai.ToolOutput{}, err)
 }
 
 const (
@@ -200,44 +200,4 @@ func withTruncationDetail(details any) any {
 		return map[string]any{"truncated": true}
 	}
 	return map[string]any{"tool_details": details, "truncated": true}
-}
-
-func compileSchemaValidator(definition ai.ToolDefinition) (func(json.RawMessage) error, error) {
-	schemaJSON, err := json.Marshal(definition.InputSchema)
-	if err != nil {
-		return nil, fmt.Errorf("marshal input schema for tool %q: %w", definition.Name, err)
-	}
-	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
-	if err != nil {
-		return nil, fmt.Errorf("decode input schema for tool %q: %w", definition.Name, err)
-	}
-	location := "urn:go-reagent:tool:" + definition.Name
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource(location, document); err != nil {
-		return nil, fmt.Errorf("register input schema for tool %q: %w", definition.Name, err)
-	}
-	compiled, err := compiler.Compile(location)
-	if err != nil {
-		return nil, fmt.Errorf("compile input schema for tool %q: %w", definition.Name, err)
-	}
-
-	return func(arguments json.RawMessage) error {
-		decoder := json.NewDecoder(bytes.NewReader(arguments))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return fmt.Errorf("invalid arguments for tool %q: %w", definition.Name, err)
-		}
-		var extra any
-		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-			if err != nil {
-				return fmt.Errorf("invalid trailing arguments for tool %q: %w", definition.Name, err)
-			}
-			return fmt.Errorf("invalid trailing arguments for tool %q", definition.Name)
-		}
-		if err := compiled.Validate(value); err != nil {
-			return fmt.Errorf("arguments do not match schema for tool %q: %w", definition.Name, err)
-		}
-		return nil
-	}, nil
 }

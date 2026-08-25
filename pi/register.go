@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
 	"github.com/PycMono/go-reagent/pi/middleware"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx"
 )
 
@@ -102,7 +103,7 @@ func newSubagentTools() (subagentToolsOut, error) {
 type subagentBinderParams struct {
 	fx.In
 	Lifecycle fx.Lifecycle
-	Registry  *toolRegistry
+	Registry  *toolexec.Registry
 	// Runtime 仅表达构造顺序：binder 的 OnStart 必须在 extensionRuntime
 	// 注册 MCP 工具并 freeze 之后执行。
 	Runtime     *extensionRuntime
@@ -117,7 +118,7 @@ type subagentBinderParams struct {
 // 子 Scheduler 复用共享 ToolRuntime：执行边界由 Loop 的可见性校验保证
 // （availableTools = 白名单 defs 快照）。
 type subagentBinder struct {
-	registry    *toolRegistry
+	registry    *toolexec.Registry
 	toolRuntime ToolRuntime
 	tools       []*SubagentTool
 	provider    ai.Provider
@@ -149,7 +150,7 @@ func (b *subagentBinder) start(_ context.Context) error {
 		return nil
 	}
 	available := make(map[string]bool)
-	for _, definition := range b.registry.definitions() {
+	for _, definition := range b.registry.Definitions() {
 		available[definition.Name] = true
 	}
 
@@ -159,16 +160,16 @@ func (b *subagentBinder) start(_ context.Context) error {
 		// 白名单存在性（含 MCP 工具；此时 Registry 已冻结）。
 		defs := make(ai.ToolDefinitions, 0, len(tool.tools))
 		for _, name := range tool.tools {
-			entry, ok := b.registry.lookup(name)
+			definition, _, ok := b.registry.Lookup(name)
 			if !ok {
 				return fmt.Errorf("subagent %q: tool %q is not registered (available: %v)",
 					tool.name, name, available)
 			}
-			defs = append(defs, entry.definition)
+			defs = append(defs, definition)
 		}
 		// 占位工具必须已在冻结 Registry 中且正是当前实例。
-		entry, ok := b.registry.lookup(subagentToolName(tool.name))
-		if !ok || entry.tool != ai.Tool(tool) {
+		_, registered, ok := b.registry.Lookup(subagentToolName(tool.name))
+		if !ok || registered != ai.Tool(tool) {
 			return fmt.Errorf("subagent %q: placeholder tool %q is missing from the registry",
 				tool.name, subagentToolName(tool.name))
 		}
@@ -215,8 +216,8 @@ func newContextBuilder(composer *harness.PromptComposer, workDir WorkDir) *harne
 	return harness.NewContextBuilder(composer, string(workDir))
 }
 
-func newFXToolRegistry(params toolRegistryParams) (*toolRegistry, error) {
-	return newToolRegistry(params.Tools)
+func newFXToolRegistry(params toolRegistryParams) (*toolexec.Registry, error) {
+	return toolexec.NewRegistry(params.Tools)
 }
 
 // ExtraToolHandlers 是装配层（组合根）追加在默认中间件链之后的扩展
@@ -226,7 +227,7 @@ type ExtraToolHandlers []middleware.Handler
 
 type toolRuntimeParams struct {
 	fx.In
-	Registry *toolRegistry
+	Registry *toolexec.Registry
 	// Ext 仅用于 fx 构造顺序约束：MCP 工具注册并 freeze 之后才建 Runtime。
 	Ext   *extensionRuntime
 	Extra ExtraToolHandlers `optional:"true"`
@@ -234,7 +235,7 @@ type toolRuntimeParams struct {
 
 func newFXToolRuntime(params toolRuntimeParams) ToolRuntime {
 	handlers := append(middleware.Defaults(), params.Extra...)
-	return newToolRuntimeFromRegistry(params.Registry, handlers)
+	return toolexec.NewExecutorFromRegistry(params.Registry, handlers)
 }
 
 func newScheduler(toolRuntime ToolRuntime) *Scheduler {
