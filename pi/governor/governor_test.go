@@ -8,6 +8,7 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
 )
 
 func governorUsage(input, output int64) ai.Usage {
@@ -86,5 +87,18 @@ func TestTerminationFromErrorPriority(t *testing.T) {
 	}
 	if got := TerminationFromError(nil, Totals{}); got.Reason != TerminationCompleted {
 		t.Fatalf("reason = %q, want completed", got.Reason)
+	}
+}
+
+func TestTerminationFromErrorLoopDetected(t *testing.T) {
+	loopErr := pierrors.Wrap(pierrors.ErrorCodeRunLoopDetected, "tool loop detection",
+		&loopdetect.Error{Pattern: loopdetect.PatternStableOutcome, Count: 5, ToolNames: []string{"search"}})
+	if got := TerminationFromError(loopErr, Totals{}); got.Reason != TerminationLoopDetected {
+		t.Fatalf("reason = %q, want loop_detected", got.Reason)
+	}
+	// 取消/deadline 的映射优先于 loop error。
+	canceled := errors.Join(context.Canceled, loopErr)
+	if got := TerminationFromError(canceled, Totals{}); got.Reason != TerminationCanceled {
+		t.Fatalf("reason = %q, want canceled priority over loop error", got.Reason)
 	}
 }

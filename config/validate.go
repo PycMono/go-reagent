@@ -305,7 +305,30 @@ func (config *AgentConfig) normalizeAndValidate() error {
 	}
 	// 把解析后的绝对路径写回配置，下游装配层不再做任何解析与校验。
 	config.WorkspaceDir = resolved
+	if err := config.validateLoopDetection(); err != nil {
+		return err
+	}
 	return config.validateLimits()
+}
+
+// validateLoopDetection 对 excluded_tools 做 fail-fast 校验：空白名称、
+// 前后空格和重复项一律拒绝；不要求排除项一定已注册（MCP/extension 工具
+// 可能到启动期才完整出现）。
+func (config *AgentConfig) validateLoopDetection() error {
+	seen := make(map[string]struct{}, len(config.LoopDetection.ExcludedTools))
+	for _, name := range config.LoopDetection.ExcludedTools {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("agent.loop_detection.excluded_tools 不允许空白工具名")
+		}
+		if name != strings.TrimSpace(name) {
+			return fmt.Errorf("agent.loop_detection.excluded_tools %q 不允许前后空格", name)
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("agent.loop_detection.excluded_tools %q 重复", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 // resolveAgentWorkspaceDir 校验 Workspace 目录必须存在、是目录、且不是

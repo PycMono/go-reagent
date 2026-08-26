@@ -882,3 +882,57 @@ func TestLoadConfigParsesAndValidatesTools(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfigLoopDetection(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{name: "blank name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["  "]}}`, want: "loop_detection"},
+		{name: "padded name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":[" poll "]}}`, want: "前后空格"},
+		{name: "duplicate", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["poll","poll"]}}`, want: "重复"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := `{"currentPlatform":"x","platforms":[` +
+				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],` +
+				tt.extra + `,"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}}`
+			if _, err := Load(writeConfig(t, document)); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigLoopDetectionDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["process_poll"]}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.LoopDetection.Disabled {
+		t.Fatal("loop detection must default to enabled")
+	}
+	if len(cfg.Agent.LoopDetection.ExcludedTools) != 1 || cfg.Agent.LoopDetection.ExcludedTools[0] != "process_poll" {
+		t.Fatalf("ExcludedTools = %#v", cfg.Agent.LoopDetection.ExcludedTools)
+	}
+
+	// 整节省略：默认启用且无排除项。
+	cfg, err = Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.LoopDetection.Disabled || len(cfg.Agent.LoopDetection.ExcludedTools) != 0 {
+		t.Fatalf("zero value must mean enabled with no exclusions, got %#v", cfg.Agent.LoopDetection)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
 	"github.com/PycMono/go-reagent/pi/middleware"
 	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.uber.org/fx"
@@ -112,28 +113,32 @@ type subagentBinderParams struct {
 	ToolRuntime toolexec.Executor
 	Provider    ai.Provider
 	Compaction  harness.CompactionConfig `optional:"true"`
-	Platform    providers.Options
+	// LoopDetection 与根 Loop 同源：子 Loop 继承相同配置但创建独立 Detector。
+	LoopDetection loopdetect.Config `optional:"true"`
+	Platform      providers.Options
 }
 
 // subagentBinder 在启动期 freeze 后校验定义并原子绑定子管线（全有或全无）。
 // 子 toolexec.Scheduler 复用共享 toolexec.Executor：执行边界由 Loop 的可见性校验保证
 // （availableTools = 白名单 defs 快照）。
 type subagentBinder struct {
-	registry    *toolexec.Registry
-	toolRuntime toolexec.Executor
-	tools       []*SubagentTool
-	provider    ai.Provider
-	compaction  harness.CompactionConfig
-	platform    providers.Options
+	registry      *toolexec.Registry
+	toolRuntime   toolexec.Executor
+	tools         []*SubagentTool
+	provider      ai.Provider
+	compaction    harness.CompactionConfig
+	loopDetection loopdetect.Config
+	platform      providers.Options
 }
 
 func newSubagentBinder(params subagentBinderParams) *subagentBinder {
 	binder := &subagentBinder{
-		registry:    params.Registry,
-		toolRuntime: params.ToolRuntime,
-		provider:    params.Provider,
-		compaction:  params.Compaction,
-		platform:    params.Platform,
+		registry:      params.Registry,
+		toolRuntime:   params.ToolRuntime,
+		provider:      params.Provider,
+		compaction:    params.Compaction,
+		loopDetection: params.LoopDetection,
+		platform:      params.Platform,
 	}
 	for _, tool := range params.Tools {
 		if subagent, ok := tool.(*SubagentTool); ok {
@@ -176,7 +181,8 @@ func (b *subagentBinder) start(_ context.Context) error {
 		}
 		scheduler := toolexec.NewScheduler(b.toolRuntime, defaultMaxParallelTools)
 		childLoop := NewLoopWithCompaction(b.provider, scheduler, b.compaction,
-			WithLoopProviderIdentity(b.platform.ID, b.platform.Model))
+			WithLoopProviderIdentity(b.platform.ID, b.platform.Model),
+			WithLoopDetection(b.loopDetection))
 		pipelines = append(pipelines, &subagentPipeline{childLoop: childLoop, childTools: defs})
 	}
 
@@ -251,13 +257,16 @@ type loopParams struct {
 	// 值类型与装配层提供的 harness.CompactionConfig 精确匹配——fx 不做
 	// 值/指针隐式转换，类型不一致会让 optional 字段静默落空。
 	Compaction harness.CompactionConfig `optional:"true"`
+	// LoopDetection 是可选的循环护栏配置；未提供时零值即默认启用。
+	LoopDetection loopdetect.Config `optional:"true"`
 	// Platform 提供 Metrics 的 provider/model Label（与 Ledger 口径一致）。
 	Platform providers.Options
 }
 
 func newLoop(params loopParams) *Loop {
 	return NewLoopWithCompaction(params.Provider, params.Scheduler, params.Compaction,
-		WithLoopProviderIdentity(params.Platform.ID, params.Platform.Model))
+		WithLoopProviderIdentity(params.Platform.ID, params.Platform.Model),
+		WithLoopDetection(params.LoopDetection))
 }
 
 func newToolRoot(workDir WorkDir) tools.Root {

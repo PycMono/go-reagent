@@ -231,6 +231,14 @@ func runErrorVO(err error, termination governor.Termination) *vo.RunErrorVO {
 			Message: "本轮已达到运行资源上限，请重新发送",
 			Reason:  string(termination.Reason),
 		}
+	case governor.TerminationLoopDetected:
+		// 循环护栏终止：与预算终止同类的客户端可区分响应，不携带参数、
+		// 结果或模型正文。
+		return &vo.RunErrorVO{
+			Code:    commonerrors.ErrConflict.Code(),
+			Message: "本轮检测到重复且无进展的工具调用，已停止执行",
+			Reason:  string(termination.Reason),
+		}
 	}
 	if errors.Is(err, context.Canceled) {
 		return &vo.RunErrorVO{Code: commonerrors.ErrConflict.Code(), Message: "run canceled", Reason: terminationReason(termination)}

@@ -3,6 +3,7 @@ package config
 import (
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
 )
 
 const (
@@ -75,6 +76,8 @@ type ObservabilityContentConfig struct {
 type AgentConfig struct {
 	WorkspaceDir string          `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
 	Limits       governor.Limits `json:"limits" yaml:"limits" toml:"limits"`
+	// LoopDetection 是工具循环护栏配置；整节可省略，零值即默认启用。
+	LoopDetection loopdetect.Config `json:"loop_detection" yaml:"loop_detection" toml:"loop_detection"`
 	// EnableContextPrune 显式启用主动上下文压缩的 L1 只读工具结果裁剪。
 	EnableContextPrune bool `json:"enable_context_prune" yaml:"enable_context_prune" toml:"enable_context_prune"`
 }

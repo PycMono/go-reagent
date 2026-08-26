@@ -174,6 +174,15 @@ func RecordCompaction(ctx context.Context, reason CompactionReason, err error) {
 	)
 }
 
+// RecordLoopDetectionIntervention 记录一次工具循环护栏干预。Label 只用
+// 低基数的 pattern 和 level；工具名、参数、结果、hash 一律不进入指标。
+func RecordLoopDetectionIntervention(ctx context.Context, pattern, level string) {
+	sdkmetrics.Counter(ctx, MetricLoopDetectionInterventions, 1,
+		sdkmetrics.String(LabelPattern, pattern),
+		sdkmetrics.String(LabelLevel, level),
+	)
+}
+
 // ---------- P1（阶段 5 启用，§8） ----------
 
 // RecordAgentRunShape 记录每 Run 的 Turn/Invocation 分布（§8.1 P1）。

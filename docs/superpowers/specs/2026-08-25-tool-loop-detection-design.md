@@ -6,6 +6,16 @@
 
 2026-08-25 需求审计修订：补全 warning ephemeral context 的生成、重试、Compaction 与回写生命周期；形式化 Ping-pong 稳定条件；固定 Tool Result 对齐失败的 Run 级错误语义；明确窗口淘汰、post-compaction 漏报、易变结果文本、依赖方向与配置校验边界。架构选择不变。
 
+2026-08-25 配置默认值修订：`loop_detection` 配置可有可无，缺省/零值即默认启用并采用包内固定阈值；`Enabled` 字段反转为 `Disabled`，只有显式 `disabled: true` 才回到无检测的旧行为。
+
+2026-08-25 范围修订：移除 Compaction 后复发硬熔断（原检测规则 5）及其 `ArmPostCompaction`/`onCommitted` 集成面。该规则是第一版误杀面最大的规则（压缩后的正常轮询会得到 3 个完全相同结果），且其场景仍由保留的普通历史 + stable-outcome critical + 恢复状态机兜底，仅晚数个 turn 终止。`RecordToolBatchOutcome` 因此变为无返回值的纯记账。出现真实压缩后复发样本时再按演进条件评估。
+
+2026-08-25 范围修订：移除 Ping-pong 交替检测（原规则 3）与 Global circuit breaker（原规则 4），检测收敛为提醒（规则 1）+ 单签名定罪（规则 2）两条。规则 3 只是加速器：交替循环两侧结果稳定时，规则 2 必然能在一侧积累到 5 个相同结果，仅晚约 6 条记录拦截。删除规则 4 是有意接受的漏报：多签名/长周期/参数漂移循环（每个签名在 16 条窗口内最多出现一两次）没有行为级拦截，由 MaxTurns、Token、Cost 预算兜底；真实样本出现后再按演进条件评估。
+
+2026-08-25 集成修订：钉死 Ephemeral 合并点位于 `generateWithRetry` 之上的 Action 生成入口，Compaction 摘要请求永不携带提醒；Recover 合成结果不触发 `tool_error` 外部告警（`alertListener` 按 `run_loop_detected` 错误码跳过）。
+
+2026-08-25 外部审计修订：收紧“结果变化不触发 critical”的临界语义并声明长轮询误报边界；固定窗口“先淘汰清理、再插入”顺序；Outcome 指纹改为无歧义 canonical JSON 编码；形式化同批投影与同级干预合并规则；`ToolCalls.Validate()` 并入契约 finalization（记 `contract_invalid`）；标注默认启用为行为型变更并钉死 `run.failed` 映射；补观测文件清单与 Detector 生命周期约束；既有取消/预算/调度错误的孤立 Assistant 声明为范围外。
+
 本文等待规格审阅，不包含代码实现。用户确认本文后，再单独编写实施计划。
 
 本文是 [2026-08-19 Run Budget 与循环护栏设计](./2026-08-19-run-budget-loop-guardrails-design.md) 中“第二阶段：行为循环检测”的详细规格，并取代该节的概要描述；已经落地的 `MaxTurns`、`MaxCostUSD`、`MaxTotalTokens`、Invocation、Totals、父子预算与 Termination 设计不迁移、不重写。
@@ -36,12 +46,10 @@ func (d *Detector) AdmitToolBatch(
 func (d *Detector) RecordToolBatchOutcome(
     calls ai.ToolCalls,
     results []toolexec.Result,
-) *Intervention
-
-func (d *Detector) ArmPostCompaction()
+)
 ```
 
-`Admit` 表示副作用发生前的原子准入；`Record` 表示副作用完成后的事实记账。方法名直接表达调用时机和是否允许产生副作用。
+`Admit` 表示副作用发生前的原子准入；`Record` 表示副作用完成后的事实记账，无返回值、不产生干预决定。方法名直接表达调用时机和是否允许产生副作用。
 
 ## 目标
 
@@ -50,9 +58,8 @@ func (d *Detector) ArmPostCompaction()
 3. 先提醒模型自我纠正；第一次确认严重循环时阻止工具批次并给予一次恢复 turn；恢复失败后终止 Run。
 4. 用工具结果判断是否真的取得进展，避免仅凭“参数相同”误杀合法轮询。
 5. Detector 状态独立于模型上下文，在 L1/L2 Compaction 后继续有效。
-6. 对 Compaction 后立即复发的相同调用与相同结果提供短窗口硬熔断。
-7. 保持 `governor` 为唯一 Totals 与最终 Termination 来源，不形成第二套预算或终止系统。
-8. 主代理与每个子代理使用相同策略、独立状态，避免不同 Run 之间相互污染。
+6. 保持 `governor` 为唯一 Totals 与最终 Termination 来源，不形成第二套预算或终止系统。
+7. 主代理与每个子代理使用相同策略、独立状态，避免不同 Run 之间相互污染。
 
 ## 非目标
 
@@ -86,7 +93,7 @@ func (d *Detector) ArmPostCompaction()
 | Provider/响应契约错误 | 模型调用和 Action 校验后 | `Loop` | `error` |
 | 无 Tool Calls 的完整 Action | Action 校验与预算检查后 | `Loop` | `completed` |
 | Scheduler/工具基础设施错误 | 工具批次结算后 | `Loop` / Scheduler | `error` |
-| 行为循环 | 工具批次准入前或结果完成后 | `loopdetect` 提供证据，`Loop` 执行 | `loop_detected` |
+| 行为循环 | 工具批次准入前 | `loopdetect` 提供证据，`Loop` 执行 | `loop_detected` |
 
 这些机制的算法和状态来源不同，但都通过同一个 `Loop.finish` 返回，并由现有 `governor.TerminationFromError` 生成唯一结构化终止结果。增加 Detector 不等于增加第二个 Loop，也不需要把不同性质的策略强行塞进同一类型。
 
@@ -99,6 +106,8 @@ func (d *Detector) ArmPostCompaction()
 - `message_end` 事件。
 
 循环准入可能阻止整批工具，因此实现时必须把 Tool Calls 校验和 Detector 准入提前到带工具 Assistant 的提交之前。否则终止路径会持久化一条没有对应 Tool Results 的残缺消息。
+
+另外，既有的工具执行后父取消、父预算耗尽与 Scheduler 基础设施错误路径，当前会在 Assistant 提交后直接返回，留下没有对应 Tool Results 的 Assistant。该行为先于本设计存在，本文不改变；是否需要为这些路径合成“执行状态未知”结果以闭合协议，另行立项评估。
 
 ### Scheduler 已提供原子启动边界
 
@@ -145,10 +154,7 @@ OpenClaw 使用的相关命名包括：
 - `createPostCompactionLoopGuard`；
 - `armPostCompaction` / `observe`。
 
-OpenClaw 没有把 retry、timeout、fallback、compaction、预算和 loop guard 合并成统一 Run Controller，而是让运行器显式编排多个边界清楚的机制。它的批次准入与 post-compaction guard 直接支持本设计的两个关键选择：
-
-1. 副作用前用 `AdmitToolBatch` 做整批原子决策；
-2. 成功 Compaction 后独立 arm 一个只有 3 次观察机会的短窗口。
+OpenClaw 没有把 retry、timeout、fallback、compaction、预算和 loop guard 合并成统一 Run Controller，而是让运行器显式编排多个边界清楚的机制。它的批次准入直接支持本设计的关键选择：副作用前用 `AdmitToolBatch` 做整批原子决策。其 post-compaction guard（压缩成功后 arm 一个只有 3 次观察机会的短窗口）第一版不采用：压缩后复发仍由保留的普通历史与恢复状态机兜底，避免对压缩后的正常轮询误杀，留待真实样本驱动。
 
 本项目采用其清晰的命名与分层思路，不复制其 TypeScript SessionState、工具专属规则、阈值或产品文案。
 
@@ -171,11 +177,9 @@ pi/loopdetect/
 ├── types.go                     # Admission、Decision、Intervention、Pattern、Level
 ├── fingerprint.go               # Call/Outcome canonicalization 与 SHA-256
 ├── detector.go                  # 历史窗口、准入、提醒和恢复状态机
-├── post_compaction.go           # Compaction 后 3-outcome guard
 ├── errors.go                    # typed Error 与 sentinel
 ├── fingerprint_test.go
-├── detector_test.go
-└── post_compaction_test.go
+└── detector_test.go
 ```
 
 集成时修改：
@@ -185,8 +189,10 @@ pi/loop.go
 pi/recovery.go
 pi/compaction.go
 pi/register.go
+pi/notifier.go
 pi/governor/governor.go
 pi/harness/errors/errors.go
+pi/harness/observability/
 config/config.go
 config/load.go
 config/validate.go
@@ -198,13 +204,13 @@ application/service/chat/run_manager.go
 
 ## 外部配置
 
-第一版只开放启用开关和精确工具排除列表，阈值保持包内常量，避免未经数据验证就形成难以兼容的公共调参面。
+第一版只开放关闭开关和精确工具排除列表，阈值保持包内常量，避免未经数据验证就形成难以兼容的公共调参面。
 
 ```go
 package loopdetect
 
 type Config struct {
-    Enabled       bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+    Disabled      bool     `json:"disabled" yaml:"disabled" toml:"disabled"`
     ExcludedTools []string `json:"excluded_tools" yaml:"excluded_tools" toml:"excluded_tools"`
 }
 ```
@@ -227,32 +233,31 @@ agent:
     max_turns: 50
     max_cost_usd: 1
     max_total_tokens: 200000
+  # loop_detection 整节可省略：缺省时默认启用并使用包内固定阈值
   loop_detection:
-    enabled: true
     excluded_tools:
       - process_poll
 ```
 
 配置语义：
 
-- SDK 与 bundled application 的零值均为关闭，保持兼容；示例部署显式开启；
+- 零值即默认配置：SDK 与 bundled application 在完全没有 `loop_detection` 配置时默认启用循环检测，使用包内固定阈值；只有显式 `disabled: true` 才回到无检测的旧行为；
+- 默认启用是有意的行为型变更：升级到含本功能的版本后，未配置 `loop_detection` 的存量部署立即获得护栏；紧急回滚方式是显式 `disabled: true`，无需降级版本；
 - `excluded_tools` 使用最终暴露给模型的精确工具名匹配，大小写敏感，不支持 glob 或正则；
 - bundled application 的空白名称、前后空格和重复项在 `config` 包的 `normalizeAndValidate` 阶段 fail-fast；
 - 不要求排除项一定已注册，因为 MCP/extension 工具可能到启动期才完整出现；
-- 被排除的调用不进入任何历史、提醒、critical 或 post-compaction 计数；
+- 被排除的调用不进入任何历史、提醒或 critical 计数；
 - 混合批次只检测未排除调用，但只要其中一个触发阻断，仍按整批原子规则处理全部调用。
 
-业务配置校验只在根 `config` 包执行，不在 `pi/loopdetect` 复制第二套校验。直接使用 SDK 时，`loopdetect.New` 不返回配置错误，只复制配置切片，并对 `ExcludedTools` 做 trim、去空和去重的防御性归一化；这些操作不得修改调用方传入的 Config。
+业务配置校验只在根 `config` 包执行，不在 `pi/loopdetect` 复制第二套校验。直接使用 SDK 时，`loopdetect.New(Config{})` 即默认启用策略；`New` 不返回配置错误，只复制配置切片，并对 `ExcludedTools` 做 trim、去空和去重的防御性归一化；这些操作不得修改调用方传入的 Config。
 
 固定第一版参数：
 
 ```go
 const (
-    historySize                   = 16
-    warningThreshold              = 3
-    criticalThreshold             = 5
-    globalCircuitBreakerThreshold = 8
-    postCompactionWindowSize      = 3
+    historySize       = 16
+    warningThreshold  = 3
+    criticalThreshold = 5
 )
 ```
 
@@ -287,9 +292,6 @@ type Pattern string
 const (
     PatternRepeatedCall       Pattern = "repeated_call"
     PatternStableOutcome      Pattern = "stable_outcome"
-    PatternPingPong           Pattern = "ping_pong"
-    PatternGlobalCircuit      Pattern = "global_circuit_breaker"
-    PatternPostCompaction     Pattern = "post_compaction_repeat"
 )
 
 type Intervention struct {
@@ -311,9 +313,7 @@ func (d *Detector) AdmitToolBatch(calls ai.ToolCalls) Admission
 func (d *Detector) RecordToolBatchOutcome(
     calls ai.ToolCalls,
     results []toolexec.Result,
-) *Intervention
-
-func (d *Detector) ArmPostCompaction()
+)
 ```
 
 命名职责固定为：
@@ -330,9 +330,10 @@ pi.dev 使用的是 `beforeToolCall` + `BeforeToolCallResult.block` 生命周期
 - `DecisionAllow` 的 `Intervention` 必须为 nil；
 - `DecisionWarn` 允许工具批次执行，并携带一次只对模型可见的提醒证据；
 - `DecisionRecover` 和 `DecisionTerminate` 都不允许任何工具开始；
-- `RecordToolBatchOutcome` 要求 `len(calls) == len(results)`、`calls[i].ID == results[i].ToolCallID` 且工具名一致；Loop 在调用前检查该不变量，违反时执行“结果对齐失败”终止协议，不进入 Detector；Detector 自身对不匹配输入不修改状态并返回 nil；
-- `RecordToolBatchOutcome` 在普通记账时返回 nil，只在完成结果后需要立即干预时返回值；第一版的立即干预只有 post-compaction 终止；
-- Config 关闭时，`AdmitToolBatch` 恒返回 `DecisionAllow`，另外两个方法无副作用；
+- `RecordToolBatchOutcome` 要求 `len(calls) == len(results)`、`calls[i].ID == results[i].ToolCallID` 且工具名一致；Loop 在调用前检查该不变量，违反时执行“结果对齐失败”终止协议，不进入 Detector；Detector 自身对不匹配输入不修改状态、不产生任何效果；
+- `RecordToolBatchOutcome` 只做事实记账，不产生干预决定；所有干预都在下一次 `AdmitToolBatch` 准入时发生，阻断因此始终位于副作用之前；
+- `Disabled` 时，`AdmitToolBatch` 恒返回 `DecisionAllow`，另外两个方法无副作用；
+- Detector 方法只在 Loop 的单线程控制流中按 `AdmitToolBatch` → 工具执行 → `RecordToolBatchOutcome` 的顺序调用；不保证并发安全，不允许跨 Run 共享或重叠批次。对违反对齐前置条件的输入静默无效果是防御性兜底——正常路径由 Loop 在调用前保证不变量；
 - Detector 不暴露内部 hash、参数或结果，也不返回最终 `governor.Termination`。
 
 `Intervention.ToolNames` 必须去重并按字典序排序，确保日志和测试稳定。它只含模型已经知道的工具名，不含参数、结果、路径、命令、URL 或消息正文。
@@ -362,13 +363,15 @@ Go 的实现可以递归规范化后使用 `json.Marshal`；测试必须证明 o
 ### Outcome signature
 
 ```text
-SHA256(
-    callSignature + NUL +
-    IsError + NUL +
-    ErrorCode + NUL +
-    each(Content.Type + NUL + Content.Text)
-)
+SHA256(canonicalJSON([
+    callSignature,
+    IsError,
+    ErrorCode,
+    [[Content.Type, Content.Text], ...]
+]))
 ```
+
+编码复用 Call signature 的 canonicalJSON 规则：字符串经 JSON 转义后不含原始 NUL，数组长度与顺序在结构上显式，因此 `[Text("a"), Text("b")]` 与 `[Text("a\x00b")]` 不会碰撞。禁止用分隔符直接拼接任意文本——任何字段都可能包含分隔符字节。
 
 纳入：
 
@@ -387,7 +390,7 @@ SHA256(
 
 不保存 raw canonical JSON 或 raw result，只在内存中保存固定长度 hash 与安全元数据。这样既可识别相同结果，又避免 Detector 成为第二份敏感数据账本。
 
-完整 `Content.Text` 会保留正确的“结果变化即进展”语义，但也带来有意接受的漏报：如果工具每次在正文中加入时间戳、随机 ID、临时路径等易变文本，Outcome signature 将持续变化，stable-outcome 与 global circuit 都不会 critical。第一版只会发出 repeated-call warning，最终由 `MaxTurns`、`MaxTotalTokens`、`MaxCostUSD` 兜底；工具专属 result canonicalizer 留待真实样本驱动。
+完整 `Content.Text` 会保留正确的“结果变化即进展”语义，但也带来有意接受的漏报：如果工具每次在正文中加入时间戳、随机 ID、临时路径等易变文本，Outcome signature 将持续变化，stable-outcome 不会 critical。第一版只会发出 repeated-call warning，最终由 `MaxTurns`、`MaxTotalTokens`、`MaxCostUSD` 兜底；工具专属 result canonicalizer 留待真实样本驱动。
 
 ## 请求内状态
 
@@ -404,14 +407,13 @@ Detector 至少维护：
 每个 callSignature 的最近稳定结果与稳定次数
 已发送 warning key 集合
 criticalInterventions 计数
-post-compaction guard 状态
 ```
 
 内部历史按模型返回的 Tool Calls 原始顺序记录，不按并发工具实际完成顺序记录。这样相同输入在 serial/parallel/mixed Scheduler 模式下得到相同判定。
 
 结果变化代表进展：同一 `callSignature` 的新 `outcomeSignature` 与上次不同，就把该 signature 的 stable-outcome streak 重置为 1，并清除与该 signature 相关的 warning 抑制状态。其他 signature 的状态不受影响。
 
-历史超过 16 条时丢弃最旧记录。某个 Call signature 不再被窗口中任何记录引用时，必须删除它的 stable outcome signature、stable count、repeated-call warning key 和 Ping-pong 辅助状态；Run 级 `criticalInterventions` 与当前 post-compaction window 不随普通历史淘汰而重置。Detector 的内存上限与 Run 长度无关。
+窗口维护顺序固定为**先淘汰清理、再插入**：历史达到 16 条时，先丢弃最旧记录，删除因此不再被任何窗口记录引用的 signature 的 stable outcome signature、stable count 和 repeated-call warning key，最后才插入当前记录。顺序不得相反——若先插入再判引用，新记录会立即重新引用同一 signature，稳定计数将跨窗口泄漏累计，慢循环会被错误定罪。Run 级 `criticalInterventions` 不随普通历史淘汰而重置。Detector 的内存上限与 Run 长度无关。
 
 因此，间隔超过 16 条工具记录才复现一次的慢循环可能漏报，这是维持请求内存有界的有意取舍；绝对预算继续作为最终兜底。
 
@@ -419,7 +421,7 @@ post-compaction guard 状态
 
 ### 1. Repeated call warning
 
-在最近 16 条历史中，对同一 Call signature 的出现次数计数，并把本批当前调用计入 projected count。
+在最近 16 条历史中，对同一 Call signature 的出现次数计数，并计入 projected count：投影在窗口副本上按本批原始顺序逐个模拟，第 i 个调用的 projected count 包含本批前 i−1 个相同 signature——因此一个 Action 直接返回 3 个相同调用时，第 3 个即触发 warn。
 
 - projected count 小于 3：无干预；
 - projected count 达到 3：返回一次 `DecisionWarn`；
@@ -437,48 +439,17 @@ warning key 至少包含 Pattern 与 Call signature。结果变化或该 signatu
 - 当前调用尚未执行，不能假设它必然返回第 6 个相同结果，因此阈值定义为“已确认结果数”，不是模型请求序号；
 - 结果变化立即把 stable count 重置为 1。
 
+临界语义必须显式接受：某次调用若恰好本应返回不同结果（例如长轮询第 6 次才返回 completed），它仍会在执行前被阻断——Detector 只依据已确认证据，无法预知未执行调用的结果。合法长轮询因此可能在 recover 后再次请求时被终止；第一版的缓解是把这类工具放入 `excluded_tools`，不调整阈值、不做工具名特判。
+
 unknown/unavailable tool 的稳定错误、持续权限拒绝、无状态变化的 polling 都会自然形成相同 Outcome signature，不需要通过错误文本正则或工具名特判。
 
-### 3. Ping-pong
+A/B 交替（乒乓）循环没有专属规则：其成立前提是两侧结果都稳定，因此规则 2 必然能在某一侧积累到 5 个相同结果后拦截，仅比专属规则晚约 6 条记录。
 
-对最近历史检查 projected 调用尾部是否形成严格交替的：
-
-```text
-A, B, A, B, A ...
-```
-
-其中 A/B 是两个不同 Call signature。
-
-- projected 交替长度达到 3 时 warning；
-- projected 交替长度达到 5，且 `stableForPingPong(A)` 与 `stableForPingPong(B)` 同时成立时 critical；
-- 任一侧结果变化、出现第三个 signature 或顺序不再交替时重置该模式；
-- A/B 可以是同一个工具的两组参数，也可以是两个不同工具。
-
-形式化定义：`stableForPingPong(signature)` 当且仅当当前交替尾部在本次 admission 之前，已经包含该 signature 至少 2 个已完成、非 `loopVeto` 的 Outcome，并且这些 Outcome signature 全部相同。当前批次内尚未执行的 projected calls 不提供 Outcome 证据；因此没有历史结果的一批 `A/B/A/B/A` 只能触发 warning，不能直接 critical。
-
-### 4. Global circuit breaker
-
-局部模式可能在多个 signature 之间切换，无法让单一 stable streak 达到 5。为此，在最近 16 条记录中统计“重复了先前相同 Call + Outcome 的无进展记录”。
-
-- 无进展证据少于 8：不触发全局规则；
-- 达到 8：产生 `PatternGlobalCircuit` critical；
-- 结果变化只会让对应 signature 的新结果不计为重复证据，不会删除窗口中已经发生的事实；事实随 16 条窗口自然淘汰。
-
-该规则仍要求相同结果证据，不会因为 8 次参数相同但结果持续变化而熔断。
-
-### 5. Post-compaction repeat
-
-成功 L2 Compaction 后，Detector 观察接下来最多 3 个未排除工具结果。若这 3 个结果的完整 `(toolName, callSignature, outcomeSignature)` 完全相同，立即返回 `LevelTermination + PatternPostCompaction`。
-
-该规则不提供普通 recovery：Compaction 本身已经是一次改变上下文、打破循环的恢复动作；压缩后仍连续得到 3 个完全相同结果，继续生成只会重复消耗资源。
-
-如果 3 个结果未全部相同，窗口耗尽并自动 disarm。再次成功 L2 Compaction 会重新 arm，并替换尚未结束的旧窗口。
-
-第一版 post-compaction guard 只覆盖单一完整 Outcome 连续重复。压缩后重新出现 `A/B/A/B` 交替模式时，这个 3-outcome 窗口不会终止；普通 16 条历史不会因 Compaction 清空，因此继续由 Ping-pong 与 global circuit 规则兜底。该漏报方向是降低短窗口误杀率的有意取舍，第一版不保存压缩前 baseline 快照或其他仅用于诊断的死状态。
+多签名、长周期或参数漂移的循环（每个签名在 16 条窗口内最多出现一两次）同样没有行为级拦截，由 MaxTurns、Token、Cost 预算兜底；这是第一版的有意取舍。
 
 ## Critical 恢复状态机
 
-除 post-compaction 规则外，所有 critical 统一进入同一个 Run-local 状态机：
+所有 critical 统一进入同一个 Run-local 状态机：
 
 ```text
 第一次 critical
@@ -503,16 +474,14 @@ A, B, A, B, A ...
 - veto 不会错误地被解释为“工具结果变化，所以已有循环取得进展”；
 - 下一次相同或其他 critical 仍能触发终止。
 
-`globalCircuitBreakerThreshold=8` 是独立的跨模式 critical 证据阈值，不替代“第二次 critical 即终止”。如果在此之前已经发生过一次 critical，它直接成为第二次并终止；否则仍先给一次恢复机会。
-
 ## Tool batch 原子准入
 
 `AdmitToolBatch` 对整个 `ai.ToolCalls` 做一次纯内存、无副作用判定：
 
 1. 保留原始 Tool Call 顺序；
 2. 跳过 excluded tools；
-3. 对剩余调用计算 projected pattern；
-4. 汇总整批中最严重的干预，优先级为 `terminate > recover > warn > allow`；
+3. 对剩余调用在窗口副本上按原始顺序逐个计算 projected pattern，批内相同 signature 互相计入；
+4. 汇总整批中最严重的干预，优先级为 `terminate > recover > warn > allow`；同级多个干预按投影顺序取第一个，`Intervention.Count` 为触发该干预的计数值（规则 1 取 projected count，规则 2 取已确认 stable count）；
 5. 只有最终为 allow/warn 时，才把本批未排除调用以 pending outcome 状态写入历史；
 6. recover/terminate 时不允许 Scheduler 启动任何调用；recover 额外记录本批 veto 证据。
 
@@ -528,17 +497,16 @@ A, B, A, B, A ...
 2. 进入 turn 前执行 `gov.CheckTurnLimit()`，通过后 `gov.StartTurn()`；
 3. 完成模型调用，校验可信 Usage，记录 Invocation，并执行 `gov.Observe()`；
 4. 如果达到 `MaxCostUSD` / `MaxTotalTokens`，按现有预算协议结束，不调用 Detector；
-5. 校验 Action 契约；
+5. 校验 Action 契约与 `actionResp.ToolCalls.Validate()`（ID 非空且不重复、参数为合法 JSON）；任一失败都计入该 Invocation 的 `contract_invalid` Outcome，按契约错误结束，不调用 Detector；
 6. 无 Tool Calls 时提交完整 Assistant 并正常结束；
-7. 执行 `actionResp.ToolCalls.Validate()`；
-8. 调用 `detector.AdmitToolBatch(actionResp.ToolCalls)`；
-9. allow/warn/recover 路径按下文提交完整协议组；terminate 路径不提交；
-10. allow/warn 时执行可见性/子代理批次规划与 Scheduler；
-11. 工具批次结算后，父预算错误优先于 Scheduler 基础设施错误；
-12. 按原始下标合并 Tool Results，并校验长度、ToolCallID、ToolName 对齐；
-13. 对齐失败时执行“结果对齐失败”协议并以 internal error 终止，不调用 Detector；
-14. 对齐正常时提交所有 Tool Results；
-15. 调用 `RecordToolBatchOutcome`，若 post-compaction 返回终止，则在已完成协议组之后结束 Run。
+7. 调用 `detector.AdmitToolBatch(actionResp.ToolCalls)`；
+8. allow/warn/recover 路径按下文提交完整协议组；terminate 路径不提交；
+9. allow/warn 时执行可见性/子代理批次规划与 Scheduler；
+10. 工具批次结算后，父预算错误优先于 Scheduler 基础设施错误；
+11. 按原始下标合并 Tool Results，并校验长度、ToolCallID、ToolName 对齐；
+12. 对齐失败时执行“结果对齐失败”协议并以 internal error 终止，不调用 Detector；
+13. 对齐正常时提交所有 Tool Results；
+14. 调用 `RecordToolBatchOutcome` 完成记账。
 
 如果同一个 Action 模型调用已经耗尽 Token/Cost 预算，预算终止获胜；Detector 不检查也不改变终止原因。`MaxTurns`、Token、Cost 与行为检测因此不是两套竞争预算，而是在不同检查点执行的不同安全边界。
 
@@ -555,7 +523,7 @@ RecordToolBatchOutcome
 
 ### Warn
 
-与 Allow 相同，但把固定提醒排入下一次 Action 的内部模型上下文。提醒内容只包含 Pattern、次数和工具名，表达：已经观察到重复调用，应检查结果是否变化；没有进展时停止重试、改用其他方法或明确报告阻塞。
+与 Allow 相同，但把固定提醒排入下一次 Action 的内部模型上下文。提醒以一条 `Role=system` 消息携带，内容只包含 Pattern、次数和工具名，表达：已经观察到重复调用，应检查结果是否变化；没有进展时停止重试、改用其他方法或明确报告阻塞。
 
 提醒必须满足：
 
@@ -584,6 +552,7 @@ type generationInput struct {
 - `Ephemeral` 只在每次物理 Provider 请求前复制并附加到 `Durable`，不属于返回 Context；
 - `generateWithRetry` 的每次 retry 使用同一份 Ephemeral，保证一次逻辑 Action 内提醒不丢失；
 - `recoverOverflow` 只对 Durable 做 L1/L2，随后在重试 Provider 时重新附加 Ephemeral，提醒不进入摘要输入；
+- 合并点固定在 Action 逻辑生成的入口（构造 `generationInput` 处），位于 `generateWithRetry` 之上：Compaction 摘要由 `tryCompactOnce` 直接调用 `generateWithRetry`、不经过该通道，摘要请求本身永不携带 Ephemeral；未来若启用 Thinking 阶段生成，同样不附加；
 - `generationResult.context` 在普通成功、L1 retry、L2 retry 和失败恢复路径中始终只返回 Durable；
 - `Loop` 在一次逻辑 Action 完成后清空 pending reminder；若生成最终失败并结束 Run，request-local 状态随 Run 释放。
 
@@ -615,6 +584,7 @@ toolexec.Result{
 - 所有调用都生成结果，包括 excluded tool；因为整批没有任何调用启动；
 - 结果按原始下标提交；
 - 复用现有 synthetic rejection 的 start/end Event 行为，按原始顺序发送完整事件；
+- 合成结果的事件不触发 `tool_error` 外部告警：`alertListener` 对 `ErrorCode == run_loop_detected` 的 Tool End 事件跳过通知——护栏干预不是工具执行失败；Run 终止时已有 `run_error` 告警兜底，恢复成功则无需打扰告警通道；
 - Assistant 与所有 Tool Results 都进入 `contextHistory` 和 `newMessages`，形成可恢复、可持久化的完整协议组；
 - 不调用 Scheduler，不创建 BatchBudget，不调用 `RecordToolBatchOutcome`；
 - 下一 turn 仍受 MaxTurns、Token、Cost 和 context 取消约束，不额外绕过预算赠送调用。
@@ -634,10 +604,6 @@ toolexec.Result{
 
 Web Chat 继续依赖现有 `run.failed` 路径丢弃 provisional Assistant。持久化历史保持 Tool Calling 协议完整。
 
-### Outcome 后直接终止
-
-post-compaction guard 只能在真实结果完成后判定，因此先提交 Assistant 和完整 Tool Results，再返回 typed error。已经发生的工具副作用和消息不能回滚，也不能为了让终止看起来更早而删除。
-
 ### Tool Result 对齐失败
 
 `len(calls) != len(results)`、`calls[i].ID != results[i].ToolCallID` 或工具名不一致都表示 Scheduler/合并逻辑违反内部不变量，不属于模型行为，也不能降级为“跳过循环记账后继续”。工具批次可能已经产生副作用，因此处理固定为：
@@ -650,18 +616,6 @@ post-compaction guard 只能在真实结果完成后判定，因此先提交 Ass
 6. 返回 `pierrors.Wrap(ErrorCodeInternal, "tool batch outcome reconciliation", err)`，`done=true`，最终 Termination 为 `error` 而不是 `loop_detected`。
 
 该路径是内部故障兜底，不声称合成结果代表真实执行结果；它只保证协议闭合、已发生费用不丢失，并阻止模型或调用方基于不可靠状态自动继续。
-
-## Compaction 集成
-
-`ArmPostCompaction()` 只在一次 L2 摘要成功并原子提交 `compacted messages + next CompactionState` 后调用：
-
-- proactive L2 成功：arm；
-- reactive overflow recovery 的 L2 成功：arm；
-- L1 prune：不 arm；
-- L2 计划失败、Provider 失败、Usage/摘要契约失败或 ApplySummary 失败：不 arm；
-- 同一 Run 再次 L2 成功：重新 arm，替换旧窗口。
-
-`compactionRuntime` 增加 request-local 的 nil-safe `onCommitted func()`，由 `Loop.run` 设为 `detector.ArmPostCompaction`，在 proactive/reactive 两个状态提交点统一调用。这样 `pi/compaction.go` 不负责循环算法，也不会把 Detector 状态塞入 `CompactionState`。
 
 ## 错误与最终 Termination
 
@@ -721,7 +675,7 @@ detector := loopdetect.New(l.loopDetection)
 - 同一个共享 Loop 的并发 Run 各自独立；
 - 父 Agent 和每个 subagent 的 Detector 独立；
 - Token/Cost 继续通过 Governor/BatchBudget 向父级实时传播；
-- 行为历史、warning、critical 次数和 post-compaction window 不向父级传播；
+- 行为历史、warning 和 critical 次数不向父级传播；
 - 一个子代理循环只终止该子 Run，随后按现有 subagent tool 错误结果返回父 Agent；
 - 子运行 Invocation 仍按现有流程进入父账本，不因循环终止丢失；
 - 子 Loop 继承相同 Config 和 excluded tools，但创建新 Detector。
@@ -736,9 +690,9 @@ detector := loopdetect.New(l.loopDetection)
 func WithLoopDetection(config loopdetect.Config) LoopOption
 ```
 
-零值 Option 不改变现有行为。`pi.Register` 的 Loop 构造参数增加 optional `loopdetect.Config`，并把同一配置传给根 Loop 与 subagent loop builder。`config.NewLoopDetectionConfig` 从 `Config.Agent.LoopDetection` 生成装配值，`cmd/server/app.go` 显式 provide。
+不传 Option 或传入零值 Config 都表示默认启用；只有显式传入 `Disabled: true` 才恢复无检测的旧行为。`pi.Register` 的 Loop 构造参数增加 optional `loopdetect.Config`，并把同一配置传给根 Loop 与 subagent loop builder。`config.NewLoopDetectionConfig` 从 `Config.Agent.LoopDetection` 生成装配值，`cmd/server/app.go` 显式 provide。
 
-`application/service/chat/run_manager.go` 不接收 Detector，也不参与算法，只需把新的稳定 error code / `TerminationLoopDetected` 映射为安全的 `run.failed` 响应。外部 HTTP 请求不增加循环配置字段。
+`application/service/chat/run_manager.go` 不接收 Detector，也不参与算法，只需把新的稳定 error code / `TerminationLoopDetected` 映射为安全的 `run.failed` 响应。映射契约固定为：`runErrorVO` 增加与预算终止同类的分支——`Code=conflict`、`Reason="loop_detected"`、固定安全文案 Message（“本轮检测到重复且无进展的工具调用，已停止执行”），不落入默认 internal 分支，不携带参数、结果或模型正文。外部 HTTP 请求不增加循环配置字段。
 
 ## 可观测性
 
@@ -759,7 +713,7 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 
 1. bundled application 对空白、带前后空格和重复 `excluded_tools` 在 `config.Load` 阶段 fail-fast。
 2. SDK 直接调用 `loopdetect.New` 时对 ExcludedTools 做 trim、去空、去重，并复制切片；调用方随后修改原 Config 不影响 Detector。
-3. Config 零值保持 disabled，所有方法为无增长型状态的 no-op。
+3. Config 零值默认启用并按包内固定阈值工作；`Disabled: true` 时所有方法为无增长型状态的 no-op。
 
 ### Fingerprint
 
@@ -769,26 +723,26 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 4. 超过 JavaScript 安全整数范围的大整数不发生 float64 精度折叠。
 5. Outcome 的 IsError、ErrorCode、Content 顺序/Type/Text 任一变化都会改变签名。
 6. Details、duration、PID、timestamp、ToolCallID 变化不改变 Outcome signature。
-7. Detector 状态中不存在原始参数与结果副本。
-8. Content.Text 中时间戳变化会改变 Outcome signature，并用测试固定这一有意漏报边界。
+7. `[Text("a"), Text("b")]` 与 `[Text("a\x00b")]` 的 Outcome signature 不同；含 NUL、空 block、多 block 的编码无歧义。
+8. Detector 状态中不存在原始参数与结果副本。
+9. Content.Text 中时间戳变化会改变 Outcome signature，并用测试固定这一有意漏报边界。
 
 ### Admission 与 history
 
-1. disabled 恒 Allow，且不分配增长型历史。
+1. `Disabled: true` 时恒 Allow，且不分配增长型历史。
 2. 第 3 次相同 Call 只 Warn，不阻止执行。
 3. 相同 warning key 只提醒一次；结果变化后未来允许重新提醒。
-4. 相同 Call 但结果持续变化，不触发 stable critical 或 global circuit。
+4. 相同 Call 但结果持续变化，不触发 stable critical。
 5. 确认 5 个相同 outcomes 后再次调用，第一次返回 Recover。
 6. Recover 后再次出现任意 critical，返回 Terminate。
 7. Recover 批次由 Admit 记录 veto；调用 Outcome recorder 会由 Loop 测试证明不会发生。
-8. A/B/A 达到 warning；A/B 各只有一个已完成 Outcome 时不得 critical。
-9. 同一批没有历史 Outcome 的 A/B/A/B/A 不得 critical；A/B 各有至少两个相同已完成 Outcome 时可以 critical。
-10. A/B 中任一结果变化或插入 C，ping-pong critical 不成立。
-11. 16 条窗口中达到 8 条跨 signature 无进展证据，触发 global critical。
-12. 第 17 条插入后最旧记录淘汰；signature 完全离窗时清除 stable、warning 与 Ping-pong 状态，但不重置 Run 级 critical 次数。
-13. 超过窗口间隔的慢循环不累计 stable count，由预算兜底。
-14. excluded tool 不计数；混合批次中的未排除工具仍可阻止整批。
-15. Tool Names 去重、排序稳定。
+8. A/B 交替循环无专属规则：A 侧确认 5 个相同结果后由 stable-outcome critical 拦截；两侧结果任一持续变化时永不 critical。
+9. 多签名/长周期漂移循环（每个签名窗口内最多出现 2 次）不触发任何行为级 critical，由预算兜底。
+10. 第 17 条插入后最旧记录淘汰；signature 完全离窗时清除 stable 与 warning 状态，但不重置 Run 级 critical 次数。
+11. 间隔恰在窗口边界的低频循环（A + 15 个不同调用 + A）不累计 stable count：插入新记录前必须先完成淘汰与清理。
+12. excluded tool 不计数；混合批次中的未排除工具仍可阻止整批。
+13. Tool Names 去重、排序稳定。
+14. 同一 Action 批次内 3 个相同调用按原始顺序投影，第 3 个触发 warn；同级多个干预取投影顺序的第一个，Count 为触发值。
 
 ### Batch 原子性与消息协议
 
@@ -798,15 +752,15 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 4. Recover 的 Assistant 与全部 Tool Results 同时进入 Context/NewMessages，并发送完整 synthetic start/end 事件。
 5. Terminate 不提交 Assistant、不生成 Tool Results、不发送 message_end。
 6. provisional SSE Assistant 在 run.failed 时被现有前端删除。
-7. post-outcome 终止仍保留已经执行并完成的 Assistant + 全部 Tool Results。
-8. ToolCall 固有校验失败发生在 admission 前，Detector 历史不变化。
-9. Tool Result 数量、ID 或工具名对齐失败时不调用 Detector，为全部原始 calls 合成 `ErrorCodeInternal` 结果，保留 Invocation/Totals 并以 `TerminationError` 结束。
+7. ToolCall 固有校验失败发生在 admission 前，Detector 历史不变化，且该 Invocation 的 Outcome 记为 `contract_invalid`。
+8. Tool Result 数量、ID 或工具名对齐失败时不调用 Detector，为全部原始 calls 合成 `ErrorCodeInternal` 结果，保留 Invocation/Totals 并以 `TerminationError` 结束。
+9. Recover 合成结果的事件不触发 `tool_error` 告警；普通工具失败的告警行为不变。
 
 ### Warning ephemeral context
 
 1. 普通成功路径中，Provider 能看到 warning，`generationResult.context` 与 `state.contextHistory` 都不包含 warning。
 2. transient/rate-limit retry 的每次物理请求都看到同一 warning，逻辑 Action 完成后只消费一次。
-3. proactive L1/L2 与 reactive L1/L2 的输入、摘要范围和返回 Durable Context 都不包含 warning；压缩后的 Provider retry 仍看到 warning。
+3. proactive L1/L2 与 reactive L1/L2 的被摘要消息、摘要请求本身和返回 Durable Context 都不包含 warning；压缩后的 Provider retry 仍看到 warning。
 4. Ephemeral 合并使用复制切片，不修改 Durable、RunRequest History 或调用方 Config。
 5. warning 不进入 NewMessages、EventListener、SSE、MySQL 或日志正文。
 
@@ -820,15 +774,7 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 
 ### Compaction
 
-1. proactive L2 成功后 arm；L1 prune 不 arm。
-2. reactive L2 成功后 arm。
-3. L2 任一失败路径不 arm。
-4. arm 后三个完全相同的 Call + Outcome 在第三个完成结果后终止。
-5. 三个结果中参数或结果任一变化，不终止并自动 disarm。
-6. excluded outcome 不消费三次观察窗口。
-7. 窗口未结束时再次成功 Compaction，旧窗口被替换。
-8. Compaction 不清空普通 16 条历史、warning 或 critical 次数。
-9. post-compaction 的 A/B/A 三个不同完整 Outcome 不触发专属 guard；后续仍由保留的普通 Ping-pong/global 状态处理。
+1. Compaction 不清空普通 16 条历史、warning 或 critical 次数；压缩前后的同一循环仍由 stable-outcome 规则与恢复状态机处理，压缩只影响模型可见上下文，不影响 Detector 证据。
 
 ### 子代理与并发
 
@@ -843,24 +789,23 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 实现计划应按以下可独立验证的顺序拆分，但本文不直接执行：
 
 1. `loopdetect` types/config/fingerprint 与单元测试；
-2. 普通历史、warning、stable outcome、ping-pong、global circuit 状态机；
+2. 普通历史、warning、stable outcome 与恢复状态机；
 3. batch admission、一次 recovery 与 typed error；
-4. post-compaction guard；
-5. Loop 消息提交时机、durable/ephemeral 生成链、结果对齐失败与 synthetic results；
-6. Governor termination/error code 集成；
-7. Config/fx/root+subagent Loop 装配；开始实现前用当前工作树重新核对 fx provider 的真实落点，配置已迁移时修改实际装配入口，不强行沿用过期文件路径；
-8. SSE/Notifier/observability 安全映射；
-9. 全量单元、集成、race 和回归测试。
+4. Loop 消息提交时机、durable/ephemeral 生成链、结果对齐失败与 synthetic results；
+5. Governor termination/error code 集成；
+6. Config/fx/root+subagent Loop 装配；开始实现前用当前工作树重新核对 fx provider 的真实落点，配置已迁移时修改实际装配入口，不强行沿用过期文件路径；
+7. SSE/Notifier/observability 安全映射；
+8. 全量单元、集成、race 和回归测试。
 
 ## 验收标准
 
 设计实现完成必须同时满足：
 
 1. `MaxTurns`、`MaxCostUSD`、`MaxTotalTokens` 的目录、配置、行为和现有测试保持在 `governor`，没有复制状态。
-2. `Loop` 只创建一个 request-local Detector，并在固定检查点调用三个方法。
+2. `Loop` 只创建一个 request-local Detector，并在固定检查点调用准入与记账两个方法。
 3. 任一被阻止批次都没有 Tool 副作用；Recover 消息组完整；Terminate 不留下孤立 Assistant。
-4. 相同参数但结果变化永不触发 stable/global critical。
-5. 第一次普通 critical 恢复、第二次终止；post-compaction 三次完全相同结果直接终止。
+4. 已确认结果的变化会重置稳定计数并抑制 critical；连续 5 个相同结果后的下一次调用在执行前被阻断——Detector 不预知其本次结果是否变化，该临界误报边界由 `excluded_tools` 缓解。
+5. 第一次 critical 恢复、第二次终止，无例外规则。
 6. 主/子/并发 Run 的 Detector 状态完全隔离，父子资源预算传播不受影响。
 7. warning 只进入一次逻辑 Action 的 Provider 请求，不进入 `generationResult.context`、`state.contextHistory`、Compaction summary、NewMessages、EventListener、SSE、数据库或日志正文。
 8. 最终 `RunResult.Termination.Reason == loop_detected`，Totals 与 Invocation 明细一致。
@@ -872,6 +817,8 @@ func WithLoopDetection(config loopdetect.Config) LoopOption
 只有出现真实生产样本时再考虑：
 
 - 对 polling/exec/message 增加工具专属 result canonicalizer；
+- Compaction 后复发硬熔断：出现压缩后模型从摘要重建同一循环的真实样本时，再评估 arm 短窗口 guard（OpenClaw 的 post-compaction guard 可作参考）；
+- 乒乓（A/B 交替）加速检测与跨签名全局熔断：真实样本显示交替循环规则 2 拦截过晚、或多签名/漂移循环频繁烧满预算时再评估；
 - 忽略 timestamp、cursor、random ID 等参数抖动字段；
 - 针对只读工具与副作用工具使用不同阈值；
 - 把阈值开放为高级配置；

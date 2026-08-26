@@ -293,3 +293,20 @@ func TestRunFailureEmitsOnceAndReleasesSlot(t *testing.T) {
 	runner.release <- nil
 	receiveUntilTerminal(t, second.Events)
 }
+
+func TestRunErrorVOLoopDetected(t *testing.T) {
+	vo := runErrorVO(errors.New("agent tool loop detected"),
+		governor.Termination{Reason: governor.TerminationLoopDetected})
+	if vo == nil {
+		t.Fatal("vo must not be nil")
+	}
+	if vo.Code != commonerrors.ErrConflict.Code() {
+		t.Fatalf("code = %v, want conflict", vo.Code)
+	}
+	if vo.Reason != string(governor.TerminationLoopDetected) {
+		t.Fatalf("reason = %q, want loop_detected", vo.Reason)
+	}
+	if vo.Message == "" || vo.Message == "run failed" {
+		t.Fatalf("message must be the safe loop-detected copy, got %q", vo.Message)
+	}
+}
