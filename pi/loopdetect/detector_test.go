@@ -325,10 +325,8 @@ func TestSameBatchProjection(t *testing.T) {
 	if len(d.history) != 3 {
 		t.Fatalf("warn batch must be committed, got %d records", len(d.history))
 	}
-	for _, rec := range d.history {
-		if !rec.outcomeRecorded {
-			t.Fatal("all records must have outcomes recorded")
-		}
+	if state := d.stable[callSignature(calls[0])]; state.count != 3 {
+		t.Fatalf("stable count = %d, want 3 outcomes recorded", state.count)
 	}
 }
 
@@ -346,12 +344,13 @@ func TestRecordAlignmentViolationsAreNoop(t *testing.T) {
 	mismatched[0].ToolName = "other"
 	d.RecordToolBatchOutcome(calls, mismatched)
 
-	if len(d.stable) != 0 || d.history[0].outcomeRecorded {
+	if len(d.stable) != 0 {
 		t.Fatal("misaligned record calls must not modify state")
 	}
 }
 
-// 契约：批次超过窗口时，最旧前缀在准入时淘汰，Record 正常回填存活记录。
+// 契约：批次超过窗口时窗口只保留尾部；Record 按已确认结果语义记账，下一次
+// 准入的淘汰清理会把不再被引用的 signature 状态收编回窗口范围。
 func TestOversizedBatchCommit(t *testing.T) {
 	d := New(Config{})
 	calls := make(ai.ToolCalls, 0, historySize+4)
@@ -365,7 +364,14 @@ func TestOversizedBatchCommit(t *testing.T) {
 		t.Fatalf("history must be capped, got %d", len(d.history))
 	}
 	d.RecordToolBatchOutcome(calls, sameResults(calls, "x"))
-	if len(d.stable) != historySize {
-		t.Fatalf("only surviving records get outcomes, got %d", len(d.stable))
+	// 所有真实执行过的结果都是已确认证据。
+	if len(d.stable) != historySize+4 {
+		t.Fatalf("confirmed outcomes = %d, want %d", len(d.stable), historySize+4)
+	}
+	// 下一次插入触发清理：离窗 signature 的状态被回收。
+	next := makeCall("next", "t_next", `{}`)
+	d.AdmitToolBatch(ai.ToolCalls{next})
+	if len(d.stable) > historySize {
+		t.Fatalf("stable state must be reaped to window scope, got %d", len(d.stable))
 	}
 }

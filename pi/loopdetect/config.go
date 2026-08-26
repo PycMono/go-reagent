@@ -29,6 +29,7 @@ func (config Config) normalize() Config {
 	if len(config.ExcludedTools) == 0 {
 		return Config{Disabled: config.Disabled}
 	}
+
 	seen := make(map[string]struct{}, len(config.ExcludedTools))
 	excluded := make([]string, 0, len(config.ExcludedTools))
 	for _, name := range config.ExcludedTools {
