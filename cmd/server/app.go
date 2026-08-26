@@ -5,17 +5,17 @@ import (
 	chattools "github.com/PycMono/go-reagent/application/tool/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
+	"github.com/PycMono/go-reagent/infrastructure"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
 	"github.com/PycMono/go-reagent/infrastructure/notice"
-	infrastructureweb "github.com/PycMono/go-reagent/infrastructure/web"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
 )
 
 var Register = fx.Options(
 	agentRegister,
-	infrastructureweb.Register,
+	infrastructure.Register,
 	conversation.Register,
 	chatservice.Register,
 	mcpdriver.Register,
@@ -25,6 +25,7 @@ var Register = fx.Options(
 		config.NewPlatform,
 		config.NewWorkDir,
 		config.NewCompactionConfig,
+		config.NewLoopDetectionConfig,
 		config.NewExtraToolHandlers,
 		agentprofiledriver.NewCatalog,
 	),
