@@ -1,4 +1,11 @@
 // Package errors defines all stable error codes and classified errors used by Pi.
+//
+// 它是 pi 全域唯一的错误码与分类框架所在（引用别名统一为 pierrors）。
+// 分层规则：
+//   - 稳定 ErrorCode 与 Wrap/ErrorCodeOf 分类机制只允许定义在本包；
+//   - 需要跨包识别的领域错误类型（如 loopdetect.Error、governor 的
+//     limitError）随领域包定义——集中到本包会造成包循环并污染通用框架；
+//   - 业务/HTTP 层的 BizError 码在 common/errors，不经本包。
 package errors
 
 import (

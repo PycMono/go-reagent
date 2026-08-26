@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 
 	"go.uber.org/fx/fxtest"
 )

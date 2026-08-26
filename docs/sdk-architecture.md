@@ -175,7 +175,7 @@ Workspace 由调用方以 `pi.WorkDir` 显式提供。每次 Run 都会重新读
 
 ## 错误与部分结果
 
-`pi/harness/errors.ErrorCodeOf(err)` 返回稳定字符串枚举：
+`pi/errors.ErrorCodeOf(err)` 返回稳定字符串枚举：
 
 | ErrorCode | 值 |
 | --- | --- |
@@ -205,7 +205,7 @@ Workspace 由调用方以 `pi.WorkDir` 显式提供。每次 Run 都会重新读
 | `ErrorCodeClosed` | `agent_closed` |
 | `ErrorCodeInternal` | `internal` |
 
-`pi/harness/errors.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`pi/harness/errors.ErrClosed` 和具体 cause；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。Provider 适配器只读取官方结构化错误类型和 HTTP 状态，再统一映射为上述公共 ErrorCode，不通过错误文本猜测恢复动作。
+`pi/errors.Error` 通过 `Unwrap` 保留原始错误。`errors.Is` 可继续识别 `context.Canceled`、`context.DeadlineExceeded`、`pi/errors.ErrClosed` 和具体 cause；`errors.As` 可以获得 OpenAI 或 Anthropic 官方 SDK 错误。Provider 适配器只读取官方结构化错误类型和 HTTP 状态，再统一映射为上述公共 ErrorCode，不通过错误文本猜测恢复动作。
 
 ## 生命周期
 

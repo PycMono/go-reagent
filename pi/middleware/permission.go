@@ -5,7 +5,7 @@ import (
 	"regexp"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // PermissionRule 是一条 deny 规则：工具名精确匹配，且参数正则命中

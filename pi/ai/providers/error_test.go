@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"testing"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	openaisdk "github.com/openai/openai-go/v3"
 )

@@ -9,7 +9,7 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // Pricing 即 providers.Pricing（类型别名）：价格结构与校验统一由

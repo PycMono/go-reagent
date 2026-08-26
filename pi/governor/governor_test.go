@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
 )
 

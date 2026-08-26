@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // Message 表示调用方传入的一条业务消息。

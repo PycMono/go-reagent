@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"github.com/PycMono/go-reagent/pi/governor"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 // RunRequest 保存一次无状态运行所需的调用方输入。

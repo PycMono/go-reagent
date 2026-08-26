@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // SchemaValidation 在执行前校验 Tool 参数。校验失败 Block 短路——只

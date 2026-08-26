@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // NotificationKind 是告警类别。
