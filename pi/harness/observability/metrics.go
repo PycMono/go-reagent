@@ -36,6 +36,8 @@ const (
 	MetricCompactions                = "reagent.compactions"
 	MetricCompactionDuration         = "reagent.compaction.duration"
 	MetricCompactionMessageReduction = "reagent.compaction.message_reduction_ratio"
+
+	MetricLoopDetectionInterventions = "reagent.loop_detection.interventions"
 )
 
 const (
@@ -52,6 +54,8 @@ const (
 	LabelCostQuality       = "cost_quality"
 	LabelTokenType         = "token_type"
 	LabelReason            = "reason"
+	LabelPattern           = "pattern"
+	LabelLevel             = "level"
 	LabelTool              = "tool"
 	LabelExecutionMode     = "execution_mode"
 )
@@ -130,6 +134,11 @@ func DomainMetricDefinitions() []sdkmetrics.Definition {
 			Description: "上下文压缩时延（P1）", Labels: []string{LabelReason, LabelOutcome}, Buckets: BucketsCompactionDuration},
 		{Name: MetricCompactionMessageReduction, Kind: sdkmetrics.KindHistogram, Unit: "1",
 			Description: "压缩消息削减比例，取值 [0,1]（P1）", Labels: []string{LabelReason}, Buckets: BucketsReductionRatio},
+
+		// Loop Detection：低基数 label 仅 pattern 和 level，工具名不作为
+		// metric label；不含参数、结果或 hash。
+		{Name: MetricLoopDetectionInterventions, Kind: sdkmetrics.KindCounter, Unit: "{intervention}",
+			Description: "工具循环护栏干预次数", Labels: []string{LabelPattern, LabelLevel}},
 	}
 }
 

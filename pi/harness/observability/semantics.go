@@ -103,6 +103,11 @@ const (
 	AttrCompactionBeforeTokens       = "reagent.compaction.before_tokens"
 	AttrCompactionAfterTokens        = "reagent.compaction.after_tokens"
 	AttrCompactionSummaryTokens      = "reagent.compaction.summary_tokens"
+
+	// 工具循环护栏干预（Turn Span 属性；无正文、无参数、无 hash）。
+	AttrLoopDetectionPattern = "reagent.loop_detection.pattern"
+	AttrLoopDetectionLevel   = "reagent.loop_detection.level"
+	AttrLoopDetectionCount   = "reagent.loop_detection.count"
 )
 
 // ---------- Retry Wait Event（§4.8） ----------

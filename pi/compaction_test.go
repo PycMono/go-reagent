@@ -315,7 +315,7 @@ func TestGenerateReactiveL1RespectsEnablePrune(t *testing.T) {
 	messages := compactTestMessages(6)
 	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
-	result, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
+	result, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -344,7 +344,7 @@ func TestGenerateReactiveL1RetriesImmediatelyUnknownWindow(t *testing.T) {
 	messages := compactTestMessages(6)
 	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
-	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -366,7 +366,7 @@ func TestGenerateReactiveKnownWindowRetriesBelowThreshold(t *testing.T) {
 	messages := compactTestMessages(10)
 	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
-	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -392,7 +392,7 @@ func TestGenerateReactiveFallsBackToL1WhenL2HasNoRange(t *testing.T) {
 		{Name: "read", Description: strings.Repeat("s", 64*1024), InputSchema: map[string]any{"type": "object"}},
 	}
 
-	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, bigTools, nil, nil)
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, bigTools, nil, nil)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
@@ -429,7 +429,7 @@ func TestGenerateReactiveRecordsUsageBeforeContentValidation(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	observed := 0
-	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil, testObserveCompaction(func(ai.Usage) error {
 		observed++
 		return nil
 	}))
@@ -462,7 +462,7 @@ func TestGenerateReactiveObserverErrorIsFatal(t *testing.T) {
 	rt := newCompactionRuntime(loop.compaction, 1, governor.NewSequencer())
 
 	budgetErr := errors.New("budget exceeded")
-	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, testObserveCompaction(func(ai.Usage) error {
+	_, err := loop.generate(context.Background(), &generateState{phase: observability.GenerationPhaseAction, rt: rt}, messages, nil, nil, nil, testObserveCompaction(func(ai.Usage) error {
 		return budgetErr
 	}))
 	if !errors.Is(err, budgetErr) {

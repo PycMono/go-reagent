@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/middleware"
 	"github.com/PycMono/go-reagent/pi/toolexec"
@@ -160,4 +161,56 @@ func containsAll(value string, fragments ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestNotifierAlertsOnLoopDetection(t *testing.T) {
+	// 同一不可用工具的无限循环：可见性拒绝每次产生相同的稳定错误结果，
+	// 5 次确认后 recover，再次请求即 terminate。
+	toolCall := ai.ToolCall{ID: "call-1", Name: "echo", Arguments: []byte(`{"a":1}`)}
+	looping := actionMessage("继续", toolCall)
+	streams := make([]*scriptedStream, 0, 8)
+	for range 8 {
+		streams = append(streams, textDeltaStream(looping))
+	}
+	notifier := &recordingNotifier{}
+	agent := newNotifyingAgent(t, &scriptedProvider{streams: streams}, notifier)
+
+	if _, err := agent.Run(context.Background(), runInput(), nil); err == nil {
+		t.Fatal("Run() error = nil, want loop detected")
+	}
+	if len(notifier.notifications) != 1 {
+		t.Fatalf("notifications = %#v, want exactly one run_error", notifier.notifications)
+	}
+	notification := notifier.notifications[0]
+	if notification.Kind != NotificationRunError {
+		t.Fatalf("kind = %s, want run_error", notification.Kind)
+	}
+	if !containsAll(notification.Summary, "loop_detected") {
+		t.Fatalf("summary = %q, want loop_detected", notification.Summary)
+	}
+}
+
+func TestNotifierSkipsLoopGuardSyntheticResults(t *testing.T) {
+	listener := &alertListener{notifiers: []Notifier{&recordingNotifier{}}}
+	recorder := listener.notifiers[0].(*recordingNotifier)
+
+	// recover 合成结果：IsError + run_loop_detected → 不产生 tool_error。
+	listener.OnEvent(context.Background(), NewAgentToolEvent(toolexec.NewEndEvent(
+		ai.ToolCall{ID: "c1", Name: "read"},
+		toolexec.Result{ToolCallID: "c1", ToolName: "read", IsError: true,
+			ErrorCode: pierrors.ErrorCodeRunLoopDetected},
+	)))
+	if len(recorder.notifications) != 0 {
+		t.Fatalf("loop guard synthetic result must not alert: %#v", recorder.notifications)
+	}
+
+	// 普通工具失败的告警行为不变。
+	listener.OnEvent(context.Background(), NewAgentToolEvent(toolexec.NewEndEvent(
+		ai.ToolCall{ID: "c2", Name: "read"},
+		toolexec.Result{ToolCallID: "c2", ToolName: "read", IsError: true,
+			ErrorCode: pierrors.ErrorCodeToolTimeout},
+	)))
+	if len(recorder.notifications) != 1 || recorder.notifications[0].Kind != NotificationToolError {
+		t.Fatalf("normal tool failure must still alert: %#v", recorder.notifications)
+	}
 }

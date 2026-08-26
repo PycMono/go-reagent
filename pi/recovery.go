@@ -41,10 +41,18 @@ type generateState struct {
 // generateWithSpan 为一次逻辑生成创建 reagent.generate Span；
 // Span 覆盖 Retry、Overflow 恢复与可能的 Compaction 子 Span，状态与
 // 生命周期由 WithSpan 管理。
+//
+// messages 是 Durable 真实历史（允许写回 generationResult.context、参与
+// L1/L2 Compaction 并进入后续 turn）；ephemeral 只在每次物理 Provider 请求
+// 前复制附加，不属于返回 Context——循环护栏的 warning 提醒经此通道投递。
+// 合并只发生在此入口（generateWithRetry 之上）：Compaction 摘要由
+// tryCompactOnce 直接调用 generateWithRetry，不经过本通道，摘要请求永不
+// 携带 ephemeral。
 func (l *Loop) generateWithSpan(
 	ctx context.Context,
 	phase observability.GenerationPhase,
 	messages []ai.Message,
+	ephemeral []ai.Message,
 	tools []ai.ToolDefinition,
 	onText func(ai.ContentBlock),
 	onCompactionUsage invocationObserver,
@@ -55,7 +63,7 @@ func (l *Loop) generateWithSpan(
 
 		state := &generateState{phase: phase, rt: rt}
 		var genErr error
-		result, genErr = l.generate(ctx, state, messages, tools, onText, onCompactionUsage)
+		result, genErr = l.generate(ctx, state, messages, ephemeral, tools, onText, onCompactionUsage)
 
 		outcome := observability.GenerationOutcomeSucceeded
 		if genErr != nil {
@@ -174,15 +182,19 @@ func consumeStream(stream ai.Stream, onText func(ai.ContentBlock)) (*ai.Message,
 
 // generate 执行一次 Thinking 或 Action 调用。遇到 Context Overflow 且尚未
 // 发布内容时，转交 recoverOverflow 走 reactive 压缩兜底。
+//
+// durable/ephemeral 双通道：Provider 看到 mergeMessages(durable, ephemeral)
+// 的复制切片；返回的 generationResult.context 始终是 durable。
 func (l *Loop) generate(
 	ctx context.Context,
 	state *generateState,
 	messages []ai.Message,
+	ephemeral []ai.Message,
 	tools []ai.ToolDefinition,
 	onText func(ai.ContentBlock),
 	onCompactionUsage invocationObserver,
 ) (generationResult, error) {
-	response, published, err := l.generateWithRetry(ctx, state, messages, tools, onText)
+	response, published, err := l.generateWithRetry(ctx, state, mergeMessages(messages, ephemeral), tools, onText)
 	if err == nil || published || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIContextOverflow {
 		return generationResult{
 			message: response, context: messages,
@@ -191,11 +203,23 @@ func (l *Loop) generate(
 	}
 	observability.RecordContextOverflow(ctx,
 		labelOrUnknown(l.providerID), labelOrUnknown(l.model), state.phase)
-	result, recoverErr := l.recoverOverflow(ctx, state, response, err, messages, tools, onText, onCompactionUsage)
+	result, recoverErr := l.recoverOverflow(ctx, state, response, err, messages, ephemeral, tools, onText, onCompactionUsage)
 	result.attempts = state.attempts
 	result.compactionTriggered = state.compactionTriggered
 	result.requestIndex = state.lastRequestIndex
 	return result, recoverErr
+}
+
+// mergeMessages 返回 clone(durable) + ephemeral 的新切片；不修改 durable
+// 或调用方历史的底层数组。ephemeral 为空时直接返回 durable（只读使用）。
+func mergeMessages(durable, ephemeral []ai.Message) []ai.Message {
+	if len(ephemeral) == 0 {
+		return durable
+	}
+	merged := make([]ai.Message, 0, len(durable)+len(ephemeral))
+	merged = append(merged, durable...)
+	merged = append(merged, ephemeral...)
+	return merged
 }
 
 func retryDelay(retry int) time.Duration {

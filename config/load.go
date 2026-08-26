@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
 	"github.com/PycMono/go-reagent/pi/middleware"
 	"github.com/jinzhu/configor"
 )
@@ -51,6 +52,12 @@ func NewCompactionConfig(config *Config, platform providers.Options) harness.Com
 		ContextWindowTokens: platform.ContextWindowTokens,
 		EnablePrune:         config.Agent.EnableContextPrune,
 	}
+}
+
+// NewLoopDetectionConfig 返回 Load 已校验的工具循环护栏装配值；
+// 零值即默认启用。
+func NewLoopDetectionConfig(config *Config) loopdetect.Config {
+	return config.Agent.LoopDetection
 }
 
 // NewExtraToolHandlers 把 permissions/tools 配置映射为追加在默认链之后的

@@ -34,6 +34,7 @@ const (
 	ErrorCodeCanceled             ErrorCode = "canceled"
 	ErrorCodeDeadlineExceeded     ErrorCode = "deadline_exceeded"
 	ErrorCodeRunLimitExceeded     ErrorCode = "run_limit_exceeded"
+	ErrorCodeRunLoopDetected      ErrorCode = "run_loop_detected"
 	ErrorCodeClosed               ErrorCode = "agent_closed"
 	ErrorCodeInternal             ErrorCode = "internal"
 )

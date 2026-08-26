@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
 )
 
 // limitError 标记一次运行达到了哪个维度的预算上限。
@@ -258,11 +259,14 @@ func TerminationFromError(err error, totals Totals) Termination {
 		return termination
 	}
 	var limitErr *limitError
+	var loopErr *loopdetect.Error
 	switch {
 	case errors.Is(err, context.Canceled):
 		termination.Reason = TerminationCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		termination.Reason = TerminationDeadline
+	case errors.As(err, &loopErr):
+		termination.Reason = TerminationLoopDetected
 	case errors.As(err, &limitErr):
 		termination.Limit = limitErr.kind
 		switch limitErr.kind {

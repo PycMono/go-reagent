@@ -386,7 +386,7 @@ func TestGenerateOverflowRecoverySpans(t *testing.T) {
 	var observed []ai.Usage
 
 	result, err := loop.generateWithSpan(context.Background(), observability.GenerationPhaseAction,
-		compactTestMessages(6), nil, nil,
+		compactTestMessages(6), nil, nil, nil,
 		invocationObserver(func(usage ai.Usage, _ uint32, _ string) (func(error), error) {
 			observed = append(observed, usage)
 			return func(error) {}, nil

@@ -3,6 +3,8 @@ package pi
 import (
 	"context"
 	"fmt"
+
+	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 )
 
 // NotificationKind 是告警类别。
@@ -46,6 +48,11 @@ func (b *alertListener) OnEvent(ctx context.Context, event AgentEvent) {
 	}
 	result := event.Tool.Result
 	if !result.IsError {
+		return
+	}
+	// 循环护栏 recover 的合成结果不是工具执行失败，不产生 tool_error
+	// 告警；Run 终止时由 run_error 告警兜底。
+	if result.ErrorCode == pierrors.ErrorCodeRunLoopDetected {
 		return
 	}
 	summary := fmt.Sprintf("工具 %s 执行失败", result.ToolName)

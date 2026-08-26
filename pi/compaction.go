@@ -130,12 +130,16 @@ func (l *Loop) maybeCompact(
 // 或再尝试一次 L2 摘要，只有 footprint 严格变小才重试原请求，且最多重试一次。
 // onCompactionUsage 在摘要 Usage 校验后、正文校验前立即调用；
 // 它返回的任何错误都必须终止 Run，不得回退重试。
+//
+// L1/L2 只作用于 durable messages；重试 Provider 时重新附加 ephemeral，
+// 提醒不进入摘要输入，返回的 context 始终是 durable。
 func (l *Loop) recoverOverflow(
 	ctx context.Context,
 	gs *generateState,
 	response *ai.Message,
 	overflowErr error,
 	messages []ai.Message,
+	ephemeral []ai.Message,
 	tools []ai.ToolDefinition,
 	onText func(ai.ContentBlock),
 	onCompactionUsage invocationObserver,
@@ -143,7 +147,7 @@ func (l *Loop) recoverOverflow(
 	rt := gs.rt
 	toolDefs := ai.ToolDefinitions(tools)
 	retry := func(compacted []ai.Message) (generationResult, error) {
-		response, _, retryErr := l.generateWithRetry(ctx, gs, compacted, tools, onText)
+		response, _, retryErr := l.generateWithRetry(ctx, gs, mergeMessages(compacted, ephemeral), tools, onText)
 		return generationResult{
 			message:             response,
 			context:             compacted,
