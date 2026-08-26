@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // retryableCodes 是允许重试的工具错误码：泛型运行时失败与执行超时。

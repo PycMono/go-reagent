@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 func TestCurrentTimeToolUsesIANAZone(t *testing.T) {

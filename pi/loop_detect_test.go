@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
 	"github.com/PycMono/go-reagent/pi/middleware"

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 func permissionErrorCode(t *testing.T, err error) pierrors.ErrorCode {

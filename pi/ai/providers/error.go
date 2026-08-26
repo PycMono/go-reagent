@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 type providerErrorInfo struct {

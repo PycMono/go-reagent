@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // primitives.go 集中管理经 ctx 在父子运行间传递的 Run 级原语：

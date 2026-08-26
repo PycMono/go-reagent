@@ -8,7 +8,7 @@ import (
 	"math"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // Limits 保存一次运行的确定性资源上限。每个维度的零值只表示该维度不限制。

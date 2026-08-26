@@ -6,7 +6,7 @@ import (
 	"time"
 
 	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // 本文件集中记录 Agent 领域指标（设计 §8；SDK 设计 §15：领域语义由产生

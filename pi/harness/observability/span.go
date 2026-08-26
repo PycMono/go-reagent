@@ -17,7 +17,7 @@ import (
 	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )

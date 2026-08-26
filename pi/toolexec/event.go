@@ -2,7 +2,7 @@ package toolexec
 
 import (
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // Result 是一次 Tool 调用的归一化结果。

@@ -42,7 +42,7 @@
 - `pi/recovery.go`：`generationInput{Durable, Ephemeral}` 以及 Action-only Provider 合并。
 - `pi/compaction.go`：只压缩 Durable，并在成功 L2 commit 后 arm Detector。
 - `pi/register.go`、`pi/register_test.go`：根/子 Loop 注入同一不可变 Config。
-- `pi/harness/errors/errors.go`、`errors_test.go`：稳定 `run_loop_detected` error code。
+- `pi/errors/errors.go`、`errors_test.go`：稳定 `run_loop_detected` error code。
 - `pi/governor/governor.go`、`governor_test.go`：typed loop error → `TerminationLoopDetected`。
 - `config/config.go`、`config/load.go`、`config/validate.go`、`config/config_test.go`、`config.example.json`：bundled service 配置、校验和 fx provider。
 - `cmd/server/app.go`：向 Fx 图提供 `loopdetect.Config`；实现时保留文件中的既有用户修改。
@@ -371,8 +371,8 @@ git commit -m "feat: guard post-compaction tool loops"
 
 **Files:**
 - Create: `pi/loopdetect/errors.go`
-- Modify: `pi/harness/errors/errors.go`
-- Modify: `pi/harness/errors/errors_test.go`
+- Modify: `pi/errors/errors.go`
+- Modify: `pi/errors/errors_test.go`
 - Modify: `pi/governor/governor.go`
 - Modify: `pi/governor/governor_test.go`
 
@@ -409,7 +409,7 @@ func TestTerminationFromLoopError(t *testing.T) {
 
 - [ ] **Step 3: 运行测试确认失败**
 
-Run: `go test ./pi/loopdetect ./pi/harness/errors ./pi/governor -count=1`
+Run: `go test ./pi/loopdetect ./pi/errors ./pi/governor -count=1`
 
 Expected: FAIL，缺少 error code/type/mapping。
 
@@ -419,7 +419,7 @@ Expected: FAIL，缺少 error code/type/mapping。
 
 - [ ] **Step 5: 验证测试和依赖图**
 
-Run: `go test ./pi/loopdetect ./pi/harness/errors ./pi/governor -count=1`
+Run: `go test ./pi/loopdetect ./pi/errors ./pi/governor -count=1`
 
 Expected: PASS。
 
@@ -430,7 +430,7 @@ Expected: 无输出。
 - [ ] **Step 6: 提交 Task 4**
 
 ```bash
-git add pi/loopdetect/errors.go pi/harness/errors/errors.go pi/harness/errors/errors_test.go pi/governor/governor.go pi/governor/governor_test.go
+git add pi/loopdetect/errors.go pi/errors/errors.go pi/errors/errors_test.go pi/governor/governor.go pi/governor/governor_test.go
 git commit -m "feat: classify tool loop termination"
 ```
 

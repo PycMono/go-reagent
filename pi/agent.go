@@ -7,9 +7,9 @@ import (
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/toolexec"
 )

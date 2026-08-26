@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // Timeout 返回单次 Tool 执行的超时兜底 Handler。它是协作式取消：派生

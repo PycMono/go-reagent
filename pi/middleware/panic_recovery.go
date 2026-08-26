@@ -6,7 +6,7 @@ import (
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // PanicRecovery 捕获内层 handler 与 Tool 执行的 panic，转为 ToolPanic 错误。

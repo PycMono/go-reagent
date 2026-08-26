@@ -191,7 +191,7 @@ pi/compaction.go
 pi/register.go
 pi/notifier.go
 pi/governor/governor.go
-pi/harness/errors/errors.go
+pi/errors/errors.go
 pi/harness/observability/
 config/config.go
 config/load.go
@@ -397,17 +397,16 @@ SHA256(canonicalJSON([
 Detector 至少维护：
 
 ```text
-最近 16 条未排除 Tool Call 记录
-    - toolName
-    - callSignature
-    - optional outcomeSignature
-    - outcomeRecorded
-    - loopVeto
-
+最近 16 条未排除 Tool Call 的 callSignature（按原始顺序）
 每个 callSignature 的最近稳定结果与稳定次数
 已发送 warning key 集合
 criticalInterventions 计数
 ```
+
+窗口记录不回填 Outcome——没有任何规则消费它；每个 signature 的 stable
+计数是唯一事实来源。recover 的 veto 批次只写入调用记录、永不在 Record 中
+产生 Outcome（Loop 在 recover/terminate 后不得调用
+`RecordToolBatchOutcome`），因此 veto 不会被误读为“取得进展”。
 
 内部历史按模型返回的 Tool Calls 原始顺序记录，不按并发工具实际完成顺序记录。这样相同输入在 serial/parallel/mixed Scheduler 模式下得到相同判定。
 
@@ -467,7 +466,7 @@ A/B 交替（乒乓）循环没有专属规则：其成立前提是两侧结果�
 
 “第二次”是 Run 级计数，不要求 Pattern、工具名或 Call signature 与第一次相同。模型已经得到一次明确恢复机会；如果随后又进入任何已确认 critical 模式，继续尝试的收益低于资源风险。
 
-第一次被 veto 的批次由 `AdmitToolBatch` 自己记录为 `loopVeto` 证据，因此：
+第一次被 veto 的批次由 `AdmitToolBatch` 自己写入调用记录（无 Outcome 的 veto 证据），因此：
 
 - Loop 不得再调用 `RecordToolBatchOutcome`；
 - veto 不伪装成真实工具结果，不生成普通 Outcome signature；
@@ -482,7 +481,7 @@ A/B 交替（乒乓）循环没有专属规则：其成立前提是两侧结果�
 2. 跳过 excluded tools；
 3. 对剩余调用在窗口副本上按原始顺序逐个计算 projected pattern，批内相同 signature 互相计入；
 4. 汇总整批中最严重的干预，优先级为 `terminate > recover > warn > allow`；同级多个干预按投影顺序取第一个，`Intervention.Count` 为触发该干预的计数值（规则 1 取 projected count，规则 2 取已确认 stable count）；
-5. 只有最终为 allow/warn 时，才把本批未排除调用以 pending outcome 状态写入历史；
+5. 只有最终为 allow/warn 时，才把本批未排除调用按原始顺序原子写入历史；
 6. recover/terminate 时不允许 Scheduler 启动任何调用；recover 额外记录本批 veto 证据。
 
 如果同一批中一个调用正常、另一个 critical，整个批次都阻止。不能只执行“安全的那部分”，因为模型把一次 Assistant Tool Calls 视为一个协议组，部分执行会制造不可预测的副作用和恢复语义。

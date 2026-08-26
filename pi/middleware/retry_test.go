@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/harness/errors"
+	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
 // flakyTool 前 failures 次以 tool_runtime_failed 失败，之后成功。
