@@ -21,7 +21,7 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 - 连接通过本地可执行程序启动的标准 MCP stdio Server。
 - 遵守 MCP stdio 的 UTF-8、JSON-RPC、单行消息和 stderr 隔离要求。
 - 支持多个并发 `tools/call`，按 JSON-RPC ID 正确路由乱序响应。
-- 保持现有 HTTP 配置与运行行为向后兼容。
+- 把 HTTP 与 stdio 收敛为一套显式、无默认分支的 Transport 配置契约。
 - 保持 MCP Server 启动期初始化、工具发现和必需工具 fail-fast 语义。
 - 在请求取消、Server 异常退出和应用停止时确定性释放子进程及其后代。
 - 配置错误、进程错误和协议错误不得泄漏环境变量值、请求参数或工具结果。
@@ -40,6 +40,7 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 - shell 命令字符串、管道、重定向或 shell 插值；
 - 用第三方 Go MCP SDK 替换现有协议实现；
 - 改变 `required: true`、`allow_tools` 或 `tool_prefix` 的现有产品语义。
+- 为当前仓库内尚未稳定发布的 MCP 配置或 Go 构造 API 保留兼容层。
 
 ## 参考与约束来源
 
@@ -57,10 +58,7 @@ config.MCPServerConfig
         │
         ▼
 infrastructure/driver/mcp.NewExtensions
-        │  解析 transport、env、cwd
-        ▼
-pi/mcp.NewExtension
-        │
+        │  按必填 transport 创建具体实现
         ├── transport=http  ──► HTTPTransport
         │
         └── transport=stdio ──► StdioTransport
@@ -70,7 +68,9 @@ pi/mcp.NewExtension
                                   ├── child stderr ──► bounded drain
                                   └── process group ─► close/force kill
 
-两种 Transport
+具体 Transport
+        ▼
+pi/mcp.NewExtension(Transport)
         ▼
 pi/mcp.Client
         ▼
@@ -114,7 +114,7 @@ type MCPServerConfig struct {
 }
 ```
 
-`transport` 只接受 `http` 或 `stdio`。空值归一化为 `http`，保证已有配置不变。
+`transport` 是已启用 Server 的必填字段，只接受 `http` 或 `stdio`。空值、未知值一律在配置加载期失败，不根据 `url` 或 `command` 猜测 Transport。
 
 ### 互斥规则
 
@@ -177,45 +177,50 @@ type MCPServerConfig struct {
 
 本期不支持字符串中的部分插值，例如 `prefix-${NAME}`，也不支持 `$NAME`、`$env:NAME` 或命令取密。错误只可包含环境变量名称，不可包含解析后的值。配置结构和 Extension Options 不得通过 `%#v` 等方式整体写入日志。
 
-## Extension Options 与 Transport 选择
+## Transport 创建与 Extension Options
 
-为了保持现有调用者的源兼容，`ExtensionOptions` 保留 `Endpoint`、`Headers` 和 `Timeout`，并增加 stdio 字段：
+配置分支和具体 Transport 的创建属于基础设施装配职责。`NewExtension` 不再接收 URL、Header、Command 等 Transport 专属字段，只依赖已经构造完成的 `Transport`：
 
 ```go
-type TransportKind string
-
-const (
-	TransportHTTP  TransportKind = "http"
-	TransportStdio TransportKind = "stdio"
-)
-
 type ExtensionOptions struct {
 	Name       string
-	Transport  TransportKind // 空值等价于 TransportHTTP
-	Endpoint   string
-	Headers    http.Header
-	Command    string
-	Args       []string
-	Env        []string
-	WorkDir    string
-	Timeout    time.Duration
+	Transport  Transport
 	AllowTools []string
 	ToolPrefix string
 }
 ```
 
-基础设施驱动负责把配置中的 `env` 合并为 `KEY=value`，但不得修改父进程环境。`NewExtension` 在完成通用选项校验后按 `Transport` 创建对应实现：
+`NewExtension` 要求 `Transport` 非 nil，使用它创建 `Client`，然后组装 `mcpExtension`。这会替换当前由 `NewExtension` 固定创建 HTTPTransport 的构造 API，不保留旧签名或兼容包装函数。
+
+基础设施驱动执行唯一的 Transport 分支：
 
 ```go
-switch options.Transport {
-case "", TransportHTTP:
-	transport, err = NewHTTPTransport(...)
-case TransportStdio:
-	transport, err = NewStdioTransport(...)
-default:
-	return nil, errors.New("unsupported MCP transport")
+switch server.Transport {
+case "http":
+	transport, err = pimcp.NewHTTPTransport(pimcp.HTTPTransportOptions{
+		Endpoint: server.URL,
+		Headers:  headers,
+		Timeout:  timeout,
+	})
+case "stdio":
+	transport, err = pimcp.NewStdioTransport(pimcp.StdioTransportOptions{
+		Command: server.Command,
+		Args:    server.Args,
+		Env:     env,
+		WorkDir: server.CWD,
+		Timeout: timeout,
+	})
 }
+
+extension, err := pimcp.NewExtension(pimcp.ExtensionOptions{
+	Name:       server.Name,
+	Transport:  transport,
+	AllowTools: server.AllowTools,
+	ToolPrefix: server.ToolPrefix,
+})
 ```
+
+基础设施驱动负责把配置中的 `env` 合并为 `KEY=value`，但不得修改父进程环境。Transport 分支不设置 default；配置层已保证只可能进入 `http` 或 `stdio`。
 
 `NewStdioTransport` 只校验并保存选项，不立即启动进程。第一次 `Send` 必然是 `initialize`，此时同步完成一次性启动。这样进程仍在 Extension Runtime 的启动阶段创建，构造 Fx 依赖图或执行 `fx.ValidateApp` 不会产生外部进程副作用。
 
@@ -471,11 +476,11 @@ stdio 配置等价于授权 go-reagent 以自身操作系统身份执行指定�
 config/
 ├── config.go                       # transport/command/args/env/cwd 字段
 ├── validate.go                     # Transport 分支、互斥、env/cwd 校验
-└── config_test.go                  # 配置兼容、安全与错误测试
+└── config_test.go                  # 统一配置契约、安全与错误测试
 
 pi/mcp/
-├── extension.go                    # TransportKind 与 Transport 工厂选择
-├── extension_test.go               # HTTP 默认值和 stdio 选择测试
+├── extension.go                    # 注入 Transport，不再固定构造 HTTP
+├── extension_test.go               # Transport 必填与公共扩展行为
 ├── protocol.go                     # stdio wire envelope / server response 类型
 ├── transport_stdio.go              # framing、pending 路由、状态机与生命周期
 ├── transport_stdio_test.go         # helper-process 集成式单元测试
@@ -483,10 +488,10 @@ pi/mcp/
 └── transport_stdio_process_windows.go # Windows 进程树终止
 
 infrastructure/driver/mcp/
-├── mcp.go                          # env 解析与 stdio ExtensionOptions 映射
-└── mcp_test.go                     # HTTP/stdio 装配测试
+├── mcp.go                          # 唯一 Transport 分支、env 解析与扩展装配
+└── mcp_test.go                     # HTTP/stdio 精确装配测试
 
-config.example.json                 # 增加 enabled:false 的 stdio 示例
+config.example.json                 # Exa 显式 http，并增加 disabled stdio 示例
 README.md                           # MCP Transport 能力说明
 ```
 
@@ -498,8 +503,8 @@ README.md                           # MCP Transport 能力说明
 
 覆盖：
 
-- 老 HTTP 配置不含 `transport` 时归一化为 HTTP；
-- 显式 HTTP 配置继续通过；
+- 缺少 `transport` 失败；
+- 显式 HTTP 配置通过；
 - stdio 最小配置通过；
 - transport 未知值失败；
 - HTTP 缺 URL、携带 stdio 字段失败；
@@ -540,8 +545,9 @@ README.md                           # MCP Transport 能力说明
 
 覆盖：
 
-- `NewExtension` 空 Transport 仍选择 HTTP；
-- `TransportStdio` 选择 StdioTransport；
+- `NewExtension` 拒绝 nil Transport；
+- 基础设施驱动对 `http` 精确创建 HTTPTransport；
+- 基础设施驱动对 `stdio` 精确创建 StdioTransport；
 - stdio 仍只注册 `allow_tools`；
 - 缺少必需工具时注册失败并关闭进程；
 - 配置 env 解析进入子进程，但测试失败信息不含值；
@@ -564,13 +570,14 @@ git diff --check
 
 交叉编译只验证 Windows 平台文件能够构建，不运行生成的 Windows 测试二进制；生命周期用例仍需在 Windows CI 或人工环境执行。
 
-## 兼容性与迁移
+## 统一契约与仓库内迁移
 
-- 现有配置不写 `transport` 时继续作为 HTTP；无需迁移。
-- 现有 JSON/YAML/TOML 字段名和 HTTP 安全规则不变。
-- `Transport` 接口不变，Client 和 proxyTool 不分叉。
-- `ExtensionOptions` 只增加字段，现有 Go 调用者可继续编译。
-- `ProtocolVersion`、Client 名称、工具白名单和前缀语义不变。
+本功能按全新 MCP Transport 契约一次性交付，不提供兼容期、弃用期、双读或字段推断：
+
+- 所有已启用 MCP Server 都必须显式配置 `transport`；现有 Exa 示例和测试夹具同步增加 `"transport": "http"`。
+- `NewExtension` 直接改为接收 `Transport`；仓库内调用点同步迁移，不保留旧构造函数或适配器。
+- Transport 专属字段仍采用一层扁平配置，但由必填 `transport` 严格判别；不同分支字段混用直接失败。
+- `Transport` 接口、Client、proxyTool、`ProtocolVersion`、工具白名单和前缀语义继续作为统一内部架构，不属于兼容承诺。
 - 不引入 MCP SDK 依赖，不增加对 Node/npm 的运行时硬依赖；只有用户选择以 `npx` 作为某个 Server command 时才需要 Node。
 
 ## 验收标准
@@ -580,7 +587,7 @@ git diff --check
 - 并发 tools/call 即使乱序响应也不会串包、泄漏或死锁。
 - stdout 严格按 JSONL 处理，stderr 不污染协议且不会造成 pipe 背压。
 - 单次请求取消不影响其他并发请求；应用停止和 Transport 失败不会遗留子进程或僵尸进程。
-- 现有 HTTP MCP 单元测试和 Exa opt-in 集成测试无需改变使用方式。
+- HTTP MCP 单元测试和 Exa opt-in 集成测试迁移到显式 `transport: "http"` 后保持原有运行行为。
 - 配置、错误、日志和观测数据不包含环境变量值、协议参数、结果或 stderr 内容。
 - Linux/macOS 原生测试、Race 测试、Vet、Windows 编译检查和 `git diff --check` 通过。
 
