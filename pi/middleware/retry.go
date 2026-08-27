@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
@@ -15,16 +16,37 @@ var retryableCodes = map[pierrors.ErrorCode]struct{}{
 	pierrors.ErrorCodeToolTimeout: {},
 }
 
+const (
+	// DefaultRetryBackoff 是未配置 backoff（<=0）时第 N 次重试前的等待
+	// 毫秒基数（线性递增），与 go-reagent 服务的默认配置保持一致。
+	DefaultRetryBackoff = 200 * time.Millisecond
+	// MaxRetryAttempts 是总尝试次数（含首次）上限；超过时钳制到该值。
+	MaxRetryAttempts = 5
+)
+
 // Retry 返回按白名单重试瞬态失败的 Handler。只有 tools 列出的工具
 // （应为幂等工具）且错误码属于 retryableCodes 时才重试，最多 attempts
-// 次（含首次），第 N 次重试前等待 backoff*N。
+// 次（含首次，上限 MaxRetryAttempts），第 N 次重试前等待 backoff*N；
+// backoff<=0 时使用 DefaultRetryBackoff。
 //
 // 重试通过索引复位重跑本 Handler 之后的整条后缀链，因此后缀 Handler
 // 必须可重入（内置 Handler 均满足）。默认装配顺序 Permission → Retry →
 // Timeout 下，每次重试获得新的执行期限，而权限判定只执行一次。
 func Retry(attempts int, backoff time.Duration, tools []string) Handler {
+	if attempts > MaxRetryAttempts {
+		attempts = MaxRetryAttempts
+	}
+	if backoff <= 0 {
+		backoff = DefaultRetryBackoff
+	}
 	whitelist := make(map[string]struct{}, len(tools))
 	for _, name := range tools {
+		// 防御性归一化：跳过空白项，容忍前后空格（业务校验只在根
+		// config 包按需执行，SDK 侧不做第二套校验）。
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
 		whitelist[name] = struct{}{}
 	}
 	return func(e *Execution) {

@@ -25,6 +25,8 @@ type Options struct {
 	Pricing  *Pricing `json:"pricing" yaml:"pricing" toml:"pricing"`
 	// ContextWindowTokens 是模型的上下文窗口容量；0 表示未声明，主动压缩保持关闭。
 	ContextWindowTokens int64 `json:"contextWindowTokens,omitempty" yaml:"contextWindowTokens" toml:"contextWindowTokens"`
+	// Vision 声明平台模型是否具备视觉能力；false（默认）时图像块降级为脱敏占位文本。
+	Vision bool `json:"vision,omitempty" yaml:"vision" toml:"vision"`
 }
 
 // Pricing snapshots USD prices per one million tokens for a platform.

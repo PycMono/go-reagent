@@ -89,6 +89,40 @@ func TestTokenMeterToolsDifferenceBetweenPhases(t *testing.T) {
 	}
 }
 
+func TestVisibleMessagesBytesImageVirtualBytes(t *testing.T) {
+	image := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.ImageBlock("https://example.com/a.png")}}
+	text := ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("[图片: https://example.com/a.png]")}}
+
+	imageBytes := VisibleMessagesBytes([]ai.Message{image})
+	textBytes := VisibleMessagesBytes([]ai.Message{text})
+	if imageBytes-textBytes != DefaultImageTokens*bytesPerTokenHeuristic {
+		t.Fatalf("image virtual bytes delta = %d, want exactly %d", imageBytes-textBytes, DefaultImageTokens*bytesPerTokenHeuristic)
+	}
+
+	meter := TokenMeter{}
+	if got, want := meter.Estimate(RequestFootprint{Messages: []ai.Message{image}}), int64(textBytes/bytesPerTokenHeuristic)+DefaultImageTokens; got != want {
+		t.Fatalf("Estimate = %d, want %d (bytes/4 + DefaultImageTokens)", got, want)
+	}
+}
+
+func TestMarshalVisibleMessagesProjectsImagePlaceholder(t *testing.T) {
+	messages := []ai.Message{{
+		Role:    ai.RoleUser,
+		Content: []ai.ContentBlock{ai.TextBlock("看图"), ai.ImageBlock("https://example.com/a.png?sig=secret")},
+	}}
+	encoded, err := MarshalVisibleMessages(messages)
+	if err != nil {
+		t.Fatalf("MarshalVisibleMessages error = %v", err)
+	}
+	encodedText := string(encoded)
+	if !strings.Contains(encodedText, "[图片: https://example.com/a.png]") {
+		t.Fatalf("projection missing placeholder: %s", encodedText)
+	}
+	if strings.Contains(encodedText, "secret") || strings.Contains(encodedText, "sig=") {
+		t.Fatalf("projection leaks query params: %s", encodedText)
+	}
+}
+
 func TestTokenMeterEmptyFootprint(t *testing.T) {
 	if got := (TokenMeter{}).Estimate(RequestFootprint{}); got != 0 {
 		t.Fatalf("Estimate of empty footprint = %d, want 0", got)

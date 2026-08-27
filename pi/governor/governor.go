@@ -46,8 +46,10 @@ type Governor struct {
 	parent *BatchBudget
 }
 
+// New 创建一次运行的 Governor。limits 中未配置（零值）的字段回填
+// DefaultLimits 对应字段的默认值，已配置字段保持原值。
 func New(limits Limits) *Governor {
-	return &Governor{limits: limits}
+	return &Governor{limits: limits.withDefaults()}
 }
 
 // SetParent 关联父预算账户（子代理 Governor 专用）。

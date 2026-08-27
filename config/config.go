@@ -74,8 +74,10 @@ type ObservabilityContentConfig struct {
 }
 
 type AgentConfig struct {
-	WorkspaceDir string          `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
-	Limits       governor.Limits `json:"limits" yaml:"limits" toml:"limits"`
+	WorkspaceDir string `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	// Limits 是运行预算；未配置（零值）的字段由 pi 层回填
+	// governor.DefaultLimits（20 轮 / $1 / 2M tokens），config 不填默认。
+	Limits governor.Limits `json:"limits" yaml:"limits" toml:"limits"`
 	// LoopDetection 是工具循环护栏配置；整节可省略，零值即默认启用。
 	LoopDetection loopdetect.Config `json:"loop_detection" yaml:"loop_detection" toml:"loop_detection"`
 	// EnableContextPrune 显式启用主动上下文压缩的 L1 只读工具结果裁剪。
@@ -169,11 +171,12 @@ type ToolsConfig struct {
 
 // ToolRetryConfig 是瞬态失败重试策略，只对白名单中的幂等工具生效。
 type ToolRetryConfig struct {
-	// Attempts 是总尝试次数（含首次），<=1 表示不重试，上限 5。
+	// Attempts 是总尝试次数（含首次），<=1 表示不重试；上限由 pi 层
+	// middleware.MaxRetryAttempts 钳制。
 	Attempts int `json:"attempts" yaml:"attempts" toml:"attempts"`
-	// BackoffMs 是第 N 次重试前的等待毫秒基数（线性递增）；Attempts>1
-	// 且未配置时归一化为 200。
+	// BackoffMs 是第 N 次重试前的等待毫秒基数（线性递增）；<=0 时由 pi 层
+	// middleware.DefaultRetryBackoff 兜底。
 	BackoffMs int `json:"backoff_ms" yaml:"backoff_ms" toml:"backoff_ms"`
-	// Tools 是允许重试的工具白名单；Attempts>1 时必填。
+	// Tools 是允许重试的工具白名单；Attempts>1 时应配置，否则重试不匹配任何工具。
 	Tools []string `json:"tools" yaml:"tools" toml:"tools"`
 }

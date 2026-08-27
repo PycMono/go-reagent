@@ -82,7 +82,8 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 			return vo.RunEventVO{}, false, false
 		}
 		result.Type = vo.RunEventMessageDelta
-		result.Delta = &vo.ContentBlockVO{Type: string(event.Delta.Type), Text: event.Delta.Text}
+		delta := mapContentBlock(*event.Delta)
+		result.Delta = &delta
 		return result, true, true
 	case pi.AgentEventMessageEnd:
 		if event.Message == nil {
@@ -98,7 +99,16 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 func mapAIContent(content []ai.ContentBlock) []vo.ContentBlockVO {
 	result := make([]vo.ContentBlockVO, 0, len(content))
 	for _, block := range content {
-		result = append(result, vo.ContentBlockVO{Type: string(block.Type), Text: block.Text})
+		result = append(result, mapContentBlock(block))
+	}
+	return result
+}
+
+// mapContentBlock 统一映射内容块；image 块只透传 URL。
+func mapContentBlock(block ai.ContentBlock) vo.ContentBlockVO {
+	result := vo.ContentBlockVO{Type: string(block.Type), Text: block.Text}
+	if block.Image != nil {
+		result.Image = &vo.ImageContentVO{URL: block.Image.URL}
 	}
 	return result
 }

@@ -40,8 +40,14 @@ type ConversationPageVO struct {
 }
 
 type ContentBlockVO struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	Image *ImageContentVO `json:"image,omitempty"`
+}
+
+// ImageContentVO 表示一个 URL 图像内容；前端以 <img> 渲染。
+type ImageContentVO struct {
+	URL string `json:"url"`
 }
 
 type ToolCallVO struct {

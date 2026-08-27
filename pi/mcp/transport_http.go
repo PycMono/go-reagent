@@ -21,6 +21,10 @@ import (
 
 const maxHTTPResponseBytes int64 = 16 << 20
 
+// DefaultTimeout 是未配置 Timeout（<=0）时每次 MCP HTTP 请求的默认期限，
+// 与 go-reagent 服务的默认配置（config.example.json）保持一致。
+const DefaultTimeout = 60 * time.Second
+
 type transportError struct {
 	op     string
 	kind   string
@@ -69,7 +73,7 @@ func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
 		return nil, err
 	}
 	if options.Timeout <= 0 {
-		return nil, errors.New("mcp HTTP timeout must be greater than zero")
+		options.Timeout = DefaultTimeout
 	}
 	headers, err := options.validateHeaders()
 	if err != nil {

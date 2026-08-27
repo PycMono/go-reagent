@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 type normalizedMessage struct {
 	role       ai.Role
-	text       string
+	blocks     []ai.ContentBlock
 	toolCalls  []normalizedToolCall
 	toolCallID string
 	isError    bool
@@ -23,17 +24,17 @@ type normalizedToolCall struct {
 	input     any
 }
 
-func normalizeMessages(messages []ai.Message) ([]normalizedMessage, error) {
+func normalizeMessages(messages []ai.Message, vision bool) ([]normalizedMessage, error) {
 	result := make([]normalizedMessage, 0, len(messages))
 	for _, message := range messages {
-		text, err := ai.TextContent(message.Content)
+		blocks, err := normalizeBlocks(message.Role, message.Content, vision)
 		if err != nil {
 			return nil, fmt.Errorf("message content: %w", err)
 		}
 
 		normalized := normalizedMessage{
 			role:       message.Role,
-			text:       text,
+			blocks:     blocks,
 			toolCallID: message.ToolCallID,
 			isError:    message.IsError,
 		}
@@ -44,7 +45,7 @@ func normalizeMessages(messages []ai.Message) ([]normalizedMessage, error) {
 				return nil, errors.New("tool message requires tool_call_id")
 			}
 		case ai.RoleAssistant:
-			if text == "" && len(message.ToolCalls) == 0 {
+			if len(blocks) == 0 && len(message.ToolCalls) == 0 {
 				return nil, errors.New("assistant message contains no content or tool calls")
 			}
 			for _, toolCall := range message.ToolCalls {
@@ -63,4 +64,38 @@ func normalizeMessages(messages []ai.Message) ([]normalizedMessage, error) {
 		result = append(result, normalized)
 	}
 	return result, nil
+}
+
+// normalizeBlocks 校验并归一化一条消息的内容块：先做联合类型防御性校验，
+// 再按 role 契约拒绝不携带图像的角色；vision=false 时把 user 消息中的
+// 图像块降级为脱敏占位文本。其余情况保序透传。
+func normalizeBlocks(role ai.Role, content []ai.ContentBlock, vision bool) ([]ai.ContentBlock, error) {
+	result := make([]ai.ContentBlock, 0, len(content))
+	for _, block := range content {
+		if err := block.Validate(); err != nil {
+			return nil, err
+		}
+		if block.Type == ai.ContentTypeImage && role != ai.RoleUser {
+			return nil, fmt.Errorf("role %q must not carry image blocks", role)
+		}
+		if block.Type == ai.ContentTypeImage && !vision {
+			result = append(result, ai.TextBlock(ai.ImagePlaceholderText(block.Image.URL)))
+			continue
+		}
+		result = append(result, block)
+	}
+	return result, nil
+}
+
+// messageText 拼接归一化消息的全部文本块；仅用于协议中 content 为纯字符串
+// 的角色（system/tool/assistant），这些角色不允许携带图像块。
+func (message normalizedMessage) text() (string, error) {
+	var builder strings.Builder
+	for _, block := range message.blocks {
+		if block.Type != ai.ContentTypeText {
+			return "", fmt.Errorf("role %q does not support %q blocks", message.role, block.Type)
+		}
+		builder.WriteString(block.Text)
+	}
+	return builder.String(), nil
 }

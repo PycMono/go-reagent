@@ -287,3 +287,15 @@ func TestHTTPTransportCloseClosesDefaultIdleConnections(t *testing.T) {
 		t.Fatal("default HTTP transport idle connections were not closed")
 	}
 }
+
+func TestNewHTTPTransportDefaultsTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		transport, err := NewHTTPTransport(HTTPTransportOptions{Endpoint: "http://127.0.0.1:8080/mcp", Timeout: timeout})
+		if err != nil {
+			t.Fatalf("Timeout = %v: %v", timeout, err)
+		}
+		if transport.timeout != DefaultTimeout {
+			t.Fatalf("timeout = %v, want %v", transport.timeout, DefaultTimeout)
+		}
+	}
+}

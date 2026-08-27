@@ -13,13 +13,11 @@ import (
 	"strings"
 )
 
-const defaultMCPTimeoutSeconds = 60
-
-func (config *Config) normalizeAndValidate() error {
+func (config *Config) normalizeAndValidate(options loadOptions) error {
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
 		return err
 	}
-	if err := config.Agent.normalizeAndValidate(); err != nil {
+	if err := config.Agent.normalizeAndValidate(options); err != nil {
 		return err
 	}
 	if err := config.MCP.normalizeAndValidate(); err != nil {
@@ -35,9 +33,8 @@ func (config *Config) normalizeAndValidate() error {
 	if err := config.Permissions.normalizeAndValidate(); err != nil {
 		return err
 	}
-	if err := config.Tools.normalizeAndValidate(); err != nil {
-		return err
-	}
+	// Tools 的数值边界（重试上限、退避默认值）由 pi 层 middleware 兜底，
+	// config 不做第二套校验。
 	if err := config.Conversation.normalizeAndValidate(&config.MySQL); err != nil {
 		return err
 	}
@@ -243,9 +240,7 @@ func (server *MCPServerConfig) normalizeAndValidate() error {
 	default:
 		return errors.New("mcp.servers.url 必须使用 http 或 https")
 	}
-	if server.Timeout == 0 {
-		server.Timeout = defaultMCPTimeoutSeconds
-	}
+	// Timeout 不填默认值：<=0 时由 pi 层（mcp.DefaultTimeout）兜底。
 	if err := server.normalizeHeaders(); err != nil {
 		return err
 	}
@@ -294,50 +289,34 @@ func (server *MCPServerConfig) normalizeAllowedTools() error {
 	return nil
 }
 
-func (config *AgentConfig) normalizeAndValidate() error {
+func (config *AgentConfig) normalizeAndValidate(options loadOptions) error {
 	config.WorkspaceDir = strings.TrimSpace(config.WorkspaceDir)
 	if config.WorkspaceDir == "" {
 		config.WorkspaceDir = DefaultAgentWorkspaceDir
 	}
-	resolved, err := resolveAgentWorkspaceDir(config.WorkspaceDir)
+	resolved, err := resolveAgentWorkspaceDir(config.WorkspaceDir, options.allowProcessCWD)
 	if err != nil {
 		return err
 	}
 	// 把解析后的绝对路径写回配置，下游装配层不再做任何解析与校验。
 	config.WorkspaceDir = resolved
-	if err := config.validateLoopDetection(); err != nil {
-		return err
-	}
-	return config.validateLimits()
+	// Limits 的默认值回填在 pi 层（governor.New）：未配置字段使用
+	// governor.DefaultLimits。这里只做 Load 期 fail-fast 的固有校验；
+	// loop_detection 的防御性归一化也在 pi 层（loopdetect.normalize）。
+	return config.Limits.Validate()
 }
 
-// validateLoopDetection 对 excluded_tools 做 fail-fast 校验：空白名称、
-// 前后空格和重复项一律拒绝；不要求排除项一定已注册（MCP/extension 工具
-// 可能到启动期才完整出现）。
-func (config *AgentConfig) validateLoopDetection() error {
-	seen := make(map[string]struct{}, len(config.LoopDetection.ExcludedTools))
-	for _, name := range config.LoopDetection.ExcludedTools {
-		if strings.TrimSpace(name) == "" {
-			return errors.New("agent.loop_detection.excluded_tools 不允许空白工具名")
-		}
-		if name != strings.TrimSpace(name) {
-			return fmt.Errorf("agent.loop_detection.excluded_tools %q 不允许前后空格", name)
-		}
-		if _, ok := seen[name]; ok {
-			return fmt.Errorf("agent.loop_detection.excluded_tools %q 重复", name)
-		}
-		seen[name] = struct{}{}
-	}
-	return nil
-}
-
-// resolveAgentWorkspaceDir 校验 Workspace 目录必须存在、是目录、且不是
-// 进程当前目录（防止 Agent 工具直接读写服务自身工作目录），返回解析后的
-// 绝对路径。
-func resolveAgentWorkspaceDir(path string) (string, error) {
+// resolveAgentWorkspaceDir 校验 Workspace 目录必须存在、是目录；默认还拒绝
+// 等于进程当前目录（防止 Agent 工具直接读写服务自身工作目录），
+// allowProcessCWD 为 true 时跳过该拒绝（仅 CLI 类入口使用，见
+// WithAllowProcessCWD）。返回解析后的绝对路径。
+func resolveAgentWorkspaceDir(path string, allowProcessCWD bool) (string, error) {
 	resolved, err := resolveDirectory(path)
 	if err != nil {
 		return "", fmt.Errorf("agent.workspace_dir %q 无效: %w", path, err)
+	}
+	if allowProcessCWD {
+		return resolved, nil
 	}
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -370,23 +349,6 @@ func resolveDirectory(path string) (string, error) {
 		return "", errors.New("必须是目录")
 	}
 	return filepath.Clean(resolved), nil
-}
-
-// validateLimits 拒绝非法额度和全零安全策略。bundled service 不允许裸奔；
-// SDK 调用方自行决定 Limits，config 只约束本服务。
-func (config *AgentConfig) validateLimits() error {
-	limits := config.Limits
-	switch {
-	case limits.MaxTurns < 0:
-		return errors.New("agent.limits.max_turns 不能小于 0")
-	case limits.MaxTotalTokens < 0:
-		return errors.New("agent.limits.max_total_tokens 不能小于 0")
-	case limits.MaxCostUSD < 0 || math.IsNaN(limits.MaxCostUSD) || math.IsInf(limits.MaxCostUSD, 0):
-		return errors.New("agent.limits.max_cost_usd 必须是有限非负数")
-	case limits.MaxTurns == 0 && limits.MaxCostUSD == 0 && limits.MaxTotalTokens == 0:
-		return errors.New("agent.limits 不允许全零：必须配置非零运行预算")
-	}
-	return nil
 }
 
 // normalize 只填默认值；端口是否可监听由启动期 listen 报错，config 不预判。
@@ -485,39 +447,6 @@ func (config *PermissionsConfig) normalizeAndValidate() error {
 			if _, err := regexp.Compile(pattern); err != nil {
 				return fmt.Errorf("permissions.rules[%d] 正则 %q 编译失败: %w", index, pattern, err)
 			}
-		}
-	}
-	return nil
-}
-
-const (
-	maxToolRetryAttempts      = 5
-	defaultToolRetryBackoffMs = 200
-)
-
-func (config *ToolsConfig) normalizeAndValidate() error {
-	if config.TimeoutSeconds < 0 {
-		return errors.New("tools.timeout_seconds 不能为负数")
-	}
-	retry := &config.Retry
-	if retry.Attempts < 0 || retry.Attempts > maxToolRetryAttempts {
-		return fmt.Errorf("tools.retry.attempts 必须在 0 到 %d 之间", maxToolRetryAttempts)
-	}
-	if retry.BackoffMs < 0 {
-		return errors.New("tools.retry.backoff_ms 不能为负数")
-	}
-	if retry.Attempts > 1 {
-		if len(retry.Tools) == 0 {
-			return errors.New("tools.retry.attempts > 1 时 tools.retry.tools 白名单必填")
-		}
-		if retry.BackoffMs == 0 {
-			retry.BackoffMs = defaultToolRetryBackoffMs
-		}
-	}
-	for index := range retry.Tools {
-		retry.Tools[index] = strings.TrimSpace(retry.Tools[index])
-		if retry.Tools[index] == "" {
-			return fmt.Errorf("tools.retry.tools[%d] 不能为空", index)
 		}
 	}
 	return nil

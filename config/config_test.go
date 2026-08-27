@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PycMono/go-reagent/pi/governor"
 )
 
 // TestMain 把包级测试的工作目录切到临时目录并准备默认 Workspace，使
@@ -192,6 +194,46 @@ func TestLoadConfigRejectsInvalidAgentWorkspaceDir(t *testing.T) {
 				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// WithAllowProcessCWD 仅放行 cwd 拒绝，其余校验不变；不传选项时 cwd 拒绝
+// 行为不变（cmd/server 路径，见上表 "process working directory" 用例）。
+func TestLoadConfigAllowsProcessCWDWithOption(t *testing.T) {
+	path := writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"workspace_dir":".","limits":{"max_turns":5}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+	}`)
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "不能使用进程当前目录") {
+		t.Fatalf("Load() without option error = %v, want cwd rejection", err)
+	}
+	cfg, err := Load(path, WithAllowProcessCWD())
+	if err != nil {
+		t.Fatalf("Load(WithAllowProcessCWD) = %v", err)
+	}
+	if want := mustResolveDirectory(t, "."); cfg.Agent.WorkspaceDir != want {
+		t.Fatalf("WorkspaceDir = %q, want %q", cfg.Agent.WorkspaceDir, want)
+	}
+}
+
+// 钉死 -dir 注入使用的 configor 环境变量名：configor 嵌套字段命名规则
+// （CONFIGOR_ + 大写结构体路径）升级时可能静默变化，本测试必须先于 CLI 失败。
+func TestLoadConfigWorkspaceDirEnvOverrideName(t *testing.T) {
+	t.Setenv("CONFIGOR_AGENT_WORKSPACEDIR", "./workspaces/legal")
+	cfg, err := Load(writeConfig(t, `{
+		"currentPlatform":"x",
+		"platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],
+		"agent":{"limits":{"max_turns":5}},
+		"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := mustResolveDirectory(t, "./workspaces/legal"); cfg.Agent.WorkspaceDir != want {
+		t.Fatalf("WorkspaceDir = %q, want env override %q", cfg.Agent.WorkspaceDir, want)
 	}
 }
 
@@ -636,7 +678,8 @@ func TestLoadConfigNormalizesMCPServers(t *testing.T) {
 		t.Fatalf("MCP servers = %#v", cfg.MCP.Servers)
 	}
 	server := cfg.MCP.Servers[0]
-	if server.Name != "exa" || server.URL != "https://mcp.exa.ai/mcp" || server.Timeout != 60 ||
+	// Timeout 不填默认值：0 透传，由 pi 层（mcp.DefaultTimeout）兜底。
+	if server.Name != "exa" || server.URL != "https://mcp.exa.ai/mcp" || server.Timeout != 0 ||
 		server.HeaderEnv["X-Api-Key"] != "EXA_API_KEY" || server.ToolPrefix != "" ||
 		!slices.Equal(server.AllowTools, []string{"web_search_exa", "web_fetch_exa"}) {
 		t.Fatalf("MCP server = %#v", server)
@@ -689,27 +732,37 @@ func TestLoadConfigAllowsAbsentAndDisabledMCP(t *testing.T) {
 }
 
 func TestLoadConfigValidatesAgentLimits(t *testing.T) {
-	tests := []struct {
+	base := func(agent string) string {
+		if agent != "" {
+			agent += ","
+		}
+		return `{"currentPlatform":"x","platforms":[` +
+			`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],` +
+			agent + `"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}}`
+	}
+	// 未配置（全零或整节省略）不再拒绝：pi 层 governor.New 回填
+	// DefaultLimits 默认预算。
+	t.Run("missing limits accepted", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, base("")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Agent.Limits != (governor.Limits{}) {
+			t.Fatalf("Limits = %#v, want zero (pi 层运行时回填默认)", cfg.Agent.Limits)
+		}
+	})
+	rejections := []struct {
 		name  string
 		agent string
 		want  string
 	}{
-		{name: "all zero", agent: `"agent":{"limits":{}}`, want: "agent.limits"},
-		{name: "missing", agent: ``, want: "agent.limits"},
-		{name: "negative turns", agent: `"agent":{"limits":{"max_turns":-1}}`, want: "max_turns"},
-		{name: "negative tokens", agent: `"agent":{"limits":{"max_total_tokens":-1}}`, want: "max_total_tokens"},
-		{name: "negative cost", agent: `"agent":{"limits":{"max_cost_usd":-0.5}}`, want: "max_cost_usd"},
+		{name: "negative turns", agent: `"agent":{"limits":{"max_turns":-1}}`, want: "max turns"},
+		{name: "negative tokens", agent: `"agent":{"limits":{"max_total_tokens":-1}}`, want: "max total tokens"},
+		{name: "negative cost", agent: `"agent":{"limits":{"max_cost_usd":-0.5}}`, want: "max cost usd"},
 	}
-	for _, tt := range tests {
+	for _, tt := range rejections {
 		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.agent
-			if agent != "" {
-				agent += ","
-			}
-			document := `{"currentPlatform":"x","platforms":[` +
-				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],` +
-				agent + `"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}}`
-			_, err := Load(writeConfig(t, document))
+			_, err := Load(writeConfig(t, base(tt.agent)))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
 			}
@@ -846,11 +899,11 @@ func TestLoadConfigParsesAndValidatesPermissions(t *testing.T) {
 	}
 }
 
-func TestLoadConfigParsesAndValidatesTools(t *testing.T) {
+func TestLoadConfigParsesTools(t *testing.T) {
 	base := func(tools string) string {
 		return `{"currentPlatform":"x","platforms":[{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],"agent":{"limits":{"max_turns":5}},"redis":{"addr":["127.0.0.1:6379"],"db":0,"pool_size":5},"tools":` + tools + `}`
 	}
-	t.Run("accepts and normalizes retry backoff", func(t *testing.T) {
+	t.Run("values pass through without defaults", func(t *testing.T) {
 		cfg, err := Load(writeConfig(t, base(`{"timeout_seconds":30,"retry":{"attempts":3,"tools":[" mcp_search "]}}`)))
 		if err != nil {
 			t.Fatal(err)
@@ -858,48 +911,51 @@ func TestLoadConfigParsesAndValidatesTools(t *testing.T) {
 		if cfg.Tools.TimeoutSeconds != 30 {
 			t.Fatalf("TimeoutSeconds = %d, want 30", cfg.Tools.TimeoutSeconds)
 		}
+		// config 不填默认、不修剪：BackoffMs=0 由 pi 层
+		// middleware.DefaultRetryBackoff 兜底，白名单空白由 middleware 防御性处理。
 		retry := cfg.Tools.Retry
-		if retry.Attempts != 3 || retry.BackoffMs != 200 || !slices.Equal(retry.Tools, []string{"mcp_search"}) {
+		if retry.Attempts != 3 || retry.BackoffMs != 0 || !slices.Equal(retry.Tools, []string{" mcp_search "}) {
 			t.Fatalf("Retry = %#v", retry)
 		}
 	})
-	rejections := []struct {
+	// 数值边界（负数、超上限、空白名单）不再由 config 拒绝：pi 层
+	// middleware 钳制/忽略，装配层 >0 守卫使负数 timeout 等同不启用。
+	accepted := []struct {
 		name  string
 		tools string
-		want  string
 	}{
-		{name: "negative timeout", tools: `{"timeout_seconds":-1}`, want: "timeout_seconds"},
-		{name: "attempts too large", tools: `{"retry":{"attempts":6,"tools":["x"]}}`, want: "attempts"},
-		{name: "retry without whitelist", tools: `{"retry":{"attempts":2}}`, want: "tools"},
-		{name: "empty whitelist entry", tools: `{"retry":{"attempts":2,"tools":[" "]}}`, want: "tools[0]"},
+		{name: "negative timeout", tools: `{"timeout_seconds":-1}`},
+		{name: "attempts too large", tools: `{"retry":{"attempts":6,"tools":["x"]}}`},
+		{name: "retry without whitelist", tools: `{"retry":{"attempts":2}}`},
+		{name: "empty whitelist entry", tools: `{"retry":{"attempts":2,"tools":[" "]}}`},
 	}
-	for _, rejection := range rejections {
-		t.Run(rejection.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, base(rejection.tools)))
-			if err == nil || !strings.Contains(err.Error(), rejection.want) {
-				t.Fatalf("Load() error = %v, want contains %q", err, rejection.want)
+	for _, tt := range accepted {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Load(writeConfig(t, base(tt.tools))); err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
 			}
 		})
 	}
 }
 
 func TestLoadConfigLoopDetection(t *testing.T) {
+	// excluded_tools 的空白/前后空格/重复不再由 config 拒绝：pi 层
+	// loopdetect.normalize 做防御性 trim/去空/去重，config 原样透传。
 	tests := []struct {
 		name  string
 		extra string
-		want  string
 	}{
-		{name: "blank name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["  "]}}`, want: "loop_detection"},
-		{name: "padded name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":[" poll "]}}`, want: "前后空格"},
-		{name: "duplicate", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["poll","poll"]}}`, want: "重复"},
+		{name: "blank name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["  "]}}`},
+		{name: "padded name", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":[" poll "]}}`},
+		{name: "duplicate", extra: `"agent":{"limits":{"max_turns":5},"loop_detection":{"excluded_tools":["poll","poll"]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			document := `{"currentPlatform":"x","platforms":[` +
 				`{"id":"x","protocol":"openai","baseURL":"https://x.test/","apiKey":"k","model":"m","pricing":{"input_usd_per_million_tokens":0,"output_usd_per_million_tokens":0}}],` +
 				tt.extra + `,"redis":{"addr":["127.0.0.1:6379"],"password":"","db":0,"pool_size":5}}`
-			if _, err := Load(writeConfig(t, document)); err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Load() error = %v, want containing %q", err, tt.want)
+			if _, err := Load(writeConfig(t, document)); err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
 			}
 		})
 	}

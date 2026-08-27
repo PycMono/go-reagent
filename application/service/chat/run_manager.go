@@ -40,9 +40,15 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 	userID = strings.TrimSpace(userID)
 	conversationID = strings.TrimSpace(conversationID)
 	content := strings.TrimSpace(param.Content)
+	imageURL := strings.TrimSpace(param.ImageURL)
 	if !validIdentity(userID) || !validIdentity(conversationID) || content == "" || !utf8.ValidString(content) ||
 		s == nil || s.repository == nil || s.ids == nil || s.runner == nil || s.catalog == nil {
 		return nil, commonerrors.ErrInvalidParam
+	}
+	if imageURL != "" {
+		if err := ai.ImageBlock(imageURL).Validate(); err != nil {
+			return nil, commonerrors.ErrInvalidParam
+		}
 	}
 	ownedConversation, found, err := s.repository.FindByUserIDAndConversationID(ctx, userID, conversationID)
 	if err != nil {
@@ -72,7 +78,7 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 
 	events := make(chan vo.RunEventVO, runEventQueueSize)
 	events <- vo.RunEventVO{Type: vo.RunEventRunStarted, RunID: runID}
-	go s.executeRun(runCtx, key, userID, conversationID, runID, content, profile.Code, profileContext, events)
+	go s.executeRun(runCtx, key, userID, conversationID, runID, content, imageURL, profile.Code, profileContext, events)
 	return &ActiveRun{ID: runID, Events: events}, nil
 }
 
@@ -98,7 +104,7 @@ func (s *Service) CancelRun(_ context.Context, userID, conversationID, runID str
 
 func (s *Service) executeRun(
 	ctx context.Context,
-	key, userID, conversationID, runID, content, profileCode string,
+	key, userID, conversationID, runID, content, imageURL, profileCode string,
 	profileContext []pi.ContextBlock,
 	events chan vo.RunEventVO,
 ) {
@@ -120,9 +126,13 @@ func (s *Service) executeRun(
 		)
 		listener := newRunListener(runID, events)
 		var err error
+		inputBlocks := []ai.ContentBlock{ai.TextBlock(content)}
+		if imageURL != "" {
+			inputBlocks = append(inputBlocks, ai.ImageBlock(imageURL))
+		}
 		result, err = s.runner.Run(ctx, conversation.RunRequest{
 			UserID: userID, ConversationID: conversationID, RunID: runID,
-			Input:          ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(content)}},
+			Input:          ai.Message{Role: ai.RoleUser, Content: inputBlocks},
 			ResponsePolicy: responsePolicy,
 			Context:        profileContext,
 		}, listener)

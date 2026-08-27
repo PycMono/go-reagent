@@ -48,7 +48,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, listener pi.EventL
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("conversation runner: run canceled: %w", err)
 	}
-	userID, conversationID, inputText, err := validateRunRequest(request)
+	userID, conversationID, inputText, imageURLs, err := validateRunRequest(request)
 	if err != nil {
 		return result, err
 	}
@@ -94,6 +94,7 @@ func (r *runner) Run(ctx context.Context, request RunRequest, listener pi.EventL
 		Input: pi.Message{
 			ContentType: "text",
 			Content:     runtimeInputText,
+			ImageURLs:   imageURLs,
 			SenderType:  "customer",
 		},
 		Context: append([]pi.ContextBlock(nil), request.Context...),
@@ -129,29 +130,58 @@ func (r *runner) Run(ctx context.Context, request RunRequest, listener pi.EventL
 	return runtimeResult, errors.Join(runErr, persistErr)
 }
 
-func validateRunRequest(request RunRequest) (string, string, string, error) {
+func validateRunRequest(request RunRequest) (string, string, string, []string, error) {
 	userID := strings.TrimSpace(request.UserID)
 	conversationID := strings.TrimSpace(request.ConversationID)
 	switch {
 	case userID == "":
-		return "", "", "", errors.New("conversation runner: user ID is required")
+		return "", "", "", nil, errors.New("conversation runner: user ID is required")
 	case conversationID == "":
-		return "", "", "", errors.New("conversation runner: conversation ID is required")
+		return "", "", "", nil, errors.New("conversation runner: conversation ID is required")
 	case request.Input.Role != ai.RoleUser:
-		return "", "", "", fmt.Errorf("conversation runner: input role must be user, got %q", request.Input.Role)
+		return "", "", "", nil, fmt.Errorf("conversation runner: input role must be user, got %q", request.Input.Role)
 	}
-	inputText, err := ai.TextContent(request.Input.Content)
+	inputText, imageURLs, err := canonicalUserContent(request.Input.Content)
 	if err != nil {
-		return "", "", "", fmt.Errorf("conversation runner: input content: %w", err)
-	}
-	if strings.TrimSpace(inputText) == "" {
-		return "", "", "", errors.New("conversation runner: input content must not be empty")
+		return "", "", "", nil, err
 	}
 	if len(request.Input.ToolCalls) != 0 || request.Input.ToolCallID != "" ||
 		request.Input.ToolName != "" || request.Input.IsError {
-		return "", "", "", errors.New("conversation runner: input must not contain tool fields")
+		return "", "", "", nil, errors.New("conversation runner: input must not contain tool fields")
 	}
-	return userID, conversationID, inputText, nil
+	return userID, conversationID, inputText, imageURLs, nil
+}
+
+// canonicalUserContent 校验 user 输入的规范形态：一个非空 text 块在前，
+// 0..N 个 image 块在后；其他形态（无正文、交错混排、image 在前）fail-fast。
+// Provider 归一化层保持保序映射，规范形态只是业务链路的入口约束。
+func canonicalUserContent(content []ai.ContentBlock) (string, []string, error) {
+	if len(content) == 0 {
+		return "", nil, errors.New("conversation runner: input content must not be empty")
+	}
+	if content[0].Type != ai.ContentTypeText {
+		return "", nil, fmt.Errorf("conversation runner: input must start with a text block, got %q", content[0].Type)
+	}
+	if err := content[0].Validate(); err != nil {
+		return "", nil, fmt.Errorf("conversation runner: input content: %w", err)
+	}
+	if strings.TrimSpace(content[0].Text) == "" {
+		return "", nil, errors.New("conversation runner: input text block must not be empty")
+	}
+	var imageURLs []string
+	for index, block := range content[1:] {
+		if err := block.Validate(); err != nil {
+			return "", nil, fmt.Errorf("conversation runner: input content block %d: %w", index+1, err)
+		}
+		if block.Type != ai.ContentTypeImage {
+			return "", nil, fmt.Errorf(
+				"conversation runner: only image blocks may follow the input text block, got %q at index %d",
+				block.Type, index+1,
+			)
+		}
+		imageURLs = append(imageURLs, block.Image.URL)
+	}
+	return content[0].Text, imageURLs, nil
 }
 
 func cloneMessages(messages []ai.Message) []ai.Message {
