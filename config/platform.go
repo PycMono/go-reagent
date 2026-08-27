@@ -3,11 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
 	"strings"
 
-	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 )
 
@@ -84,17 +82,14 @@ func validatePlatform(platform *providers.Options, index int) error {
 	return validatePricing(platform.Pricing, prefix)
 }
 
+// validatePricing 委托 pi 层的价格范围校验（有限、非负、账本可表示），
+// config 不重复实现数值规则。
 func validatePricing(pricing *providers.Pricing, prefix string) error {
 	if pricing == nil {
 		return fmt.Errorf("%s.pricing 不能为空", prefix)
 	}
-	if math.IsNaN(pricing.InputUSDPerMillionTokens) || math.IsInf(pricing.InputUSDPerMillionTokens, 0) ||
-		pricing.InputUSDPerMillionTokens < 0 || pricing.InputUSDPerMillionTokens >= ai.MaxUsageDecimalExclusive {
-		return fmt.Errorf("%s.pricing.input_usd_per_million_tokens 必须是小于 %.0f 的有限非负数", prefix, float64(ai.MaxUsageDecimalExclusive))
-	}
-	if math.IsNaN(pricing.OutputUSDPerMillionTokens) || math.IsInf(pricing.OutputUSDPerMillionTokens, 0) ||
-		pricing.OutputUSDPerMillionTokens < 0 || pricing.OutputUSDPerMillionTokens >= ai.MaxUsageDecimalExclusive {
-		return fmt.Errorf("%s.pricing.output_usd_per_million_tokens 必须是小于 %.0f 的有限非负数", prefix, float64(ai.MaxUsageDecimalExclusive))
+	if err := pricing.Validate(); err != nil {
+		return fmt.Errorf("%s.pricing: %w", prefix, err)
 	}
 	return nil
 }

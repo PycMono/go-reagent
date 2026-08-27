@@ -226,7 +226,7 @@ func messageVO(value *conversationentity.Message) *vo.MessageVO {
 		ToolCalls: make([]vo.ToolCallVO, 0, len(value.Payload.ToolCalls)),
 	}
 	for _, block := range value.Payload.Content {
-		result.Content = append(result.Content, vo.ContentBlockVO{Type: string(block.Type), Text: block.Text})
+		result.Content = append(result.Content, vo.ContentBlockVO{Type: string(block.Type), Text: block.Text, Image: mapDomainImage(block.Image)})
 	}
 	onlySkillReads := len(value.Payload.ToolCalls) > 0
 	for _, call := range value.Payload.ToolCalls {
@@ -240,4 +240,12 @@ func messageVO(value *conversationentity.Message) *vo.MessageVO {
 		return nil
 	}
 	return result
+}
+
+// mapDomainImage 把领域图像内容转为 VO；nil 透传 nil。
+func mapDomainImage(image *conversationentity.ImageContent) *vo.ImageContentVO {
+	if image == nil {
+		return nil
+	}
+	return &vo.ImageContentVO{URL: image.URL}
 }

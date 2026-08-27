@@ -17,7 +17,8 @@ type RunRequest struct {
 	Input Message `json:"input"`
 	// Context 是本轮额外注入的业务上下文。
 	Context []ContextBlock `json:"context,omitempty"`
-	// Limits 是本轮运行的确定性资源上限；全零表示不限制。
+	// Limits 是本轮运行的确定性资源上限；未配置（零值）的字段使用
+	// governor.DefaultLimits 对应字段的默认值。
 	Limits governor.Limits `json:"limits,omitempty"`
 }
 

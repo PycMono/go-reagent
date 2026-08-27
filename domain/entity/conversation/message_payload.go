@@ -9,11 +9,23 @@ import (
 
 type ContentType string
 
-const ContentTypeText ContentType = "text"
+const (
+	ContentTypeText  ContentType = "text"
+	ContentTypeImage ContentType = "image"
+)
 
+// ContentBlock 是消息内容块；联合类型取值与 pi/ai.ContentBlock 对齐：
+// text 块只携带 Text，image 块只携带 Image。
 type ContentBlock struct {
-	Type ContentType `json:"type"`
-	Text string      `json:"text"`
+	Type  ContentType   `json:"type"`
+	Text  string        `json:"text,omitempty"`
+	Image *ImageContent `json:"image,omitempty"`
+}
+
+// ImageContent 表示一个 URL 图像内容。
+type ImageContent struct {
+	// URL 是图像的可访问地址；调用方必须保证推理服务商可访问且生命周期足够长。
+	URL string `json:"url"`
 }
 
 type ToolCall struct {

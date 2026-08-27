@@ -44,6 +44,7 @@
       "apiKey": "",
       "model": "deepseek-chat",
       "contextWindowTokens": 131072,
+      "vision": false,
       "pricing": {
         "input_usd_per_million_tokens": 0.15,
         "output_usd_per_million_tokens": 0.60,
@@ -56,6 +57,7 @@
       "baseURL": "https://open.bigmodel.cn/api/paas/v4/",
       "apiKey": "",
       "model": "glm-4.5-air",
+      "vision": false,
       "pricing": {
         "input_usd_per_million_tokens": 0.15,
         "output_usd_per_million_tokens": 0.60
@@ -67,6 +69,7 @@
       "baseURL": "https://open.bigmodel.cn/api/anthropic/",
       "apiKey": "",
       "model": "glm-4.5-air",
+      "vision": false,
       "pricing": {
         "input_usd_per_million_tokens": 0.15,
         "output_usd_per_million_tokens": 0.60

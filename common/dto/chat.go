@@ -24,4 +24,6 @@ type ListMessagesQuery struct {
 
 type StartRunDTO struct {
 	Content string `json:"content" binding:"required"`
+	// ImageURL 是可选附加的用户图片地址；必须是推理服务商可访问的 http/https URL。
+	ImageURL string `json:"image_url" binding:"omitempty,http_url"`
 }

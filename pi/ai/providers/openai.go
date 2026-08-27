@@ -20,6 +20,7 @@ type OpenAIImpl struct {
 	client openaisdk.Client
 	model  string
 	name   string
+	vision bool
 }
 
 // NewOpenAi creates an OpenAI-compatible provider from one normalized platform profile.
@@ -30,8 +31,9 @@ func NewOpenAi(config Options) ai.Provider {
 			option.WithBaseURL(config.BaseURL),
 			option.WithMaxRetries(0),
 		),
-		model: config.Model,
-		name:  config.ID,
+		model:  config.Model,
+		name:   config.ID,
+		vision: config.Vision,
 	}
 }
 
@@ -40,7 +42,7 @@ func (p *OpenAIImpl) Stream(
 	msgs []ai.Message,
 	availableTools []ai.ToolDefinition,
 ) ai.Stream {
-	openAIMessages, err := toOpenAIMessages(msgs)
+	openAIMessages, err := toOpenAIMessages(msgs, p.vision)
 	if err != nil {
 		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
@@ -179,8 +181,8 @@ func (p *OpenAIImpl) classifyError(err error) error {
 	return classifyError(info)
 }
 
-func toOpenAIMessages(messages []ai.Message) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
-	normalized, err := normalizeMessages(messages)
+func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
+	normalized, err := normalizeMessages(messages, vision)
 	if err != nil {
 		return nil, err
 	}
@@ -188,15 +190,31 @@ func toOpenAIMessages(messages []ai.Message) ([]openaisdk.ChatCompletionMessageP
 	for _, message := range normalized {
 		switch message.role {
 		case ai.RoleSystem:
-			result = append(result, openaisdk.SystemMessage(message.text))
+			text, err := message.text()
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, openaisdk.SystemMessage(text))
 		case ai.RoleUser:
-			result = append(result, openaisdk.UserMessage(message.text))
+			user, err := toOpenAIUserMessage(message)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, user)
 		case ai.RoleTool:
-			result = append(result, openaisdk.ToolMessage(message.text, message.toolCallID))
+			text, err := message.text()
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, openaisdk.ToolMessage(text, message.toolCallID))
 		case ai.RoleAssistant:
+			text, err := message.text()
+			if err != nil {
+				return nil, err
+			}
 			assistant := openaisdk.ChatCompletionAssistantMessageParam{}
-			if message.text != "" {
-				assistant.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{OfString: openaisdk.String(message.text)}
+			if text != "" {
+				assistant.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{OfString: openaisdk.String(text)}
 			}
 			for _, toolCall := range message.toolCalls {
 				assistant.ToolCalls = append(assistant.ToolCalls, openaisdk.ChatCompletionMessageToolCallUnionParam{
@@ -212,6 +230,26 @@ func toOpenAIMessages(messages []ai.Message) ([]openaisdk.ChatCompletionMessageP
 		}
 	}
 	return result, nil
+}
+
+// toOpenAIUserMessage 映射 user 消息为有序 content parts（text + image_url）。
+func toOpenAIUserMessage(message normalizedMessage) (openaisdk.ChatCompletionMessageParamUnion, error) {
+	parts := make([]openaisdk.ChatCompletionContentPartUnionParam, 0, len(message.blocks))
+	for _, block := range message.blocks {
+		switch block.Type {
+		case ai.ContentTypeText:
+			parts = append(parts, openaisdk.ChatCompletionContentPartUnionParam{
+				OfText: &openaisdk.ChatCompletionContentPartTextParam{Text: block.Text},
+			})
+		case ai.ContentTypeImage:
+			parts = append(parts, openaisdk.ChatCompletionContentPartUnionParam{
+				OfImageURL: &openaisdk.ChatCompletionContentPartImageParam{
+					ImageURL: openaisdk.ChatCompletionContentPartImageImageURLParam{URL: block.Image.URL},
+				},
+			})
+		}
+	}
+	return openaisdk.UserMessage(parts), nil
 }
 
 func toOpenAITools(definitions []ai.ToolDefinition) ([]openaisdk.ChatCompletionToolUnionParam, error) {

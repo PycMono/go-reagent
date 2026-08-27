@@ -22,6 +22,9 @@ type Message struct {
 	TalkerName string `json:"talker_name,omitempty"`
 	// Content 是消息正文。
 	Content string `json:"content"`
+	// ImageURLs 是可选附加的图片 URL 列表；正文必填，图片以 image 块追加在
+	// 文本块之后发送给模型。URL 必须为 http/https。
+	ImageURLs []string `json:"image_urls,omitempty"`
 	// ID 是调用方提供的消息标识；不会将其发送给模型。
 	ID string `json:"id,omitempty"`
 	// SenderType 表示消息由 AI 或客户发送。
@@ -55,5 +58,19 @@ func (message Message) Message2AI() (ai.Message, error) {
 			message.SenderType,
 		)
 	}
-	return ai.Message{Role: role, Content: []ai.ContentBlock{ai.TextBlock(message.Content)}}, nil
+
+	content := []ai.ContentBlock{ai.TextBlock(message.Content)}
+	if len(message.ImageURLs) > 0 {
+		if role != ai.RoleUser {
+			return ai.Message{}, fmt.Errorf("%w: only customer messages may attach images", pierrors.ErrRequestInvalid)
+		}
+		for _, imageURL := range message.ImageURLs {
+			block := ai.ImageBlock(imageURL)
+			if err := block.Validate(); err != nil {
+				return ai.Message{}, fmt.Errorf("%w: %v", pierrors.ErrRequestInvalid, err)
+			}
+			content = append(content, block)
+		}
+	}
+	return ai.Message{Role: role, Content: content}, nil
 }

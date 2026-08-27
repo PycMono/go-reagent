@@ -40,12 +40,14 @@
       <form class="qb-chat__composer" id="chatComposer">
         <label class="sr-only" for="chatInput">发送消息</label>
         <textarea class="qb-chat__input" id="chatInput" rows="1" maxlength="12000" placeholder="给 Reagent 发消息" aria-describedby="composerHint"></textarea>
+        <input class="qb-chat__image-url" id="chatImageURL" type="url" inputmode="url"
+               placeholder="图片 URL（可选）" aria-label="图片 URL（可选）" autocomplete="off" spellcheck="false" />
         <button class="qb-chat__send" id="sendBtn" type="submit" aria-label="发送消息">
           <svg class="send-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg>
           <svg class="stop-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
         </button>
       </form>
-      <p class="qb-chat__composer-hint" id="composerHint">Enter 发送 · Shift + Enter 换行 · 回复与工具记录会保存到 MySQL</p>
+      <p class="qb-chat__composer-hint" id="composerHint">Enter 发送 · Shift + Enter 换行 · 可粘贴公网图片 URL · 回复与工具记录会保存到 MySQL</p>
     </div>
   </main>
 </div>

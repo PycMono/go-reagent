@@ -11,15 +11,39 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
-// Limits 保存一次运行的确定性资源上限。每个维度的零值只表示该维度不限制。
+// Limits 保存一次运行的确定性资源上限。任一字段为零（未配置）时由
+// governor.New 回填 DefaultLimits 对应字段的默认值；Limits 不表达
+// "不限制"，运行预算始终存在。
 type Limits struct {
-	// MaxTurns 是外层 Agent turn 上限。0 表示不限制。
+	// MaxTurns 是外层 Agent turn 上限。0 表示使用默认值。
 	MaxTurns int `json:"max_turns,omitempty" yaml:"max_turns" toml:"max_turns"`
-	// MaxCostUSD 是所有已完成且可计量模型调用的累计美元成本上限。0 表示不限制。
+	// MaxCostUSD 是所有已完成且可计量模型调用的累计美元成本上限。0 表示使用默认值。
 	MaxCostUSD float64 `json:"max_cost_usd,omitempty" yaml:"max_cost_usd" toml:"max_cost_usd"`
 	// MaxTotalTokens 是所有已完成且可计量模型调用的
-	// InputTokens + OutputTokens 累计上限。0 表示不限制。
+	// InputTokens + OutputTokens 累计上限。0 表示使用默认值。
 	MaxTotalTokens int64 `json:"max_total_tokens,omitempty" yaml:"max_total_tokens" toml:"max_total_tokens"`
+}
+
+// DefaultLimits 返回各字段未配置时使用的默认运行预算，
+// 与 go-reagent 服务的默认配置（config.example.json）保持一致。
+func DefaultLimits() Limits {
+	return Limits{MaxTurns: 20, MaxCostUSD: 1.0, MaxTotalTokens: 2_000_000}
+}
+
+// withDefaults 逐字段回填默认值：零值字段取 DefaultLimits 对应字段，
+// 已配置字段保持原值。
+func (limits Limits) withDefaults() Limits {
+	defaults := DefaultLimits()
+	if limits.MaxTurns == 0 {
+		limits.MaxTurns = defaults.MaxTurns
+	}
+	if limits.MaxCostUSD == 0 {
+		limits.MaxCostUSD = defaults.MaxCostUSD
+	}
+	if limits.MaxTotalTokens == 0 {
+		limits.MaxTotalTokens = defaults.MaxTotalTokens
+	}
+	return limits
 }
 
 // Validate 校验额度值的固有契约：不允许负数、NaN 或无穷；零值只表示不限制。

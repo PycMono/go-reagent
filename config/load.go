@@ -15,13 +15,33 @@ import (
 	"github.com/jinzhu/configor"
 )
 
+// LoadOption 调整 Load 的校验行为；不传时保持服务端默认。
+type LoadOption func(*loadOptions)
+
+type loadOptions struct {
+	allowProcessCWD bool
+}
+
+// WithAllowProcessCWD 放开 agent.workspace_dir 不能等于进程当前目录的限制。
+// 该规则保护的是"部署中的服务进程目录"（cwd 放着配置与源码），对 CLI 类入口
+// 不成立——用户的工作区恰恰是想让 Agent 操作的项目目录。cmd/server 不传本选项。
+func WithAllowProcessCWD() LoadOption {
+	return func(options *loadOptions) {
+		options.allowProcessCWD = true
+	}
+}
+
 // Load decodes the existing flattened service configuration.
-func Load(path string) (*Config, error) {
+func Load(path string, opts ...LoadOption) (*Config, error) {
+	var options loadOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	var config Config
 	if err := configor.Load(&config, path); err != nil {
 		return nil, fmt.Errorf("加载配置 %s 失败: %w", path, err)
 	}
-	if err := config.normalizeAndValidate(); err != nil {
+	if err := config.normalizeAndValidate(options); err != nil {
 		return nil, fmt.Errorf("加载配置 %s 失败: %w", path, err)
 	}
 	return &config, nil

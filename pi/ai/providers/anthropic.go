@@ -19,6 +19,7 @@ type AnthropicImpl struct {
 	client anthropicsdk.Client
 	model  string
 	name   string
+	vision bool
 }
 
 // NewAnthropic creates an Anthropic-compatible provider from one normalized platform profile.
@@ -29,8 +30,9 @@ func NewAnthropic(config Options) ai.Provider {
 			option.WithBaseURL(config.BaseURL),
 			option.WithMaxRetries(0),
 		),
-		model: config.Model,
-		name:  config.ID,
+		model:  config.Model,
+		name:   config.ID,
+		vision: config.Vision,
 	}
 }
 
@@ -39,7 +41,7 @@ func (p *AnthropicImpl) Stream(
 	msgs []ai.Message,
 	availableTools []ai.ToolDefinition,
 ) ai.Stream {
-	messages, system, err := toAnthropicMessages(msgs)
+	messages, system, err := toAnthropicMessages(msgs, p.vision)
 	if err != nil {
 		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
@@ -190,8 +192,8 @@ func (p *AnthropicImpl) classifyError(err error) error {
 	return classifyError(info)
 }
 
-func toAnthropicMessages(messages []ai.Message) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {
-	normalized, err := normalizeMessages(messages)
+func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {
+	normalized, err := normalizeMessages(messages, vision)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -200,17 +202,38 @@ func toAnthropicMessages(messages []ai.Message) ([]anthropicsdk.MessageParam, []
 	for _, message := range normalized {
 		switch message.role {
 		case ai.RoleSystem:
-			system = append(system, anthropicsdk.TextBlockParam{Text: message.text})
+			text, err := message.text()
+			if err != nil {
+				return nil, nil, err
+			}
+			system = append(system, anthropicsdk.TextBlockParam{Text: text})
 		case ai.RoleUser:
-			result = append(result, anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(message.text)))
+			var blocks []anthropicsdk.ContentBlockParamUnion
+			for _, block := range message.blocks {
+				switch block.Type {
+				case ai.ContentTypeText:
+					blocks = append(blocks, anthropicsdk.NewTextBlock(block.Text))
+				case ai.ContentTypeImage:
+					blocks = append(blocks, anthropicsdk.NewImageBlock(anthropicsdk.URLImageSourceParam{URL: block.Image.URL}))
+				}
+			}
+			result = append(result, anthropicsdk.NewUserMessage(blocks...))
 		case ai.RoleTool:
+			text, err := message.text()
+			if err != nil {
+				return nil, nil, err
+			}
 			result = append(result, anthropicsdk.NewUserMessage(
-				anthropicsdk.NewToolResultBlock(message.toolCallID, message.text, message.isError),
+				anthropicsdk.NewToolResultBlock(message.toolCallID, text, message.isError),
 			))
 		case ai.RoleAssistant:
+			text, err := message.text()
+			if err != nil {
+				return nil, nil, err
+			}
 			var blocks []anthropicsdk.ContentBlockParamUnion
-			if message.text != "" {
-				blocks = append(blocks, anthropicsdk.NewTextBlock(message.text))
+			if text != "" {
+				blocks = append(blocks, anthropicsdk.NewTextBlock(text))
 			}
 			for _, toolCall := range message.toolCalls {
 				blocks = append(blocks, anthropicsdk.NewToolUseBlock(toolCall.id, toolCall.input, toolCall.name))

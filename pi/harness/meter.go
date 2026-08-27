@@ -19,6 +19,11 @@ const (
 	DefaultSummaryInputMaxBytes = 32 * 1024
 	DefaultRetainRecentUnits    = 5
 
+	// DefaultImageTokens 是单个 URL 图像块的固定 token 估算。无像素尺寸
+	// 信息时按字节换算会严重高估，1024 为量级正确的近似；reactive overflow
+	// 兜底仍然生效。
+	DefaultImageTokens = 1024
+
 	bytesPerTokenHeuristic = 4
 )
 
@@ -75,7 +80,9 @@ type visibleTool struct {
 }
 
 // VisibleMessagesBytes 返回消息列表模型可见投影的 JSON 序列化字节数。
-// 摘要输入与压缩范围选择使用同一投影口径。
+// 摘要输入、压缩范围选择与 TokenMeter 计量使用同一投影口径。图像块额外
+// 累加 DefaultImageTokens 折算的虚拟字节，使 Estimate、压缩范围选择与
+// 收敛检查共用同一图像权重。
 func VisibleMessagesBytes(messages []ai.Message) int {
 	total := 0
 	for _, message := range messages {
@@ -85,8 +92,12 @@ func VisibleMessagesBytes(messages []ai.Message) int {
 			IsError:    message.IsError,
 		}
 		for _, block := range message.Content {
-			if block.Type == ai.ContentTypeText {
+			switch block.Type {
+			case ai.ContentTypeText:
 				projected.Text += block.Text
+			case ai.ContentTypeImage:
+				projected.Text += ai.ImagePlaceholderText(block.Image.URL)
+				total = saturatingAddInt(total, DefaultImageTokens*bytesPerTokenHeuristic)
 			}
 		}
 		for _, call := range message.ToolCalls {
@@ -114,6 +125,7 @@ func VisibleToolsBytes(definitions ai.ToolDefinitions) int {
 
 // MarshalVisibleMessages 返回消息列表模型可见投影的 JSON；
 // 摘要输入使用与计量一致的投影口径，不包含 Usage 等内部字段。
+// 图像块投影为脱敏占位文本，摘要"看得见"图像存在，但不含虚拟字节。
 func MarshalVisibleMessages(messages []ai.Message) ([]byte, error) {
 	projected := make([]visibleMessage, 0, len(messages))
 	for _, message := range messages {
@@ -123,8 +135,11 @@ func MarshalVisibleMessages(messages []ai.Message) ([]byte, error) {
 			IsError:    message.IsError,
 		}
 		for _, block := range message.Content {
-			if block.Type == ai.ContentTypeText {
+			switch block.Type {
+			case ai.ContentTypeText:
 				next.Text += block.Text
+			case ai.ContentTypeImage:
+				next.Text += ai.ImagePlaceholderText(block.Image.URL)
 			}
 		}
 		for _, call := range message.ToolCalls {

@@ -40,7 +40,8 @@ func TestGovernorCountsEachInvocationOnce(t *testing.T) {
 }
 
 func TestGovernorRejectsTokenOverflow(t *testing.T) {
-	governor := New(Limits{})
+	// 预算必须足够大：本用例测的是累计溢出，不是预算触顶。
+	governor := New(Limits{MaxTotalTokens: math.MaxInt64})
 	usage := ai.Usage{
 		PlatformID: "test", Model: "model",
 		InputTokens: math.MaxInt64 - 1,
@@ -55,7 +56,8 @@ func TestGovernorRejectsTokenOverflow(t *testing.T) {
 }
 
 func TestGovernorCompensatedCostSummation(t *testing.T) {
-	governor := New(Limits{})
+	// 预算必须高于累计总额：1000 次 × 0.001 = $1.0，默认 $1 会触顶。
+	governor := New(Limits{MaxCostUSD: 2})
 	usage := ai.Usage{
 		PlatformID: "test", Model: "model",
 		InputTokens:                   1000,
@@ -100,5 +102,23 @@ func TestTerminationFromErrorLoopDetected(t *testing.T) {
 	canceled := errors.Join(context.Canceled, loopErr)
 	if got := TerminationFromError(canceled, Totals{}); got.Reason != TerminationCanceled {
 		t.Fatalf("reason = %q, want canceled priority over loop error", got.Reason)
+	}
+}
+
+func TestNewAppliesDefaultLimits(t *testing.T) {
+	// 整体未配置：回填全部默认预算。
+	if got := New(Limits{}).limits; got != DefaultLimits() {
+		t.Fatalf("limits = %#v, want %#v", got, DefaultLimits())
+	}
+	// 逐字段默认：已配置字段保持原值，零值字段回填默认。
+	partial := New(Limits{MaxCostUSD: 0.5}).limits
+	want := Limits{MaxTurns: 20, MaxCostUSD: 0.5, MaxTotalTokens: 2_000_000}
+	if partial != want {
+		t.Fatalf("limits = %#v, want %#v", partial, want)
+	}
+	// 全部显式配置：不触碰。
+	full := Limits{MaxTurns: 5, MaxCostUSD: 0.1, MaxTotalTokens: 1000}
+	if got := New(full).limits; got != full {
+		t.Fatalf("limits = %#v, want %#v", got, full)
 	}
 }

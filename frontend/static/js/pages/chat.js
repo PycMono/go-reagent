@@ -62,6 +62,7 @@ const ui = {
   runStatus: document.getElementById("runStatus"),
   composer: document.getElementById("chatComposer"),
   input: document.getElementById("chatInput"),
+  imageURL: document.getElementById("chatImageURL"),
   send: document.getElementById("sendBtn"),
   toast: document.getElementById("toast"),
 };
@@ -483,6 +484,10 @@ function createMessageElement(message) {
   const blocks = Array.isArray(message.content) ? message.content : [];
   if (role !== "tool") {
     blocks.forEach(function (block) {
+      if (block.type === "image" && block.image && block.image.url) {
+        content.appendChild(createImageBlock(block.image.url));
+        return;
+      }
       const text = document.createElement("div");
       text.className = "qb-chat__message-body";
       renderMessageContent(text, block.text || "");
@@ -512,6 +517,28 @@ function createMessageElement(message) {
   inner.append(avatar, content);
   article.appendChild(inner);
   return article;
+}
+
+// createImageBlock 渲染用户图片：no-referrer 避免把当前页面地址通过
+// Referer 发给图片服务；加载失败回退为占位框。
+function createImageBlock(url) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "qb-chat__message-image";
+  const image = document.createElement("img");
+  image.loading = "lazy";
+  image.referrerPolicy = "no-referrer";
+  image.alt = "用户图片";
+  image.src = url;
+  const fallback = document.createElement("div");
+  fallback.className = "qb-chat__image-fallback";
+  fallback.textContent = "图片无法加载";
+  fallback.hidden = true;
+  image.addEventListener("error", function () {
+    image.hidden = true;
+    fallback.hidden = false;
+  });
+  wrapper.append(image, fallback);
+  return wrapper;
 }
 
 function createToolRecord(label, value, isError, className) {
@@ -628,19 +655,21 @@ function addActivity(key, label, details) {
   ui.runStatus.scrollTop = ui.runStatus.scrollHeight;
 }
 
-async function startRun(content) {
+async function startRun(content, imageURL) {
   chatStream.discard();
   resetActivity();
   setRunning(true);
   state.runAbort = new AbortController();
   let terminal = false;
+  const payload = { content: content };
+  if (imageURL) payload.image_url = imageURL;
   try {
     const response = await fetch(
       API_ROOT + "/" + encodeURIComponent(state.currentConversationId) + "/runs",
       {
         method: "POST",
         headers: { "Accept": "text/event-stream", "Content-Type": "application/json" },
-        body: JSON.stringify({ content: content }),
+        body: JSON.stringify(payload),
         signal: state.runAbort.signal,
       }
     );
@@ -760,16 +789,20 @@ ui.composer.addEventListener("submit", async function (event) {
   }
   const content = ui.input.value.trim();
   if (!content) return;
+  const imageURL = (ui.imageURL ? ui.imageURL.value : "").trim();
   try {
     if (!state.currentConversationId) await createConversation();
+    const userBlocks = [{ type: "text", text: content }];
+    if (imageURL) userBlocks.push({ type: "image", image: { url: imageURL } });
     appendMessage({
       role: "user",
-      content: [{ type: "text", text: content }],
+      content: userBlocks,
       created_at: new Date().toISOString(),
     }, true);
     ui.input.value = "";
+    if (ui.imageURL) ui.imageURL.value = "";
     resizeComposer();
-    await startRun(content);
+    await startRun(content, imageURL);
   } catch (error) {
     showToast("消息发送失败：" + error.message);
     setRunning(false);

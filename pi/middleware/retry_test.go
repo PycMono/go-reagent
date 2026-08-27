@@ -127,3 +127,28 @@ func TestRetryRerunsSuffixWithFreshTimeout(t *testing.T) {
 		t.Fatalf("Err = %v, want nil", e.Err)
 	}
 }
+
+func TestRetryClampsAttemptsToMax(t *testing.T) {
+	calls := 0
+	e := newExecution(flakyTool("mcp_search", 99, &calls))
+
+	runChain(e, Retry(99, time.Millisecond, []string{"mcp_search"}), ExecuteTool)
+
+	if calls != MaxRetryAttempts {
+		t.Fatalf("calls = %d, want %d（attempts 钳制到上限）", calls, MaxRetryAttempts)
+	}
+}
+
+func TestRetryWhitelistTrimsNames(t *testing.T) {
+	calls := 0
+	e := newExecution(flakyTool("mcp_search", 1, &calls))
+
+	runChain(e, Retry(2, time.Millisecond, []string{" mcp_search ", "  "}), ExecuteTool)
+
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2（白名单空白修剪后命中）", calls)
+	}
+	if e.Err != nil {
+		t.Fatalf("Err = %v, want nil", e.Err)
+	}
+}

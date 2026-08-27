@@ -245,8 +245,19 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 		{name: "non-user input", mutate: func(r *RunRequest) { r.Input.Role = ai.RoleAssistant }, want: "input role"},
 		{name: "empty input", mutate: func(r *RunRequest) { r.Input.Content = nil }, want: "input content"},
 		{name: "unsupported content", mutate: func(r *RunRequest) {
-			r.Input.Content = []ai.ContentBlock{{Type: "image", Text: "private content"}}
+			r.Input.Content = []ai.ContentBlock{ai.TextBlock("看图"), {Type: "audio", Text: "private content"}}
 		}, want: "unsupported content type"},
+		{name: "image first", mutate: func(r *RunRequest) {
+			r.Input.Content = []ai.ContentBlock{ai.ImageBlock("https://example.com/a.png"), ai.TextBlock("看图")}
+		}, want: "must start with a text block"},
+		{name: "interleaved blocks", mutate: func(r *RunRequest) {
+			r.Input.Content = []ai.ContentBlock{
+				ai.TextBlock("看图"), ai.ImageBlock("https://example.com/a.png"), ai.TextBlock("再看"),
+			}
+		}, want: "only image blocks may follow"},
+		{name: "invalid image url", mutate: func(r *RunRequest) {
+			r.Input.Content = []ai.ContentBlock{ai.TextBlock("看图"), ai.ImageBlock("ftp://example.com/a.png")}
+		}, want: "http or https"},
 		{name: "tool calls", mutate: func(r *RunRequest) {
 			r.Input.ToolCalls = []ai.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{}`)}}
 		}, want: "tool fields"},
@@ -266,6 +277,30 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 				t.Fatalf("Run() error leaks input content: %v", err)
 			}
 		})
+	}
+}
+
+func TestRunnerForwardsImageURLsToRuntime(t *testing.T) {
+	store := &runnerStoreFake{conversation: conversationentity.Conversation{
+		ConversationID: "conversation", UserID: "user",
+	}}
+	runtime := &runnerRuntimeFake{result: pi.RunResult{NewMessages: []ai.Message{{
+		Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")},
+	}}}}
+	request := validConversationRunRequest()
+	request.Input = ai.Message{Role: ai.RoleUser, Content: []ai.ContentBlock{
+		ai.TextBlock("看图"),
+		ai.ImageBlock("https://example.com/a.png"),
+		ai.ImageBlock("https://example.com/b.png"),
+	}}
+
+	_, err := NewRunner(runtime, store, 100, governor.Limits{}).Run(context.Background(), request, nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	imageURLs := runtime.request.Input.ImageURLs
+	if len(imageURLs) != 2 || imageURLs[0] != "https://example.com/a.png" || imageURLs[1] != "https://example.com/b.png" {
+		t.Fatalf("runtime input ImageURLs = %v, want both URLs in order", imageURLs)
 	}
 }
 
