@@ -16,6 +16,8 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 
 本次不是新建第二套 MCP Runtime，也不以第三方 MCP SDK 替换现有 HTTP Client。HTTP 与 stdio 只在 Transport 和进程生命周期处不同；initialize、tools/list、tools/call、工具命名、白名单校验和错误包装保持同一条路径。
 
+设计以简单为优先：只增加 stdio 必需的进程、JSONL、响应路由和关闭能力；不为停止读取 stdin、主动发起 Client Request 等不兼容 Server 行为增加额外并发子系统。
+
 ## 目标
 
 - 连接通过本地可执行程序启动的标准 MCP stdio Server。
@@ -23,7 +25,7 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 - 支持多个并发 `tools/call`，按 JSON-RPC ID 正确路由乱序响应。
 - 把 HTTP 与 stdio 收敛为一套显式、无默认分支的 Transport 配置契约。
 - 保持 MCP Server 启动期初始化、工具发现和必需工具 fail-fast 语义。
-- 在请求取消、Server 异常退出和应用停止时确定性释放子进程及其后代。
+- 请求取消时确定性移除对应 pending；Server 异常退出和应用停止时确定性释放子进程及其后代。
 - 配置错误、进程错误和协议错误不得泄漏环境变量值、请求参数或工具结果。
 - 在 Linux、macOS 和 Windows 上提供等价的子进程树清理语义。
 
@@ -39,7 +41,7 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 - tools/list change notification 驱动的 Registry 热替换；
 - shell 命令字符串、管道、重定向或 shell 插值；
 - 用第三方 Go MCP SDK 替换现有协议实现；
-- 改变 `required: true`、`allow_tools` 或 `tool_prefix` 的现有产品语义。
+- 改变 `required: true`、`allow_tools` 或 `tool_prefix` 的现有产品语义；
 - 为当前仓库内尚未稳定发布的 MCP 配置或 Go 构造 API 保留兼容层。
 
 ## 参考与约束来源
@@ -50,6 +52,8 @@ Pi Coding Agent 本身把 MCP 保持在 Extension 边界之外，pi.dev 收录�
 - Pi MCP Adapter 配置与实现：<https://github.com/nicobailon/pi-mcp-adapter>
 
 参考内容用于确认标准线路和生态配置习惯，不形成对 TypeScript 实现或其完整功能集的兼容承诺。
+
+Transport 规则参考 2025-06-18 规范，Client 声明的 MCP Feature 协议版本仍为仓库已实现的 `2025-03-26`。两者相互独立；本文不会因为引用较新的 Transport 文档而隐式引入较新 Feature。
 
 ## 总体架构
 
@@ -159,6 +163,7 @@ type MCPServerConfig struct {
 ### command、args 和 cwd
 
 - `command` 是单个可执行文件名或路径，使用 `exec.Command` 类 API 直接启动，不经过 shell。
+- 不含路径分隔符的 `command` 通过 go-reagent 父进程的 `PATH` 查找；包含路径分隔符的相对 `command` 按配置归一化后的 `cwd` 解析。
 - `args` 每个元素原样作为一个 argv 传递，不做分词、变量展开、通配符展开或命令替换。
 - `command`、`args` 和 `cwd` 拒绝 NUL 字节。
 - `cwd` 为空时继承 go-reagent 进程工作目录。
@@ -176,6 +181,8 @@ type MCPServerConfig struct {
 - 完整引用 `${NAME}`：从父进程环境读取 `NAME`，不存在或为空时配置加载失败。
 
 本期不支持字符串中的部分插值，例如 `prefix-${NAME}`，也不支持 `$NAME`、`$env:NAME` 或命令取密。错误只可包含环境变量名称，不可包含解析后的值。配置结构和 Extension Options 不得通过 `%#v` 等方式整体写入日志。
+
+环境引用沿用现有 `header_env` 模式：config Load 期检查引用存在且非空，Driver 装配期读取实际值并合并到子进程环境。两处使用同一套“存在且非空”规则；如果装配时值已不存在或为空，仍然 fail-fast，且错误不得包含实际值。
 
 ## Transport 创建与 Extension Options
 
@@ -257,11 +264,12 @@ type StdioTransport struct {
 实际实现可把状态、进程和 pending 字段拆为更小的内部结构，但必须保持以下职责边界：
 
 - `stateMu` 只保护启动、关闭和最终错误状态；
-- `writeMu` 保证一条 JSON-RPC 消息及其换行被原子写入；
+- `writeMu` 保证一条 JSON-RPC 消息及其换行写完后，下一条消息才能开始；
 - `pendingMu` 只保护 ID 到响应通道的映射；
 - stdout 只有一个 reader goroutine；
 - `cmd.Wait` 只有一个所有者，任何关闭路径都等待同一个 `done`；
-- 不在持锁状态下等待子进程、执行阻塞 I/O 或向 pending channel 发送。
+- `stateMu` 和 `pendingMu` 内不执行 I/O 或 channel 发送；stdin 写入是 `writeMu` 内唯一允许的预期短暂阻塞操作；
+- `Close` 不获取 `writeMu`，可以直接关闭 stdin 并终止进程，从而解除正在进行的阻塞写入。
 
 ## 状态机
 
@@ -291,13 +299,15 @@ new ── first Send ──► starting ── started ──► running
 
 ### 写入
 
-每条 `Request` 使用 `json.Marshal` 编码。编码结果必须是有效 UTF-8 JSON 且自身不含原始换行；随后在同一次受 `writeMu` 保护的写入中追加一个 `\n`。禁止向 stdin 写入日志、诊断文本或其他非 MCP 内容。
+每条 `Request` 使用 `json.Marshal` 编码。编码结果必须是有效 UTF-8 JSON 且自身不含原始换行；随后追加一个 `\n`，在同一次受 `writeMu` 保护的 `writeFull` 循环中写完。禁止向 stdin 写入日志、诊断文本或其他非 MCP 内容。
 
 Go JSON Encoder 会把字符串内部换行编码为 `\n` 转义，因此不会违反“消息不得包含内嵌换行”的 Transport 要求。
 
+stdin pipe 不支持 `SetWriteDeadline`。为保持实现简单，本期不增加 writer goroutine、写队列或 Transport 级写超时：如果 Server 停止读取 stdin 且 pipe 已满，当前 Send 和等待 `writeMu` 的后续 Send 可能阻塞，直至 Server 退出、Transport 被关闭或应用停止。这是已知限制；`Close` 关闭 stdin 并终止进程后，阻塞写会返回。
+
 ### 读取
 
-stdout 按换行切分，每一行都必须解码为一个 JSON-RPC message；空行同样属于非法协议输出。最大单条消息与 HTTP 响应上限保持一致，为 16 MiB。超过上限、非法 UTF-8、非 JSON 内容、非法 JSON-RPC 版本或无法分类的消息均视为 Transport 级协议错误。EOF 前最后一条消息如果没有换行也按完整消息解码，随后再处理进程退出。
+stdout 按换行切分，每个非空行必须解码为一个 JSON-RPC message。最大单条消息与 HTTP 响应上限保持一致，为 16 MiB。超过上限、非法 UTF-8、空白外的非 JSON 内容或非法 JSON-RPC 版本均视为 Transport 级协议错误。EOF 前最后一条消息即使没有结尾换行也按完整消息解码：此时流已经结束，不存在与下一条消息粘连的歧义，也符合 Go 行扫描器的自然行为。
 
 Transport 级错误会：
 
@@ -322,9 +332,9 @@ Transport 级错误会：
 
 必须先注册 pending 再写入，防止 Server 极快响应时丢失消息。reader 收到 Response 后，在锁内取得并删除对应 pending 项，解锁后再发送结果。Server 可以乱序返回响应，不影响调用结果归属。
 
-调用方取消或单次 Timeout 只移除该请求，不关闭共享进程。之后到达的迟到响应因找不到 pending ID 而被丢弃。取消不会向 Server 发送 `notifications/cancelled`；该能力不在本期范围内。
+写入完成后，调用方取消或单次 Timeout 只移除该请求，不关闭共享进程。之后到达的迟到响应因找不到 pending ID 而被丢弃。取消不会向 Server 发送 `notifications/cancelled`；该能力不在本期范围内。
 
-未知响应 ID 可能来自已取消请求，记录无内容的 Debug 计数即可，不视为 Transport 失败。
+只有能无损解析为 `int64` 且命中 pending 的 Response ID 才参与路由。无法解析为 `int64`、超出范围或未命中 pending 的 ID 统一按未知响应处理：记录不含消息内容的 Debug 计数并丢弃，不使 Transport 失败；对应调用最终由自身 Timeout 收敛。
 
 ## Notification 与 Server-to-client 消息
 
@@ -333,13 +343,9 @@ Transport 级错误会：
 stdout reader 对 Server 发来的消息按以下策略处理：
 
 - Response：按 ID 路由给 pending 请求；
-- Notification：验证为合法 JSON-RPC 后忽略；不得阻塞 reader；
-- `ping` Request：返回同一 ID、空对象 result；
-- 其他 Server Request：返回 JSON-RPC `-32601 Method not found`。
+- Notification 或 Server Request：验证为合法 JSON-RPC 后忽略，不得阻塞 reader。
 
-为响应 Server Request，需要增加只用于 stdio wire 层的 message envelope，其 ID 使用 `json.RawMessage`，从而能原样回传规范允许的整数或字符串 ID。现有出站 `Request` 和入站业务 `Response` 仍可保持整数 ID，不扩大 Client API。
-
-此策略保证不支持 sampling、elicitation 等能力时明确失败，而不是让 Server 永久等待；它不表示本期支持这些能力。
+Client 在 initialize 中声明空 capabilities，因此兼容 Server 不应发起 sampling、elicitation 等请求。本期不实现 server-to-client responder，也不回应 ping；不兼容 Server 可能自行等待超时。以后真正支持某项 Client Capability 时，再连同对应 Request/Response 路由一起设计。
 
 ## stderr
 
@@ -350,11 +356,13 @@ Server 可以向 stderr 写 UTF-8 日志。Transport 必须用固定大小的读
 ## Timeout 与 Context
 
 - `timeout <= 0` 使用现有 `DefaultTimeout`，即 60 秒。
-- Timeout 是每次 `Send` 的期限，包括 initialize、tools/list 和 tools/call，不是 Server 进程总寿命。
+- Timeout 是正常协议路径中每次 `Send` 等待响应的期限，包括 initialize、tools/list 和 tools/call，不是 Server 进程总寿命。
 - 调用方已有更早 Deadline 时，以更早 Deadline 为准。
+- Send 在开始写入前检查 Context；一旦进入 pipe Write，取消能力受下面的已知限制约束。
 - 首次 `initialize` 在启动或握手期间取消时，本次 Extension 注册失败，并关闭刚启动的 Transport。
-- 运行期单次 tools/call 取消不终止 Server，其他并发调用可继续。
-- `Close(ctx)` 尊重调用方 Deadline；强制终止子进程后仍需启动一个独立的有界 reap 等待，避免僵尸进程。
+- 运行期单次 tools/call 在写入完成后取消，不终止 Server，其他并发调用可继续。
+- Timeout 约束响应等待，不保证打断已进入的阻塞 stdin Write；该例外见“写入”一节的已知限制。
+- `Close(ctx)` 尊重调用方 Deadline；强制终止子进程后由既有 wait goroutine 完成 `cmd.Wait`，不再创建额外 reap goroutine。
 
 ## 子进程生命周期
 
@@ -391,7 +399,9 @@ Server 可以向 stderr 写 UTF-8 日志。Transport 必须用固定大小的读
 新增 MCP 专用的小型平台文件：
 
 - Unix：启动时设置独立 process group，强制关闭时向负 PID 发送 `SIGKILL`；
-- Windows：优先使用 Job Object；若本期不引入 Job Object 实现，则沿用仓库已验证的 `taskkill /PID <pid> /T /F`，失败后再 `Process.Kill`。
+- Windows：沿用仓库现有的 `taskkill /PID <pid> /T /F`，失败后再 `Process.Kill`。
+
+Windows 的 `taskkill` 存在“目标退出后 PID 被复用”的理论竞态。本期接受该仓库既有限制，不为 stdio 单独引入 Job Object 生命周期层；调用强杀前必须先确认当前 `done` 尚未关闭，并立即使用启动时保存的 PID。原生 Job Object 仍作为后续平台加固项。
 
 `pi/mcp` 不依赖 `pi/harness/tools.ProcessSupervisor`。后者面向 Agent 可调用的长期 shell 任务，会合并 stdout/stderr 并绑定 Workspace；stdio Transport 要求严格区分协议 stdout 和日志 stderr，生命周期也由 MCP Client 独占。可以复用其平台策略，但不能复用其会话模型。
 
@@ -457,16 +467,26 @@ stdio 配置等价于授权 go-reagent 以自身操作系统身份执行指定�
 
 ## 可观测性
 
-本期不新增包含 MCP payload 的日志或 Span。现有 Client/Tool 侧观测保持不变；stdio Transport 可记录以下低基数字段：
+本期不新增包含 MCP payload 的日志或 Span。现有 Client/Tool 侧观测保持不变；stdio Transport 只允许记录以下低基数属性：
 
 - transport：`stdio`；
 - MCP Server 配置名称；
 - operation/method；
-- outcome；
-- duration；
-- exit code（存在时）。
+- outcome。
+
+`duration` 作为耗时测量值记录，不作为属性。进程异常退出时可以把 exit code 作为数值错误字段记录，但不宣称它是低基数属性。
 
 禁止记录 command line、cwd、env、JSON-RPC params/result 和 stderr。stdio 没有 HTTP Client Span，不伪造网络 Span；若未来增加 MCP 协议 Span，应与全局 OTel 规范单独统一，避免与 Tool Span 重复。
+
+## 已知限制
+
+为避免给首期 Transport 增加额外并发和平台子系统，明确接受以下限制：
+
+- Server 停止读取 stdin 且 pipe 已满时，当前 Send 和等待写锁的后续 Send 会阻塞，直到 Server 退出或 Transport/Application 关闭；
+- 无法路由的 Response ID 和所有 server-to-client Request 会被忽略，相关一方只能依靠自身 Timeout 收敛；
+- Windows 强制清理沿用 `taskkill`，仍有进程退出后 PID 被快速复用的理论竞态。
+
+这些限制只影响不兼容或失常 Server，不为其增加 writer 队列、Client Capability responder 或 Windows Job Object。若真实使用中出现可复现问题，再按对应场景单独演进。
 
 ## 文件布局
 
@@ -481,7 +501,6 @@ config/
 pi/mcp/
 ├── extension.go                    # 注入 Transport，不再固定构造 HTTP
 ├── extension_test.go               # Transport 必填与公共扩展行为
-├── protocol.go                     # stdio wire envelope / server response 类型
 ├── transport_stdio.go              # framing、pending 路由、状态机与生命周期
 ├── transport_stdio_test.go         # helper-process 集成式单元测试
 ├── transport_stdio_process_unix.go # Unix 进程组
@@ -495,7 +514,7 @@ config.example.json                 # Exa 显式 http，并增加 disabled stdio
 README.md                           # MCP Transport 能力说明
 ```
 
-如果 Windows Job Object 需要新增依赖或较多平台代码，应在实现计划中作为独立任务评估；不允许因此削弱 Unix 清理或跳过 Windows 测试编译。
+本期不为 Windows Job Object 保留实现分支；实现计划只覆盖 `taskkill` 路径和 Windows 编译/运行验证。
 
 ## 测试策略
 
@@ -512,6 +531,7 @@ README.md                           # MCP Transport 能力说明
 - env 名称非法失败；
 - `${ENV}` 不存在或为空失败且错误不含其他环境值；
 - literal env 原样保留；
+- `${ENV}` 在 Load 后被 unset 或置空时，Driver 装配仍 fail-fast 且错误不含原值；
 - cwd 归一化、缺失、非目录和 NUL 失败；
 - 禁用 Server 延续不校验行为；
 - 错误不得泄漏测试 secret。
@@ -526,16 +546,18 @@ README.md                           # MCP Transport 能力说明
 - JSONL 每条消息单行且 UTF-8；
 - 两个及以上并发请求乱序返回，结果仍按 ID 对应；
 - notification 写入后立即返回；
+- Server 不读取 stdin 时，`Close` 能关闭 pipe、终止进程并解除阻塞 Send；
 - Server notification 不阻塞 reader；
-- Server ping 得到空 result；
-- 未知 Server Request 得到 `-32601`；
+- Server Request（包括 ping）被忽略且不阻塞 reader；
 - Context 取消只取消对应请求，其他请求仍成功；
 - 迟到响应被安全丢弃；
+- 未知、字符串、浮点、null、缺失和越界 Response ID 被丢弃，由对应请求 Timeout 收敛；
 - 单次 Timeout 保留 `context.DeadlineExceeded`；
 - stderr 大量输出不会阻塞协议，且错误不包含 stderr secret；
 - stdout 非 JSON、错误 JSON-RPC 版本、超大行导致 Transport 失败；
+- stdout EOF 前最后一条未换行消息仍可正常解码；
 - Server 异常退出使全部 pending 失败；
-- 并发 Send 与 Close 不死锁、不 panic、不重复 Wait；
+- Server 正常读取 stdin 时，并发 Send 与 Close 不死锁、不 panic、不重复 Wait；
 - Close 先 EOF，Server 不退出时强制终止进程树；
 - Close 幂等；
 - 创建后从未 Send 的 Transport 可无副作用关闭；
@@ -584,7 +606,7 @@ git diff --check
 
 - 配置一个遵守 MCP stdio 的本地 Server 后，应用在开始提供服务前完成 initialize 和 tools/list。
 - `allow_tools` 中的工具以现有 proxyTool 形式出现在 Registry，并可完成 tools/call。
-- 并发 tools/call 即使乱序响应也不会串包、泄漏或死锁。
+- 对正常读取 stdin 的标准 Server，并发 tools/call 即使乱序响应也不会串包、泄漏或死锁。
 - stdout 严格按 JSONL 处理，stderr 不污染协议且不会造成 pipe 背压。
 - 单次请求取消不影响其他并发请求；应用停止和 Transport 失败不会遗留子进程或僵尸进程。
 - HTTP MCP 单元测试和 Exa opt-in 集成测试迁移到显式 `transport: "http"` 后保持原有运行行为。
