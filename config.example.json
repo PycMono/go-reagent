@@ -22,6 +22,7 @@
         "name": "exa",
         "enabled": true,
         "required": true,
+        "transport": "http",
         "url": "https://mcp.exa.ai/mcp",
         "timeout": 60,
         "header_env": {
@@ -32,6 +33,28 @@
           "web_fetch_exa"
         ],
         "tool_prefix": ""
+      },
+      {
+        "name": "filesystem",
+        "enabled": false,
+        "required": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "./workspaces/chat"
+        ],
+        "env": {
+          "LOG_LEVEL": "warn"
+        },
+        "cwd": "./workspaces/chat",
+        "timeout": 60,
+        "allow_tools": [
+          "read_file",
+          "list_directory"
+        ],
+        "tool_prefix": "fs"
       }
     ]
   },

@@ -153,7 +153,8 @@ func validateRunRequest(request RunRequest) (string, string, string, []string, e
 }
 
 // canonicalUserContent 校验 user 输入的规范形态：一个非空 text 块在前，
-// 0..N 个 image 块在后；其他形态（无正文、交错混排、image 在前）fail-fast。
+// 0..N 个 image 块在后（数量受 pi.MaxImagesPerMessage 约束）；其他形态
+// （无正文、交错混排、image 在前、图片超限）fail-fast。
 // Provider 归一化层保持保序映射，规范形态只是业务链路的入口约束。
 func canonicalUserContent(content []ai.ContentBlock) (string, []string, error) {
 	if len(content) == 0 {
@@ -181,6 +182,12 @@ func canonicalUserContent(content []ai.ContentBlock) (string, []string, error) {
 		}
 		imageURLs = append(imageURLs, block.Image.URL)
 	}
+	if len(imageURLs) > pi.MaxImagesPerMessage {
+		return "", nil, fmt.Errorf(
+			"conversation runner: at most %d images per message, got %d",
+			pi.MaxImagesPerMessage, len(imageURLs),
+		)
+	}
 	return content[0].Text, imageURLs, nil
 }
 
@@ -197,7 +204,7 @@ func cloneMessages(messages []ai.Message) []ai.Message {
 
 func cloneMessage(message ai.Message) ai.Message {
 	cloned := message
-	cloned.Content = append([]ai.ContentBlock(nil), message.Content...)
+	cloned.Content = ai.CloneBlocks(message.Content)
 	if message.Usage != nil {
 		usage := *message.Usage
 		cloned.Usage = &usage

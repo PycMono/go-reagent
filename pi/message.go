@@ -8,6 +8,11 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
+// MaxImagesPerMessage 是单条消息允许附加的图片数量上限。每张图按固定
+// token 常量参与计量与压缩规划（4 张 ≈ 16KB 虚拟字节），超限会破坏压缩
+// unit 边界；入口在 Message2AI 处 fail-fast。
+const MaxImagesPerMessage = 4
+
 // Message 表示调用方传入的一条业务消息。
 type Message struct {
 	// ContentType 表示消息内容类型，目前仅支持 text。
@@ -63,6 +68,10 @@ func (message Message) Message2AI() (ai.Message, error) {
 	if len(message.ImageURLs) > 0 {
 		if role != ai.RoleUser {
 			return ai.Message{}, fmt.Errorf("%w: only customer messages may attach images", pierrors.ErrRequestInvalid)
+		}
+		if len(message.ImageURLs) > MaxImagesPerMessage {
+			return ai.Message{}, fmt.Errorf("%w: at most %d images per message, got %d",
+				pierrors.ErrRequestInvalid, MaxImagesPerMessage, len(message.ImageURLs))
 		}
 		for _, imageURL := range message.ImageURLs {
 			block := ai.ImageBlock(imageURL)

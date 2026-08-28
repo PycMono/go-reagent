@@ -132,6 +132,14 @@ func TestMessagesToHistoryRejectsNonCanonicalOrder(t *testing.T) {
 			want: "canonical order",
 		},
 		{
+			name: "multiple text blocks",
+			content: []conversationentity.ContentBlock{
+				{Type: conversationentity.ContentTypeText, Text: "第一段"},
+				{Type: conversationentity.ContentTypeText, Text: "第二段"},
+			},
+			want: "multiple text blocks",
+		},
+		{
 			name: "image without url",
 			content: []conversationentity.ContentBlock{
 				{Type: conversationentity.ContentTypeImage},

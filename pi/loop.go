@@ -521,7 +521,7 @@ func (l *Loop) executeTurn(
 func appendToolResultMessage(state *runState, result toolexec.Result) {
 	rawMessage := ai.Message{
 		Role:       ai.RoleTool,
-		Content:    append([]ai.ContentBlock(nil), result.Content...),
+		Content:    ai.CloneBlocks(result.Content),
 		ToolCallID: result.ToolCallID,
 		ToolName:   result.ToolName,
 		IsError:    result.IsError,

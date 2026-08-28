@@ -105,11 +105,14 @@ func messagesToHistory(messages []*conversationentity.Message) ([]pi.Message, er
 }
 
 // historyContent 把持久化 payload 还原为 pi.Message 的正文与图片列表。
-// 规范形态（text 块在前、image 块在后）下无损；text 块出现在 image 块之后
-// 属违反规范形态的存量/手写数据，还原会改变块顺序，直接报错不静默重排。
+// 规范形态为"恰好一个 text 块在前、0..N 个 image 块在后"（数量上限由
+// pi.MaxImagesPerMessage 在 Message2AI 兜底）；text 块出现在 image 块之后
+// 或出现多个 text 块，都属违反规范形态的存量/手写数据，还原会改变块顺序，
+// 直接报错不静默重排。
 func historyContent(blocks []conversationentity.ContentBlock) (string, []string, error) {
 	var content strings.Builder
 	var imageURLs []string
+	seenText := false
 	seenImage := false
 	for _, block := range blocks {
 		switch block.Type {
@@ -117,6 +120,10 @@ func historyContent(blocks []conversationentity.ContentBlock) (string, []string,
 			if seenImage {
 				return "", nil, errors.New("text block after image block violates canonical order")
 			}
+			if seenText {
+				return "", nil, errors.New("multiple text blocks violate canonical order")
+			}
+			seenText = true
 			content.WriteString(block.Text)
 		case conversationentity.ContentTypeImage:
 			if block.Image == nil || block.Image.URL == "" {

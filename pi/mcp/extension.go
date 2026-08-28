@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/PycMono/go-reagent/pi/extension"
 )
@@ -19,10 +17,10 @@ const mcpClientVersion = "1"
 var toolNamePartPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type ExtensionOptions struct {
-	Name       string
-	Endpoint   string
-	Headers    http.Header
-	Timeout    time.Duration
+	Name string
+	// Transport 是已构造完成的 Transport（HTTP 或 stdio），由基础设施
+	// 装配层根据配置创建；NewExtension 要求其非 nil。
+	Transport  Transport
 	AllowTools []string
 	ToolPrefix string
 }
@@ -46,15 +44,7 @@ func NewExtension(options ExtensionOptions) (extension.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport, err := NewHTTPTransport(HTTPTransportOptions{
-		Endpoint: normalized.Endpoint,
-		Headers:  normalized.Headers,
-		Timeout:  normalized.Timeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create MCP extension %q transport: %w", normalized.Name, err)
-	}
-	client, err := NewClient(transport, "go-reagent", mcpClientVersion)
+	client, err := NewClient(normalized.Transport, "go-reagent", mcpClientVersion)
 	if err != nil {
 		return nil, fmt.Errorf("create MCP extension %q client: %w", normalized.Name, err)
 	}
@@ -71,6 +61,9 @@ func buildExtension(options ExtensionOptions, client extensionClient) *mcpExtens
 }
 
 func normalizeExtensionOptions(options ExtensionOptions) (ExtensionOptions, error) {
+	if options.Transport == nil {
+		return ExtensionOptions{}, errors.New("MCP extension transport is required")
+	}
 	options.Name = strings.TrimSpace(options.Name)
 	if options.Name == "" || !toolNamePartPattern.MatchString(options.Name) {
 		return ExtensionOptions{}, errors.New("MCP extension name is invalid")

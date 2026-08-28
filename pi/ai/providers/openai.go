@@ -232,8 +232,23 @@ func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompl
 	return result, nil
 }
 
-// toOpenAIUserMessage 映射 user 消息为有序 content parts（text + image_url）。
+// toOpenAIUserMessage 映射 user 消息：纯文本保持字符串 content（部分中转与
+// 非视觉模型只兼容字符串形式），归一化后仍含图像块时才改用有序 content parts。
 func toOpenAIUserMessage(message normalizedMessage) (openaisdk.ChatCompletionMessageParamUnion, error) {
+	hasImage := false
+	for _, block := range message.blocks {
+		if block.Type == ai.ContentTypeImage {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		text, err := message.text()
+		if err != nil {
+			return openaisdk.ChatCompletionMessageParamUnion{}, err
+		}
+		return openaisdk.UserMessage(text), nil
+	}
 	parts := make([]openaisdk.ChatCompletionContentPartUnionParam, 0, len(message.blocks))
 	for _, block := range message.blocks {
 		switch block.Type {

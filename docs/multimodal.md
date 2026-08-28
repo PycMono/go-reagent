@@ -103,7 +103,7 @@ anthropicsdk.NewImageBlock(anthropicsdk.URLImageSourceParam{URL: block.Image.URL
 
 ### 4.2 OpenAI（pi/ai/providers/openai.go）
 
-user 消息从 `UserMessage(text)` 改为统一 content parts 数组（text + image_url 有序混排，纯文本也是单 text part）：
+user 消息从 `UserMessage(text)` 改为按需映射：纯文本保持字符串 content（部分中转与非视觉模型只兼容字符串形式），归一化后仍含 image 块时改用有序 content parts：
 
 ```json
 [
@@ -124,7 +124,8 @@ user 消息从 `UserMessage(text)` 改为统一 content parts 数组（text + im
 
 `pi.Message` 增加 `ImageURLs []string` 字段（`json:"image_urls,omitempty"`）；`ContentType` 维持只有 `"text"`：
 
-- `Message2AI`：`ContentType: "text"` + `ImageURLs` 时，产出 user 消息 `[TextBlock(content), ImageBlock(url)...]`。校验：每个 URL http/https；`ContentType != "text"` 仍 fail-fast。
+- `Message2AI`：`ContentType: "text"` + `ImageURLs` 时，产出 user 消息 `[TextBlock(content), ImageBlock(url)...]`。校验：每个 URL http/https；数量不超过 `MaxImagesPerMessage = 4`；`ContentType != "text"` 仍 fail-fast。
+- 数量上限的依据：每图按 1024 token（4096 虚拟字节）参与压缩规划，4 张 ≈ 16KB，低于单个压缩 unit 的 32KB 上限（`DefaultSummaryInputMaxBytes`），保证含图消息不会成为不可压缩单元；超限时 `BuildCompactionPlan` 会报 "compaction uncompactable unit"（`harness/compaction.go:103`）。
 - v1 规则：**正文必填，图片可选附加**，不支持纯图片消息（与 Web DTO `content` binding:"required" 一致）。
 - 现有 `FileURL` 字段语义不变（仍不发送给模型），不复用。
 
@@ -132,12 +133,12 @@ user 消息从 `UserMessage(text)` 改为统一 content parts 数组（text + im
 
 | 层 | 改动 |
 |---|---|
-| DTO（`common/dto/chat.go`） | `StartRunDTO` 增加 `ImageURL string \`json:"image_url,omitempty"\`，binding 校验 `omitempty,http_url`（注意：validator 的 `url` 规则接受 FTP/file 等 scheme，必须用 `http_url`） |
+| DTO（`common/dto/chat.go`） | `StartRunDTO` 增加 `ImageURLs []string \`json:"image_urls"\`，binding 校验 `omitempty,max=4,dive,http_url`（注意：validator 的 `url` 规则接受 FTP/file 等 scheme，必须用 `http_url`） |
 | chat service（`run_manager.go`） | 校验非空 ImageURL 后构造 `ai.Message{Role: RoleUser, Content: [TextBlock(content), ImageBlock(url)]}` 传入 `conversation.RunRequest` |
 | conversation runner（`runner.go`） | `validateRunRequest` 按规范形态校验输入（见下），runtime 输入改为 `pi.Message{ContentType: "text", Content: runtimeInputText, ImageURLs: [url]}` 透传图像 |
 | 前端 | 发送消息时附图片 URL 输入（粘贴链接）；消息气泡渲染 `<img loading="lazy" referrerpolicy="no-referrer" alt="用户图片">`，加载失败显示占位框——`no-referrer` 避免把当前页面地址通过 Referer 发给图片服务 |
 
-**规范形态契约**：conversation 业务链路的 user 消息只允许"一个非空 text 块 + 0..N 个 image 块（正文在前、图片在后）"。runner 对其他形态（无正文、交错混排、image 在前）fail-fast。Provider 归一化层保持保序映射不限制顺序，规范形态只是业务链路的入口约束，不阻碍未来扩展。历史回放（§7.2）在同一契约下无损。
+**规范形态契约**：conversation 业务链路的 user 消息只允许"一个非空 text 块 + 0..N 个 image 块（正文在前、图片在后，数量 ≤ `pi.MaxImagesPerMessage`）"。runner 对其他形态（无正文、交错混排、image 在前、超限）fail-fast。Provider 归一化层保持保序映射不限制顺序，规范形态只是业务链路的入口约束，不阻碍未来扩展。历史回放（§7.2）在同一契约下无损。
 
 ## 6. 计量与压缩（pi/harness/meter.go）
 
