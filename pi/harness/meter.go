@@ -96,6 +96,11 @@ func VisibleMessagesBytes(messages []ai.Message) int {
 			case ai.ContentTypeText:
 				projected.Text += block.Text
 			case ai.ContentTypeImage:
+				if block.Image == nil {
+					projected.Text += ai.ImagePlaceholderText("")
+					total = saturatingAddInt(total, DefaultImageTokens*bytesPerTokenHeuristic)
+					continue
+				}
 				projected.Text += ai.ImagePlaceholderText(block.Image.URL)
 				total = saturatingAddInt(total, DefaultImageTokens*bytesPerTokenHeuristic)
 			}
@@ -139,7 +144,11 @@ func MarshalVisibleMessages(messages []ai.Message) ([]byte, error) {
 			case ai.ContentTypeText:
 				next.Text += block.Text
 			case ai.ContentTypeImage:
-				next.Text += ai.ImagePlaceholderText(block.Image.URL)
+				imageURL := ""
+				if block.Image != nil {
+					imageURL = block.Image.URL
+				}
+				next.Text += ai.ImagePlaceholderText(imageURL)
 			}
 		}
 		for _, call := range message.ToolCalls {

@@ -528,3 +528,33 @@ func testObserveCompaction(observe func(ai.Usage) error) invocationObserver {
 		return func(error) {}, observe(usage)
 	}
 }
+
+func TestBuildCompactionPlanImageMessagesStayCompactableWithinLimit(t *testing.T) {
+	// 上限内的含图消息（4 张 ≈ 16KB 虚拟字节 + 正文）必须仍可参与压缩范围；
+	// 超限消息成为不可压缩单元并使规划失败——这就是 MaxImagesPerMessage=4 的依据。
+	imageHistory := func(count int) []ai.Message {
+		blocks := []ai.ContentBlock{ai.TextBlock("看图")}
+		for index := 0; index < count; index++ {
+			blocks = append(blocks, ai.ImageBlock(fmt.Sprintf("https://example.com/%d.png", index)))
+		}
+		return []ai.Message{
+			{Role: ai.RoleUser, Content: blocks},
+			{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("answer")}},
+			{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("input")}},
+		}
+	}
+	rt := newCompactionRuntime(harness.CompactionConfig{}, 1, governor.NewSequencer())
+
+	if _, err := harness.BuildCompactionPlan(imageHistory(MaxImagesPerMessage), rt.state, harness.PlanOptions{
+		RetainRecentUnits: 1,
+	}); err != nil {
+		t.Fatalf("BuildCompactionPlan(4 images) error = %v, want compactable", err)
+	}
+
+	_, err := harness.BuildCompactionPlan(imageHistory(MaxImagesPerMessage+5), rt.state, harness.PlanOptions{
+		RetainRecentUnits: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "uncompactable") {
+		t.Fatalf("BuildCompactionPlan(9 images) error = %v, want uncompactable unit", err)
+	}
+}

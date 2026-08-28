@@ -58,7 +58,7 @@ func (block ContentBlock) Validate() error {
 		if block.Image == nil {
 			return fmt.Errorf("image block requires image content")
 		}
-		if err := validateImageURL(block.Image.URL); err != nil {
+		if err := block.Image.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -67,18 +67,37 @@ func (block ContentBlock) Validate() error {
 	return nil
 }
 
-func validateImageURL(raw string) error {
-	parsed, err := url.Parse(raw)
+// Validate 校验图像内容的 URL：必须是带 host 的 http/https 地址。
+func (image ImageContent) Validate() error {
+	parsed, err := url.Parse(image.URL)
 	if err != nil {
-		return fmt.Errorf("image url %q: %w", raw, err)
+		return fmt.Errorf("image url %q: %w", image.URL, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("image url %q must use http or https", raw)
+		return fmt.Errorf("image url %q must use http or https", image.URL)
 	}
 	if parsed.Host == "" {
-		return fmt.Errorf("image url %q requires a host", raw)
+		return fmt.Errorf("image url %q requires a host", image.URL)
 	}
 	return nil
+}
+
+// CloneBlocks 深拷贝内容块切片：复制底层切片与每个 Image 指针，使调用方
+// 对返回值的后续修改不会写回输入。所有复制边界（prune、runner 等）应使用
+// 本函数而不是裸 append 浅拷贝。
+func CloneBlocks(blocks []ContentBlock) []ContentBlock {
+	if blocks == nil {
+		return nil
+	}
+	cloned := make([]ContentBlock, len(blocks))
+	for index, block := range blocks {
+		cloned[index] = block
+		if block.Image != nil {
+			image := *block.Image
+			cloned[index].Image = &image
+		}
+	}
+	return cloned
 }
 
 // ImagePlaceholderText 生成图像块的脱敏占位文本：只保留 scheme、host 与

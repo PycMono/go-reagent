@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -258,6 +259,13 @@ func TestRunnerRejectsInvalidRequestsBeforeLoading(t *testing.T) {
 		{name: "invalid image url", mutate: func(r *RunRequest) {
 			r.Input.Content = []ai.ContentBlock{ai.TextBlock("看图"), ai.ImageBlock("ftp://example.com/a.png")}
 		}, want: "http or https"},
+		{name: "too many images", mutate: func(r *RunRequest) {
+			blocks := []ai.ContentBlock{ai.TextBlock("看图")}
+			for index := 0; index <= pi.MaxImagesPerMessage; index++ {
+				blocks = append(blocks, ai.ImageBlock(fmt.Sprintf("https://example.com/%d.png", index)))
+			}
+			r.Input.Content = blocks
+		}, want: "at most"},
 		{name: "tool calls", mutate: func(r *RunRequest) {
 			r.Input.ToolCalls = []ai.ToolCall{{ID: "call", Name: "read", Arguments: json.RawMessage(`{}`)}}
 		}, want: "tool fields"},

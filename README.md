@@ -403,7 +403,8 @@ go test ./...
 - 请求级运行预算 `RunLimits`：轮次、累计成本和累计 Token 三项确定性上限，先记账后准入，Compaction 无法绕过。
 - 结构化运行终止 `RunTermination`：每个返回路径携带终止原因、触发额度和累计 `RunTotals`，预算终止有稳定的 `run_limit_exceeded` 错误码。
 - 响应契约校验内聚在数据类型上：`ai.Message`、`ai.Usage`、`ai.ToolCalls`、`RunRequest`/`RunLimits` 各自提供 `Validate*` 方法。
-- 基于 `pi/mcp` 的 MCP HTTP 客户端与工具扩展，支持把 Exa 等远端工具按注册组接入 Agent。
+- 基于 `pi/mcp` 的 MCP 客户端与工具扩展，支持把 Exa 等远端工具按注册组接入 Agent。
+- MCP Transport 显式配置契约：已启用 Server 必须声明 `transport: http | stdio`；HTTP 复用 `url` + `header_env`，stdio 通过 `command`/`args`/`env`/`cwd` 启动本地子进程（不经过 shell，进程组强杀回收），两者共享白名单、前缀与 fail-fast 生命周期。
 - 线程安全、稳定排序、拒绝重复注册的真实 Tool Registry。
 - 工具 error、Context 取消和 panic 的统一错误隔离。
 - 受 WorkDir 能力边界保护的 `read`、`write`、`edit` 和 `apply_patch` 文件工具。

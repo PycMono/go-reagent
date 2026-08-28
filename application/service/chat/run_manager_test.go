@@ -310,3 +310,58 @@ func TestRunErrorVOLoopDetected(t *testing.T) {
 		t.Fatalf("message must be the safe loop-detected copy, got %q", vo.Message)
 	}
 }
+
+func TestStartRunForwardsImageURLsToRunner(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1", ProfileCode: "general"}}
+	runner := &controllableRunner{started: make(chan struct{}, 1), release: make(chan error, 1)}
+	service := newRunService(repo, runner, "run-1")
+
+	run, err := service.StartRun(context.Background(), "visitor-1", "chat-1", dto.StartRunDTO{
+		Content:   "看图",
+		ImageURLs: []string{"https://example.com/a.png", " https://example.com/b.png "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-runner.started
+	runner.release <- nil
+	receiveUntilTerminal(t, run.Events)
+
+	runner.mu.Lock()
+	requests := runner.requests
+	runner.mu.Unlock()
+	if len(requests) != 1 {
+		t.Fatalf("runner requests = %d, want 1", len(requests))
+	}
+	blocks := requests[0].Input.Content
+	if len(blocks) != 3 || blocks[0].Text != "看图" ||
+		blocks[1].Image == nil || blocks[1].Image.URL != "https://example.com/a.png" ||
+		blocks[2].Image == nil || blocks[2].Image.URL != "https://example.com/b.png" {
+		t.Fatalf("input content = %#v, want text + two image blocks with trimmed URLs", blocks)
+	}
+}
+
+func TestStartRunRejectsInvalidImageURLs(t *testing.T) {
+	repo := &runRepoFake{found: true, foundValue: &conversationentity.Conversation{ConversationID: "chat-1", ProfileCode: "general"}}
+	runner := &controllableRunner{}
+	service := newRunService(repo, runner, "run-1")
+
+	tests := []struct {
+		name      string
+		imageURLs []string
+	}{
+		{name: "ftp scheme", imageURLs: []string{"ftp://example.com/a.png"}},
+		{name: "not a url", imageURLs: []string{"not-a-url"}},
+		{name: "blank entry", imageURLs: []string{"   "}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.StartRun(context.Background(), "visitor-1", "chat-1", dto.StartRunDTO{
+				Content: "看图", ImageURLs: test.imageURLs,
+			})
+			if !errors.Is(err, commonerrors.ErrInvalidParam) {
+				t.Fatalf("StartRun() error = %v, want ErrInvalidParam", err)
+			}
+		})
+	}
+}

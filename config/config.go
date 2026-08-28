@@ -89,10 +89,17 @@ type MCPConfig struct {
 }
 
 type MCPServerConfig struct {
-	Name       string            `json:"name" yaml:"name" toml:"name"`
-	Enabled    bool              `json:"enabled" yaml:"enabled" toml:"enabled"`
-	Required   bool              `json:"required" yaml:"required" toml:"required"`
+	Name      string `json:"name" yaml:"name" toml:"name"`
+	Enabled   bool   `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Required  bool   `json:"required" yaml:"required" toml:"required"`
+	// Transport 是已启用 Server 的必填判别字段，只接受 http 或 stdio；
+	// 由它决定下面哪些字段有效（见 validate.go 的互斥规则）。
+	Transport  string            `json:"transport" yaml:"transport" toml:"transport"`
 	URL        string            `json:"url" yaml:"url" toml:"url"`
+	Command    string            `json:"command" yaml:"command" toml:"command"`
+	Args       []string          `json:"args" yaml:"args" toml:"args"`
+	Env        map[string]string `json:"env" yaml:"env" toml:"env"`
+	CWD        string            `json:"cwd" yaml:"cwd" toml:"cwd"`
 	Timeout    int               `json:"timeout" yaml:"timeout" toml:"timeout"`
 	HeaderEnv  map[string]string `json:"header_env" yaml:"header_env" toml:"header_env"`
 	AllowTools []string          `json:"allow_tools" yaml:"allow_tools" toml:"allow_tools"`

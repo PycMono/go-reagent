@@ -45,7 +45,11 @@ func normalizeMessages(messages []ai.Message, vision bool) ([]normalizedMessage,
 				return nil, errors.New("tool message requires tool_call_id")
 			}
 		case ai.RoleAssistant:
-			if len(blocks) == 0 && len(message.ToolCalls) == 0 {
+			assistantText, err := messageText(blocks)
+			if err != nil {
+				return nil, err
+			}
+			if assistantText == "" && len(message.ToolCalls) == 0 {
 				return nil, errors.New("assistant message contains no content or tool calls")
 			}
 			for _, toolCall := range message.ToolCalls {
@@ -90,10 +94,14 @@ func normalizeBlocks(role ai.Role, content []ai.ContentBlock, vision bool) ([]ai
 // messageText 拼接归一化消息的全部文本块；仅用于协议中 content 为纯字符串
 // 的角色（system/tool/assistant），这些角色不允许携带图像块。
 func (message normalizedMessage) text() (string, error) {
+	return messageText(message.blocks)
+}
+
+func messageText(blocks []ai.ContentBlock) (string, error) {
 	var builder strings.Builder
-	for _, block := range message.blocks {
+	for _, block := range blocks {
 		if block.Type != ai.ContentTypeText {
-			return "", fmt.Errorf("role %q does not support %q blocks", message.role, block.Type)
+			return "", fmt.Errorf("text-only role must not carry %q blocks", block.Type)
 		}
 		builder.WriteString(block.Text)
 	}

@@ -44,6 +44,13 @@ func (config *Config) normalizeAndValidate(options loadOptions) error {
 	return config.Redis.normalizeAndValidate()
 }
 
+// envNamePattern 是 MCP stdio 子进程环境变量名的合法形式。
+var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// envReferencePattern 匹配完整 ${NAME} 形式的环境引用；部分插值
+// （如 prefix-${NAME}）不匹配，按字面量处理。
+var envReferencePattern = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
+
 // observability 默认值与 go-observability-sdk v1.0.1 保持一致（§12）。
 const (
 	defaultObservabilityTimeoutSeconds     = 5
@@ -223,6 +230,24 @@ func (config *MCPConfig) normalizeAndValidate() error {
 }
 
 func (server *MCPServerConfig) normalizeAndValidate() error {
+	server.Transport = strings.TrimSpace(strings.ToLower(server.Transport))
+	switch server.Transport {
+	case "http":
+		return server.normalizeHTTPTransport()
+	case "stdio":
+		return server.normalizeStdioTransport()
+	case "":
+		return errors.New("mcp.servers.transport 必填，只能是 http 或 stdio")
+	default:
+		return errors.New("mcp.servers.transport 只能是 http 或 stdio")
+	}
+}
+
+// normalizeHTTPTransport 校验 http 分支：url 必填，stdio 专属字段必须为空。
+func (server *MCPServerConfig) normalizeHTTPTransport() error {
+	if server.Command != "" || len(server.Args) > 0 || len(server.Env) > 0 || strings.TrimSpace(server.CWD) != "" {
+		return errors.New("mcp.servers transport=http 时不能配置 command/args/env/cwd")
+	}
 	server.URL = strings.TrimSpace(server.URL)
 	parsed, err := url.Parse(server.URL)
 	if err != nil || parsed.Host == "" {
@@ -244,10 +269,73 @@ func (server *MCPServerConfig) normalizeAndValidate() error {
 	if err := server.normalizeHeaders(); err != nil {
 		return err
 	}
+	return server.normalizeCommon()
+}
+
+// normalizeStdioTransport 校验 stdio 分支：command 必填，http 专属字段必须为空。
+func (server *MCPServerConfig) normalizeStdioTransport() error {
+	if strings.TrimSpace(server.URL) != "" || len(server.HeaderEnv) > 0 {
+		return errors.New("mcp.servers stdio transport 不能配置 url/header_env")
+	}
+	server.Command = strings.TrimSpace(server.Command)
+	if server.Command == "" {
+		return errors.New("mcp.servers.command 不能为空")
+	}
+	if err := rejectNUL("mcp.servers.command", server.Command); err != nil {
+		return err
+	}
+	for index, arg := range server.Args {
+		if err := rejectNUL(fmt.Sprintf("mcp.servers.args[%d]", index), arg); err != nil {
+			return err
+		}
+	}
+	// cwd 为空时继承进程工作目录；相对路径相对进程工作目录解析，
+	// 校验通过后写回绝对路径，下游装配层不再解析。
+	server.CWD = strings.TrimSpace(server.CWD)
+	if err := rejectNUL("mcp.servers.cwd", server.CWD); err != nil {
+		return err
+	}
+	if server.CWD != "" {
+		resolved, err := resolveDirectory(server.CWD)
+		if err != nil {
+			return fmt.Errorf("mcp.servers.cwd %q 无效: %w", server.CWD, err)
+		}
+		server.CWD = resolved
+	}
+	if err := server.normalizeEnv(); err != nil {
+		return err
+	}
+	return server.normalizeCommon()
+}
+
+func (server *MCPServerConfig) normalizeCommon() error {
 	if err := server.normalizeAllowedTools(); err != nil {
 		return err
 	}
 	server.ToolPrefix = strings.TrimSpace(server.ToolPrefix)
+	return nil
+}
+
+// normalizeEnv 校验子进程环境覆盖：名称必须合法；值为字面量或完整 ${NAME}
+// 引用。引用沿用 header_env 的“存在且非空”规则，错误只包含变量名。
+func (server *MCPServerConfig) normalizeEnv() error {
+	for name, value := range server.Env {
+		if !envNamePattern.MatchString(name) {
+			return fmt.Errorf("mcp.servers.env 环境变量名 %q 非法", name)
+		}
+		if match := envReferencePattern.FindStringSubmatch(value); match != nil {
+			if resolved, exists := os.LookupEnv(match[1]); !exists || strings.TrimSpace(resolved) == "" {
+				return fmt.Errorf("mcp.servers.env 引用的环境变量 %q 未设置或为空", match[1])
+			}
+		}
+	}
+	return nil
+}
+
+func rejectNUL(field string, value string) error {
+	if strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("%s 不能包含 NUL 字节", field)
+	}
 	return nil
 }
 

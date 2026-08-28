@@ -665,6 +665,7 @@ func TestLoadConfigNormalizesMCPServers(t *testing.T) {
 	t.Setenv("EXA_API_KEY", "test-key")
 	document := validMCPBaseConfig(`"mcp":{"servers":[{
 		"name":" exa ","enabled":true,"required":true,
+		"transport":"http",
 		"url":" https://mcp.exa.ai/mcp ","timeout":0,
 		"header_env":{"x-api-key":" EXA_API_KEY "},
 		"allow_tools":[" web_search_exa ","web_fetch_exa"],
@@ -679,8 +680,8 @@ func TestLoadConfigNormalizesMCPServers(t *testing.T) {
 	}
 	server := cfg.MCP.Servers[0]
 	// Timeout 不填默认值：0 透传，由 pi 层（mcp.DefaultTimeout）兜底。
-	if server.Name != "exa" || server.URL != "https://mcp.exa.ai/mcp" || server.Timeout != 0 ||
-		server.HeaderEnv["X-Api-Key"] != "EXA_API_KEY" || server.ToolPrefix != "" ||
+	if server.Name != "exa" || server.Transport != "http" || server.URL != "https://mcp.exa.ai/mcp" ||
+		server.Timeout != 0 || server.HeaderEnv["X-Api-Key"] != "EXA_API_KEY" || server.ToolPrefix != "" ||
 		!slices.Equal(server.AllowTools, []string{"web_search_exa", "web_fetch_exa"}) {
 		t.Fatalf("MCP server = %#v", server)
 	}
@@ -694,17 +695,30 @@ func TestLoadConfigRejectsInvalidMCPServersWithoutLeakingSecrets(t *testing.T) {
 		servers string
 		want    string
 	}{
-		{name: "blank name", servers: `[{"name":" ","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "name"},
-		{name: "blank URL", servers: `[{"name":"x","enabled":true,"required":true,"url":" ","allow_tools":["a"]}]`, want: "url"},
-		{name: "optional unsupported", servers: `[{"name":"x","enabled":true,"required":false,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "required"},
-		{name: "public HTTP", servers: `[{"name":"x","enabled":true,"required":true,"url":"http://example.com/mcp","allow_tools":["a"]}]`, want: "https"},
-		{name: "blank allowlist", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":[]}]`, want: "allow_tools"},
-		{name: "blank env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":" "}}]`, want: "header_env"},
-		{name: "blocked host", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Host":"A"}}]`, want: "header_env"},
-		{name: "blocked length", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Content-Length":"A"}}]`, want: "header_env"},
-		{name: "blocked session", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Mcp-Session-Id":"A"}}]`, want: "header_env"},
-		{name: "unset env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_UNSET_ENV"}}]`, want: "环境变量"},
-		{name: "empty env", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_EMPTY_ENV"}}]`, want: "环境变量"},
+		{name: "blank name", servers: `[{"name":" ","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "name"},
+		{name: "blank URL", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":" ","allow_tools":["a"]}]`, want: "url"},
+		{name: "optional unsupported", servers: `[{"name":"x","enabled":true,"required":false,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "required"},
+		{name: "public HTTP", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"http://example.com/mcp","allow_tools":["a"]}]`, want: "https"},
+		{name: "blank allowlist", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":[]}]`, want: "allow_tools"},
+		{name: "blank env", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":" "}}]`, want: "header_env"},
+		{name: "blocked host", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Host":"A"}}]`, want: "header_env"},
+		{name: "blocked length", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Content-Length":"A"}}]`, want: "header_env"},
+		{name: "blocked session", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"Mcp-Session-Id":"A"}}]`, want: "header_env"},
+		{name: "unset env", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_UNSET_ENV"}}]`, want: "环境变量"},
+		{name: "empty env", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"header_env":{"x-api-key":"GO_REAGENT_TEST_EMPTY_ENV"}}]`, want: "环境变量"},
+		{name: "missing transport", servers: `[{"name":"x","enabled":true,"required":true,"url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "transport"},
+		{name: "blank transport", servers: `[{"name":"x","enabled":true,"required":true,"transport":" ","url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "transport"},
+		{name: "unknown transport", servers: `[{"name":"x","enabled":true,"required":true,"transport":"grpc","url":"https://x.test/mcp","allow_tools":["a"]}]`, want: "transport"},
+		{name: "http with command", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"command":"server"}]`, want: "transport=http"},
+		{name: "http with env", servers: `[{"name":"x","enabled":true,"required":true,"transport":"http","url":"https://x.test/mcp","allow_tools":["a"],"env":{"A":"B"}}]`, want: "transport=http"},
+		{name: "stdio without command", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","allow_tools":["a"]}]`, want: "command"},
+		{name: "stdio with url", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"url":"https://x.test/mcp"}]`, want: "stdio"},
+		{name: "stdio with header_env", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"header_env":{"A":"B"}}]`, want: "stdio"},
+		{name: "stdio missing cwd", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"cwd":"./missing-dir-for-mcp-test"}]`, want: "cwd"},
+		{name: "stdio cwd is file", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"cwd":"config.example.json"}]`, want: "cwd"},
+		{name: "stdio invalid env name", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"env":{"1BAD":"v"}}]`, want: "env"},
+		{name: "stdio unset env ref", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"env":{"TOKEN":"${GO_REAGENT_TEST_UNSET_ENV}"}}]`, want: "环境变量"},
+		{name: "stdio empty env ref", servers: `[{"name":"x","enabled":true,"required":true,"transport":"stdio","command":"server","allow_tools":["a"],"env":{"TOKEN":"${GO_REAGENT_TEST_EMPTY_ENV}"}}]`, want: "环境变量"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -713,6 +727,43 @@ func TestLoadConfigRejectsInvalidMCPServersWithoutLeakingSecrets(t *testing.T) {
 				t.Fatalf("Load error = %v, want %q without secret", err, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadConfigNormalizesStdioMCPServer(t *testing.T) {
+	t.Setenv("GO_REAGENT_TEST_STDIO_TOKEN", "stdio-secret-value")
+	document := validMCPBaseConfig(`"mcp":{"servers":[{
+		"name":"filesystem","enabled":true,"required":true,
+		"transport":"stdio",
+		"command":"npx",
+		"args":["-y","@modelcontextprotocol/server-filesystem","./workspaces/chat"],
+		"env":{"LOG_LEVEL":"warn","MCP_TOKEN":"${GO_REAGENT_TEST_STDIO_TOKEN}"},
+		"cwd":"workspaces/chat",
+		"timeout":0,
+		"allow_tools":["read_file"],
+		"tool_prefix":"fs"
+	}]}`)
+	cfg, err := Load(writeConfig(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := cfg.MCP.Servers[0]
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// cwd 相对进程工作目录解析并写回绝对路径；env 的字面量与 ${NAME}
+	// 引用原样保留（引用的实际取值发生在 Driver 装配期）。
+	expectedCWD, err := filepath.EvalSymlinks(workingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.Transport != "stdio" || server.Command != "npx" ||
+		!slices.Equal(server.Args, []string{"-y", "@modelcontextprotocol/server-filesystem", "./workspaces/chat"}) ||
+		server.Env["LOG_LEVEL"] != "warn" || server.Env["MCP_TOKEN"] != "${GO_REAGENT_TEST_STDIO_TOKEN}" ||
+		server.CWD != filepath.Join(expectedCWD, "workspaces", "chat") ||
+		server.Timeout != 0 || !slices.Equal(server.AllowTools, []string{"read_file"}) || server.ToolPrefix != "fs" {
+		t.Fatalf("stdio server = %#v", server)
 	}
 }
 
@@ -727,6 +778,20 @@ func TestLoadConfigAllowsAbsentAndDisabledMCP(t *testing.T) {
 		}
 		if len(cfg.MCP.Servers) > 0 && cfg.MCP.Servers[0].Enabled {
 			t.Fatalf("MCP config = %#v", cfg.MCP)
+		}
+	}
+}
+
+// TestMCPServerStdioRejectsNUL 直接校验 stdio 分支的 NUL 拒绝：JSON 解析
+// 层会先拦下 NUL，这里绕过 Load 验证字段级规则本身。
+func TestMCPServerStdioRejectsNUL(t *testing.T) {
+	for _, server := range []MCPServerConfig{
+		{Transport: "stdio", Command: "se\x00rver", AllowTools: []string{"a"}},
+		{Transport: "stdio", Command: "server", Args: []string{"a\x00b"}, AllowTools: []string{"a"}},
+		{Transport: "stdio", Command: "server", CWD: ".\x00/", AllowTools: []string{"a"}},
+	} {
+		if err := server.normalizeStdioTransport(); err == nil || !strings.Contains(err.Error(), "NUL") {
+			t.Fatalf("normalizeStdioTransport(%#v) error = %v, want NUL rejection", server, err)
 		}
 	}
 }

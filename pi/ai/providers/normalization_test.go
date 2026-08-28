@@ -186,6 +186,140 @@ func TestNormalizeMessagesRejectsInvalidBlock(t *testing.T) {
 	}
 }
 
+func TestNormalizeMessagesRejectsEmptyAssistantText(t *testing.T) {
+	tests := []struct {
+		name    string
+		message ai.Message
+	}{
+		{
+			name:    "empty text block without tool calls",
+			message: ai.Message{Role: ai.RoleAssistant, Content: []ai.ContentBlock{ai.TextBlock("")}},
+		},
+		{
+			name:    "no content",
+			message: ai.Message{Role: ai.RoleAssistant},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := normalizeMessages([]ai.Message{test.message}, true)
+			if err == nil || !strings.Contains(err.Error(), "no content or tool calls") {
+				t.Fatalf("normalizeMessages() error = %v, want empty assistant error", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeMessagesAcceptsEmptyAssistantTextWithToolCalls(t *testing.T) {
+	messages := []ai.Message{{
+		Role:      ai.RoleAssistant,
+		Content:   []ai.ContentBlock{ai.TextBlock("")},
+		ToolCalls: []ai.ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)}},
+	}}
+	if _, err := normalizeMessages(messages, true); err != nil {
+		t.Fatalf("normalizeMessages() error = %v, want nil for tool-call-only assistant", err)
+	}
+}
+
+func TestOpenAIOutboundJSONSnapshot(t *testing.T) {
+	image := "https://example.com/a.png?sig=secret"
+	messages := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("hello")}},
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("看图"), ai.ImageBlock(image)}},
+		{Role: ai.RoleTool, ToolCallID: "call-1", Content: []ai.ContentBlock{ai.TextBlock("tool result")}},
+	}
+
+	// 纯文本 user 消息保持字符串 content，不扩大兼容风险。
+	textOnly, err := toOpenAIMessages(messages[:1], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	textJSON, err := json.Marshal(textOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(textJSON), `"content":"hello"`) {
+		t.Fatalf("pure text must stay string content, got: %s", textJSON)
+	}
+
+	// 含图消息使用有序 content parts；vision=false 时降级为占位文本。
+	withImage, err := toOpenAIMessages(messages[1:2], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageJSON, err := json.Marshal(withImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(imageJSON), `"type":"image_url"`) ||
+		!strings.Contains(string(imageJSON), `"image_url":{"url":"https://example.com/a.png?sig=secret"}`) ||
+		!strings.Contains(string(imageJSON), `"text":"看图"`) {
+		t.Fatalf("image parts snapshot mismatch, got: %s", imageJSON)
+	}
+
+	degraded, err := toOpenAIMessages(messages[1:2], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	degradedJSON, err := json.Marshal(degraded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(degradedJSON), "sig=secret") {
+		t.Fatalf("degraded content leaks query params: %s", degradedJSON)
+	}
+	if !strings.Contains(string(degradedJSON), `"content":"看图[图片: https://example.com/a.png]"`) {
+		t.Fatalf("degraded snapshot mismatch, got: %s", degradedJSON)
+	}
+
+	// 工具结果保持纯文本。
+	toolOnly, err := toOpenAIMessages(messages[2:], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolJSON, err := json.Marshal(toolOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(toolJSON), `"content":"tool result"`) {
+		t.Fatalf("tool result must stay plain text, got: %s", toolJSON)
+	}
+}
+
+func TestAnthropicOutboundJSONSnapshot(t *testing.T) {
+	messages := []ai.Message{
+		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock("看图"), ai.ImageBlock("https://example.com/a.png?sig=secret")}},
+	}
+	withImage, _, err := toAnthropicMessages(messages, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageJSON, err := json.Marshal(withImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"url":"https://example.com/a.png?sig=secret"`
+	if !strings.Contains(string(imageJSON), `"type":"image"`) || !strings.Contains(string(imageJSON), want) {
+		t.Fatalf("anthropic image snapshot mismatch, got: %s", imageJSON)
+	}
+
+	degraded, _, err := toAnthropicMessages(messages, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	degradedJSON, err := json.Marshal(degraded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(degradedJSON), "sig=secret") {
+		t.Fatalf("degraded content leaks query params: %s", degradedJSON)
+	}
+	if !strings.Contains(string(degradedJSON), "看图") ||
+		!strings.Contains(string(degradedJSON), "[图片: https://example.com/a.png]") {
+		t.Fatalf("degraded snapshot mismatch, got: %s", degradedJSON)
+	}
+}
+
 func TestProviderConversionFailureStreamEmitsStartThenError(t *testing.T) {
 	messages := []ai.Message{{Role: ai.Role("unsupported")}}
 	tests := []struct {

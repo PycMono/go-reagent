@@ -80,6 +80,21 @@ func TestContentBlockValidate(t *testing.T) {
 	}
 }
 
+func TestCloneBlocksDeepCopiesImage(t *testing.T) {
+	blocks := []ContentBlock{TextBlock("a"), ImageBlock("https://example.com/a.png")}
+	cloned := CloneBlocks(blocks)
+	if &cloned[0] == &blocks[0] {
+		t.Fatal("CloneBlocks must copy the backing slice")
+	}
+	cloned[1].Image.URL = "https://example.com/mutated.png"
+	if blocks[1].Image.URL != "https://example.com/a.png" {
+		t.Fatalf("mutation leaked into source: %q", blocks[1].Image.URL)
+	}
+	if CloneBlocks(nil) != nil {
+		t.Fatal("CloneBlocks(nil) must return nil")
+	}
+}
+
 func TestTextContentRejectsImage(t *testing.T) {
 	blocks := []ContentBlock{TextBlock("a"), ImageBlock("https://example.com/a.png")}
 	if _, err := TextContent(blocks); err == nil {

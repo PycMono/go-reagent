@@ -1,6 +1,7 @@
 import { isVisibleChatMessage } from "./chat-visibility.js";
 import { renderMessageContent } from "./chat-message-content.js";
 import { createChatStream } from "./chat-stream.js";
+import { createImageBlock } from "./chat-image.js";
 
 const API_ROOT = "/api/v1/conversations";
 const PROFILE_API = "/api/v1/agent-profiles";
@@ -519,27 +520,7 @@ function createMessageElement(message) {
   return article;
 }
 
-// createImageBlock 渲染用户图片：no-referrer 避免把当前页面地址通过
-// Referer 发给图片服务；加载失败回退为占位框。
-function createImageBlock(url) {
-  const wrapper = document.createElement("div");
-  wrapper.className = "qb-chat__message-image";
-  const image = document.createElement("img");
-  image.loading = "lazy";
-  image.referrerPolicy = "no-referrer";
-  image.alt = "用户图片";
-  image.src = url;
-  const fallback = document.createElement("div");
-  fallback.className = "qb-chat__image-fallback";
-  fallback.textContent = "图片无法加载";
-  fallback.hidden = true;
-  image.addEventListener("error", function () {
-    image.hidden = true;
-    fallback.hidden = false;
-  });
-  wrapper.append(image, fallback);
-  return wrapper;
-}
+// 用户图片渲染（lazy / no-referrer / 加载失败占位）见 chat-image.js。
 
 function createToolRecord(label, value, isError, className) {
   const record = document.createElement("div");
@@ -655,14 +636,14 @@ function addActivity(key, label, details) {
   ui.runStatus.scrollTop = ui.runStatus.scrollHeight;
 }
 
-async function startRun(content, imageURL) {
+async function startRun(content, imageURLs) {
   chatStream.discard();
   resetActivity();
   setRunning(true);
   state.runAbort = new AbortController();
   let terminal = false;
   const payload = { content: content };
-  if (imageURL) payload.image_url = imageURL;
+  if (imageURLs && imageURLs.length > 0) payload.image_urls = imageURLs;
   try {
     const response = await fetch(
       API_ROOT + "/" + encodeURIComponent(state.currentConversationId) + "/runs",
@@ -789,11 +770,17 @@ ui.composer.addEventListener("submit", async function (event) {
   }
   const content = ui.input.value.trim();
   if (!content) return;
-  const imageURL = (ui.imageURL ? ui.imageURL.value : "").trim();
+  const imageURLs = [];
+  if (ui.imageURL) {
+    const raw = ui.imageURL.value.trim();
+    if (raw) imageURLs.push(raw);
+  }
   try {
     if (!state.currentConversationId) await createConversation();
     const userBlocks = [{ type: "text", text: content }];
-    if (imageURL) userBlocks.push({ type: "image", image: { url: imageURL } });
+    imageURLs.forEach(function (url) {
+      userBlocks.push({ type: "image", image: { url: url } });
+    });
     appendMessage({
       role: "user",
       content: userBlocks,
@@ -802,7 +789,7 @@ ui.composer.addEventListener("submit", async function (event) {
     ui.input.value = "";
     if (ui.imageURL) ui.imageURL.value = "";
     resizeComposer();
-    await startRun(content, imageURL);
+    await startRun(content, imageURLs);
   } catch (error) {
     showToast("消息发送失败：" + error.message);
     setRunning(false);

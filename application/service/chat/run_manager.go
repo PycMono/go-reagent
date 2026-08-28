@@ -40,15 +40,20 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 	userID = strings.TrimSpace(userID)
 	conversationID = strings.TrimSpace(conversationID)
 	content := strings.TrimSpace(param.Content)
-	imageURL := strings.TrimSpace(param.ImageURL)
 	if !validIdentity(userID) || !validIdentity(conversationID) || content == "" || !utf8.ValidString(content) ||
 		s == nil || s.repository == nil || s.ids == nil || s.runner == nil || s.catalog == nil {
 		return nil, commonerrors.ErrInvalidParam
 	}
-	if imageURL != "" {
+	imageURLs := make([]string, 0, len(param.ImageURLs))
+	for _, raw := range param.ImageURLs {
+		imageURL := strings.TrimSpace(raw)
+		if imageURL == "" {
+			return nil, commonerrors.ErrInvalidParam
+		}
 		if err := ai.ImageBlock(imageURL).Validate(); err != nil {
 			return nil, commonerrors.ErrInvalidParam
 		}
+		imageURLs = append(imageURLs, imageURL)
 	}
 	ownedConversation, found, err := s.repository.FindByUserIDAndConversationID(ctx, userID, conversationID)
 	if err != nil {
@@ -78,7 +83,7 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 
 	events := make(chan vo.RunEventVO, runEventQueueSize)
 	events <- vo.RunEventVO{Type: vo.RunEventRunStarted, RunID: runID}
-	go s.executeRun(runCtx, key, userID, conversationID, runID, content, imageURL, profile.Code, profileContext, events)
+	go s.executeRun(runCtx, key, userID, conversationID, runID, content, imageURLs, profile.Code, profileContext, events)
 	return &ActiveRun{ID: runID, Events: events}, nil
 }
 
@@ -104,7 +109,9 @@ func (s *Service) CancelRun(_ context.Context, userID, conversationID, runID str
 
 func (s *Service) executeRun(
 	ctx context.Context,
-	key, userID, conversationID, runID, content, imageURL, profileCode string,
+	key, userID, conversationID, runID, content string,
+	imageURLs []string,
+	profileCode string,
 	profileContext []pi.ContextBlock,
 	events chan vo.RunEventVO,
 ) {
@@ -127,7 +134,7 @@ func (s *Service) executeRun(
 		listener := newRunListener(runID, events)
 		var err error
 		inputBlocks := []ai.ContentBlock{ai.TextBlock(content)}
-		if imageURL != "" {
+		for _, imageURL := range imageURLs {
 			inputBlocks = append(inputBlocks, ai.ImageBlock(imageURL))
 		}
 		result, err = s.runner.Run(ctx, conversation.RunRequest{
