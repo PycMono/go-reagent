@@ -18,7 +18,7 @@ func fixedClock(value string) Clock {
 
 func decodeToolJSON[T any](t *testing.T, output ai.ToolOutput) T {
 	t.Helper()
-	text, err := ai.TextContent(output.Content)
+	text, err := output.Content.Text()
 	if err != nil {
 		t.Fatal(err)
 	}

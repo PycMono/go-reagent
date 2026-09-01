@@ -114,7 +114,7 @@ func TestRunLifecycleUsesOwnedConversationAndRenamesOnSuccess(t *testing.T) {
 	runner.mu.Lock()
 	request := runner.requests[0]
 	runner.mu.Unlock()
-	text, textErr := ai.TextContent(request.Input.Content)
+	text, textErr := request.Input.Content.Text()
 	if textErr != nil || request.UserID != "visitor-1" || request.ConversationID != "chat-1" || request.RunID != "run-1" ||
 		request.Input.Role != ai.RoleUser || text != "A title for this chat" {
 		t.Fatalf("request = %#v, text = %q, err = %v", request, text, textErr)

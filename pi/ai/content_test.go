@@ -2,22 +2,6 @@ package ai
 
 import "testing"
 
-func TestImageBlock(t *testing.T) {
-	block := ImageBlock("https://example.com/a.png")
-	if block.Type != ContentTypeImage {
-		t.Fatalf("type = %q, want image", block.Type)
-	}
-	if block.Image == nil || block.Image.URL != "https://example.com/a.png" {
-		t.Fatalf("image = %+v, want URL https://example.com/a.png", block.Image)
-	}
-	if block.Text != "" {
-		t.Fatalf("text = %q, want empty", block.Text)
-	}
-	if err := block.Validate(); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-}
-
 func TestContentBlockValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -80,24 +64,45 @@ func TestContentBlockValidate(t *testing.T) {
 	}
 }
 
-func TestCloneBlocksDeepCopiesImage(t *testing.T) {
-	blocks := []ContentBlock{TextBlock("a"), ImageBlock("https://example.com/a.png")}
-	cloned := CloneBlocks(blocks)
+func TestContentBlocksCloneDeepCopiesImage(t *testing.T) {
+	blocks := ContentBlocks{TextBlock("a"), ImageBlock("https://example.com/a.png")}
+	cloned := blocks.Clone()
 	if &cloned[0] == &blocks[0] {
-		t.Fatal("CloneBlocks must copy the backing slice")
+		t.Fatal("Clone must copy the backing slice")
 	}
 	cloned[1].Image.URL = "https://example.com/mutated.png"
 	if blocks[1].Image.URL != "https://example.com/a.png" {
 		t.Fatalf("mutation leaked into source: %q", blocks[1].Image.URL)
 	}
-	if CloneBlocks(nil) != nil {
-		t.Fatal("CloneBlocks(nil) must return nil")
+	if ContentBlocks(nil).Clone() != nil {
+		t.Fatal("ContentBlocks(nil).Clone() must return nil")
 	}
 }
 
-func TestTextContentRejectsImage(t *testing.T) {
-	blocks := []ContentBlock{TextBlock("a"), ImageBlock("https://example.com/a.png")}
-	if _, err := TextContent(blocks); err == nil {
+func TestContentBlocksTextRejectsImage(t *testing.T) {
+	blocks := ContentBlocks{TextBlock("a"), ImageBlock("https://example.com/a.png")}
+	if _, err := blocks.Text(); err == nil {
 		t.Fatalf("expected error for image block, got nil")
+	}
+}
+
+func TestContentBlocksValidateForRoleAndImagePlaceholders(t *testing.T) {
+	blocks := ContentBlocks{
+		TextBlock("看图"),
+		ImageBlock("https://example.com/a.png?sig=secret#fragment"),
+	}
+	if err := blocks.ValidateForRole(RoleUser); err != nil {
+		t.Fatalf("ValidateForRole(user) error = %v", err)
+	}
+	if err := blocks.ValidateForRole(RoleAssistant); err == nil {
+		t.Fatal("assistant image content must be rejected")
+	}
+
+	degraded := blocks.WithImagePlaceholders()
+	if len(degraded) != 2 || degraded[0].Text != "看图" || degraded[1].Text != "[图片: https://example.com/a.png]" {
+		t.Fatalf("WithImagePlaceholders() = %#v", degraded)
+	}
+	if blocks[1].Type != ContentTypeImage {
+		t.Fatal("WithImagePlaceholders must not mutate the source")
 	}
 }

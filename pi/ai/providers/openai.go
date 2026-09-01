@@ -170,27 +170,26 @@ func openAIFinishReason(reason string) ai.FinishReason {
 }
 
 func (p *OpenAIImpl) classifyError(err error) error {
-	info := providerErrorInfo{err: err}
+	info := pierrors.AIProviderErrorInfo{Err: err}
 	var apiErr *openaisdk.Error
 	if errors.As(err, &apiErr) {
-		info.statusCode = apiErr.StatusCode
-		info.providerCode = apiErr.Code
-		info.contextOverflow = apiErr.Code == "context_length_exceeded"
-		info.quotaExceeded = apiErr.Code == "insufficient_quota"
+		info.StatusCode = apiErr.StatusCode
+		info.ContextOverflow = apiErr.Code == "context_length_exceeded"
+		info.QuotaExceeded = apiErr.Code == "insufficient_quota"
 	}
-	return classifyError(info)
+	return pierrors.ClassifyAIProvider(info)
 }
 
 func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
-	normalized, err := normalizeMessages(messages, vision)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(normalized))
-	for _, message := range normalized {
-		switch message.role {
+	result := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(messages))
+	for _, message := range messages {
+		message, err := message.PrepareOutbound(vision)
+		if err != nil {
+			return nil, err
+		}
+		switch message.Role {
 		case ai.RoleSystem:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, err
 			}
@@ -202,13 +201,13 @@ func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompl
 			}
 			result = append(result, user)
 		case ai.RoleTool:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, openaisdk.ToolMessage(text, message.toolCallID))
+			result = append(result, openaisdk.ToolMessage(text, message.ToolCallID))
 		case ai.RoleAssistant:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, err
 			}
@@ -216,12 +215,12 @@ func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompl
 			if text != "" {
 				assistant.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{OfString: openaisdk.String(text)}
 			}
-			for _, toolCall := range message.toolCalls {
+			for _, toolCall := range message.ToolCalls {
 				assistant.ToolCalls = append(assistant.ToolCalls, openaisdk.ChatCompletionMessageToolCallUnionParam{
 					OfFunction: &openaisdk.ChatCompletionMessageFunctionToolCallParam{
-						ID: toolCall.id,
+						ID: toolCall.ID,
 						Function: openaisdk.ChatCompletionMessageFunctionToolCallFunctionParam{
-							Name: toolCall.name, Arguments: string(toolCall.arguments),
+							Name: toolCall.Name, Arguments: string(toolCall.Arguments),
 						},
 					},
 				})
@@ -234,23 +233,23 @@ func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompl
 
 // toOpenAIUserMessage 映射 user 消息：纯文本保持字符串 content（部分中转与
 // 非视觉模型只兼容字符串形式），归一化后仍含图像块时才改用有序 content parts。
-func toOpenAIUserMessage(message normalizedMessage) (openaisdk.ChatCompletionMessageParamUnion, error) {
+func toOpenAIUserMessage(message ai.Message) (openaisdk.ChatCompletionMessageParamUnion, error) {
 	hasImage := false
-	for _, block := range message.blocks {
+	for _, block := range message.Content {
 		if block.Type == ai.ContentTypeImage {
 			hasImage = true
 			break
 		}
 	}
 	if !hasImage {
-		text, err := message.text()
+		text, err := message.Content.Text()
 		if err != nil {
 			return openaisdk.ChatCompletionMessageParamUnion{}, err
 		}
 		return openaisdk.UserMessage(text), nil
 	}
-	parts := make([]openaisdk.ChatCompletionContentPartUnionParam, 0, len(message.blocks))
-	for _, block := range message.blocks {
+	parts := make([]openaisdk.ChatCompletionContentPartUnionParam, 0, len(message.Content))
+	for _, block := range message.Content {
 		switch block.Type {
 		case ai.ContentTypeText:
 			parts = append(parts, openaisdk.ChatCompletionContentPartUnionParam{
@@ -268,14 +267,14 @@ func toOpenAIUserMessage(message normalizedMessage) (openaisdk.ChatCompletionMes
 }
 
 func toOpenAITools(definitions []ai.ToolDefinition) ([]openaisdk.ChatCompletionToolUnionParam, error) {
-	normalized, err := normalizeToolDefinitions(definitions)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]openaisdk.ChatCompletionToolUnionParam, 0, len(normalized))
-	for _, definition := range normalized {
+	result := make([]openaisdk.ChatCompletionToolUnionParam, 0, len(definitions))
+	for _, definition := range definitions {
+		inputSchema, err := definition.InputSchemaObject()
+		if err != nil {
+			return nil, err
+		}
 		result = append(result, openaisdk.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-			Name: definition.name, Description: openaisdk.String(definition.description), Parameters: shared.FunctionParameters(definition.inputSchema),
+			Name: definition.Name, Description: openaisdk.String(definition.Description), Parameters: shared.FunctionParameters(inputSchema),
 		}))
 	}
 	return result, nil

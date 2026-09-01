@@ -212,7 +212,7 @@ func finalAssistantText(messages []ai.Message) string {
 		if messages[index].Role != ai.RoleAssistant || len(messages[index].ToolCalls) > 0 {
 			continue
 		}
-		text, err := ai.TextContent(messages[index].Content)
+		text, err := messages[index].Content.Text()
 		if err == nil && strings.TrimSpace(text) != "" {
 			return text
 		}
@@ -244,7 +244,7 @@ func (a *subagentEventAdapter) OnEvent(_ context.Context, event AgentEvent) {
 		if event.Message == nil {
 			return
 		}
-		text, err := ai.TextContent(event.Message.Content)
+		text, err := event.Message.Content.Text()
 		if err != nil || strings.TrimSpace(text) == "" {
 			return
 		}

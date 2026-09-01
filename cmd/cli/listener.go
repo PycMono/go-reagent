@@ -106,8 +106,8 @@ func (l *terminalListener) closeLine() {
 	l.toolStarts = make(map[string]time.Time)
 }
 
-func resultText(blocks []ai.ContentBlock) string {
-	text, err := ai.TextContent(blocks)
+func resultText(blocks ai.ContentBlocks) string {
+	text, err := blocks.Text()
 	if err != nil {
 		return fmt.Sprintf("（非文本结果 %d 块）", len(blocks))
 	}

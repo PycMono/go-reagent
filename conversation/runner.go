@@ -204,7 +204,7 @@ func cloneMessages(messages []ai.Message) []ai.Message {
 
 func cloneMessage(message ai.Message) ai.Message {
 	cloned := message
-	cloned.Content = ai.CloneBlocks(message.Content)
+	cloned.Content = message.Content.Clone()
 	if message.Usage != nil {
 		usage := *message.Usage
 		cloned.Usage = &usage

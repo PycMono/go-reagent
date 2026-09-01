@@ -26,6 +26,9 @@ type ContentBlock struct {
 	Image *ImageContent `json:"image,omitempty"`
 }
 
+// ContentBlocks is an ordered collection of message content blocks.
+type ContentBlocks []ContentBlock
+
 // ImageContent 表示一个 URL 图像内容。
 type ImageContent struct {
 	// URL 是图像的可访问地址；调用方必须保证推理服务商可访问且生命周期足够长。
@@ -82,14 +85,26 @@ func (image ImageContent) Validate() error {
 	return nil
 }
 
-// CloneBlocks 深拷贝内容块切片：复制底层切片与每个 Image 指针，使调用方
-// 对返回值的后续修改不会写回输入。所有复制边界（prune、runner 等）应使用
-// 本函数而不是裸 append 浅拷贝。
-func CloneBlocks(blocks []ContentBlock) []ContentBlock {
+// ValidateForRole validates every block and enforces that only user messages
+// may contain images.
+func (blocks ContentBlocks) ValidateForRole(role Role) error {
+	for _, block := range blocks {
+		if err := block.Validate(); err != nil {
+			return err
+		}
+		if block.Type == ContentTypeImage && role != RoleUser {
+			return fmt.Errorf("role %q must not carry image blocks", role)
+		}
+	}
+	return nil
+}
+
+// Clone deep-copies the backing slice and Image pointers.
+func (blocks ContentBlocks) Clone() ContentBlocks {
 	if blocks == nil {
 		return nil
 	}
-	cloned := make([]ContentBlock, len(blocks))
+	cloned := make(ContentBlocks, len(blocks))
 	for index, block := range blocks {
 		cloned[index] = block
 		if block.Image != nil {
@@ -98,6 +113,20 @@ func CloneBlocks(blocks []ContentBlock) []ContentBlock {
 		}
 	}
 	return cloned
+}
+
+// WithImagePlaceholders returns a copy where image blocks are replaced by
+// redacted text placeholders.
+func (blocks ContentBlocks) WithImagePlaceholders() ContentBlocks {
+	result := make(ContentBlocks, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Type == ContentTypeImage && block.Image != nil {
+			result = append(result, TextBlock(ImagePlaceholderText(block.Image.URL)))
+			continue
+		}
+		result = append(result, block)
+	}
+	return result
 }
 
 // ImagePlaceholderText 生成图像块的脱敏占位文本：只保留 scheme、host 与
@@ -115,8 +144,8 @@ func ImagePlaceholderText(raw string) string {
 	return "[图片: " + brief + "]"
 }
 
-// TextContent 按顺序拼接内容块中的文本；遇到非文本内容块时返回错误。
-func TextContent(blocks []ContentBlock) (string, error) {
+// Text concatenates text blocks in order and rejects non-text content.
+func (blocks ContentBlocks) Text() (string, error) {
 	var builder strings.Builder
 	for _, block := range blocks {
 		if block.Type != ContentTypeText {

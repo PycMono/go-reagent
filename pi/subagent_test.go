@@ -79,7 +79,7 @@ func (p *subagentScriptProvider) Stream(_ context.Context, messages []ai.Message
 	for _, message := range messages {
 		if message.Role == ai.RoleTool {
 			hasToolResult = true
-			text, _ := ai.TextContent(message.Content)
+			text, _ := message.Content.Text()
 			if strings.Contains(text, "is not available in this run") {
 				p.mu.Lock()
 				p.sawNotAvailableTool = true
@@ -243,7 +243,7 @@ func TestSubagentEndToEnd(t *testing.T) {
 	found := false
 	for _, message := range result.newMessages {
 		if message.Role == ai.RoleTool && message.ToolName == subagentToolPrefix+"research" {
-			text, _ := ai.TextContent(message.Content)
+			text, _ := message.Content.Text()
 			if text != "竞品调研报告：A 优于 B" {
 				t.Fatalf("subagent report = %q", text)
 			}
@@ -360,7 +360,7 @@ func TestSubagentBatchCapRejectsExcess(t *testing.T) {
 		toolResults++
 		if message.IsError {
 			rejectedResults++
-			text, _ := ai.TextContent(message.Content)
+			text, _ := message.Content.Text()
 			if text == "" {
 				t.Fatal("rejected result must carry an explanation")
 			}
@@ -493,7 +493,7 @@ func (p *mixedScriptProvider) Stream(ctx context.Context, messages []ai.Message,
 	for _, message := range messages {
 		if message.Role == ai.RoleTool {
 			hasToolResult = true
-			text, _ := ai.TextContent(message.Content)
+			text, _ := message.Content.Text()
 			if strings.Contains(text, "is not available in this run") {
 				p.mu.Lock()
 				p.sawNotAvailableTool = true

@@ -80,7 +80,7 @@ func finalAssistantTexts(messages []ai.Message) []string {
 		if len(message.ToolCalls) != 0 || message.ToolCallID != "" || message.ToolName != "" || message.IsError {
 			continue
 		}
-		text, err := ai.TextContent(message.Content)
+		text, err := message.Content.Text()
 		if err != nil || strings.TrimSpace(text) == "" {
 			continue
 		}

@@ -12,8 +12,21 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
+	"net/http"
 )
+
+// AIProviderErrorInfo contains provider-neutral facts used to classify an AI
+// generation failure. Provider adapters are responsible for normalizing their
+// SDK-specific errors into this structure.
+type AIProviderErrorInfo struct {
+	StatusCode      int
+	ContextOverflow bool
+	QuotaExceeded   bool
+	Err             error
+}
 
 // ErrorCode is a stable machine-readable Pi error category.
 type ErrorCode string
@@ -100,6 +113,42 @@ func Wrap(code ErrorCode, op string, err error) error {
 		return err
 	}
 	return &Error{Code: code, Op: op, Err: err}
+}
+
+func ClassifyAIProvider(info AIProviderErrorInfo) error {
+	code := ErrorCodeAIGeneration
+	switch {
+	case stderrors.Is(info.Err, context.Canceled):
+		code = ErrorCodeCanceled
+	case stderrors.Is(info.Err, context.DeadlineExceeded):
+		code = ErrorCodeDeadlineExceeded
+	case info.ContextOverflow:
+		code = ErrorCodeAIContextOverflow
+	case info.QuotaExceeded:
+		code = ErrorCodeAIQuotaExceeded
+	case info.StatusCode == http.StatusTooManyRequests:
+		code = ErrorCodeAIRateLimited
+	case info.StatusCode == http.StatusRequestTimeout,
+		info.StatusCode == http.StatusConflict,
+		info.StatusCode >= http.StatusInternalServerError:
+		code = ErrorCodeAITransient
+	case isTransientAIProviderError(info.Err):
+		code = ErrorCodeAITransient
+	case info.StatusCode == http.StatusUnauthorized,
+		info.StatusCode == http.StatusForbidden:
+		code = ErrorCodeAIUnauthorized
+	case info.StatusCode == http.StatusBadRequest:
+		code = ErrorCodeAIInvalidRequest
+	}
+	return Wrap(code, "provider generate", info.Err)
+}
+
+func isTransientAIProviderError(err error) bool {
+	if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkError net.Error
+	return stderrors.As(err, &networkError)
 }
 
 func ClassifyTool(op string, err error) error {

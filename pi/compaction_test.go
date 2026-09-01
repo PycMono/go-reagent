@@ -79,7 +79,7 @@ func contextOverflowErr() error {
 
 func requestsContain(messages []ai.Message, fragment string) bool {
 	for _, message := range messages {
-		text, _ := ai.TextContent(message.Content)
+		text, _ := message.Content.Text()
 		if strings.Contains(text, fragment) {
 			return true
 		}
@@ -246,7 +246,7 @@ func TestMaybeCompactProactiveL2ReplacesHistory(t *testing.T) {
 	}
 	found := false
 	for _, message := range got {
-		text, _ := ai.TextContent(message.Content)
+		text, _ := message.Content.Text()
 		if strings.Contains(text, `<compacted-summary untrusted="true">`) && strings.Contains(text, "主动摘要") {
 			found = true
 		}

@@ -24,7 +24,7 @@ func TestContextBuilderAllowsWorkspaceWithoutSkillsOrRead(t *testing.T) {
 	if len(got.Tools) != 0 {
 		t.Fatalf("tools = %#v, want empty", got.Tools)
 	}
-	systemText, err := ai.TextContent(got.Messages[0].Content)
+	systemText, err := got.Messages[0].Content.Text()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestContextBuilderRequiresReadOnlyWhenWorkspaceHasSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() with read error = %v", err)
 	}
-	systemText, err := ai.TextContent(got.Messages[0].Content)
+	systemText, err := got.Messages[0].Content.Text()
 	if err != nil {
 		t.Fatal(err)
 	}

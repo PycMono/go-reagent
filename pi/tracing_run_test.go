@@ -97,7 +97,7 @@ func actionMessage(text string, toolCalls ...ai.ToolCall) *ai.Message {
 }
 
 func textDeltaStream(message *ai.Message) *scriptedStream {
-	text, _ := ai.TextContent(message.Content)
+	text, _ := message.Content.Text()
 	return &scriptedStream{
 		events: []ai.StreamEvent{
 			{Type: ai.StreamEventStart},

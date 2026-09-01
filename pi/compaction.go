@@ -310,7 +310,7 @@ func (l *Loop) tryCompactOnce(
 		if err := response.ValidateThinking(); err != nil {
 			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
 		}
-		text, err := ai.TextContent(response.Content)
+		text, err := response.Content.Text()
 		if err != nil {
 			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
 		}
