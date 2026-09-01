@@ -20,6 +20,7 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
+	sandboxdriver "github.com/PycMono/go-reagent/infrastructure/driver/sandbox"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
@@ -104,7 +105,7 @@ const usageText = `用法: go-reagent-cli [flags]
   -dir string        工作区目录（默认：配置文件的 agent.workspace_dir；无配置时为当前目录）
   -prompt string     单轮模式：执行一次任务后退出
   -allow-write       允许 edit/write/apply_patch 工具
-  -allow-exec        允许 exec/process 工具（命令拥有宿主机权限）
+  -allow-exec        允许 exec/process 工具（按当前平台固定隔离策略执行）
   -yolo              全开（等价 -allow-write -allow-exec）
   -subagent          挂载子代理（要求配置文件模式）
   注：配置文件模式自动挂载已启用的 MCP 服务器
@@ -350,6 +351,8 @@ func buildOptions(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) []
 		fx.NopLogger,
 		fx.Supply(runtime.options, pi.WorkDir(runtime.workDir), runtime.compaction),
 		pi.CoreRegister,
+		pi.CommandRunnerRegister,
+		sandboxdriver.Register,
 		toolsetFor(flags),
 	}
 	if cfg != nil {
@@ -417,6 +420,6 @@ func printBanner(w io.Writer, runtime *runtimeConfig, cfg *config.Config, flags 
 		}
 	}
 	if exec {
-		fmt.Fprintln(w, "⚠ exec 命令拥有当前用户的宿主机权限，可访问工作区外文件、环境变量与网络。")
+		fmt.Fprintln(w, "exec 隔离：macOS 使用 Seatbelt，Linux 使用 Bubblewrap，Windows 使用 Host；网络固定允许。")
 	}
 }

@@ -228,6 +228,7 @@ func buildToolsetApp(t *testing.T, flags cliFlags) toolexec.Executor {
 		fx.NopLogger,
 		fx.Supply(runtime.options, pi.WorkDir(runtime.workDir), runtime.compaction),
 		pi.CoreRegister,
+		pi.CommandRunnerRegister, // 与 buildOptions 保持一致（设计 §8）
 		toolsetFor(flags),
 	}
 	var executor toolexec.Executor

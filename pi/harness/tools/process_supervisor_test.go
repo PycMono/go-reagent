@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"go.uber.org/fx/fxtest"
 )
 
@@ -62,6 +64,60 @@ func TestProcessSupervisorSeparatesStreamsAndKeepsBoundedAbsoluteLog(t *testing.
 	}
 	if tail.Offset != 60_000 || tail.NextOffset != 60_000 || tail.Content != "" || tail.Truncated {
 		t.Fatalf("tail page = %#v", tail)
+	}
+}
+
+type policyRunner struct{ policy sandbox.Policy }
+
+func (r policyRunner) Policy() sandbox.Policy { return r.policy }
+func (r policyRunner) BuildShell(string, sandbox.CommandSpec) (*exec.Cmd, error) {
+	return nil, errors.New("not used")
+}
+func (r policyRunner) BuildArgv([]string, sandbox.CommandSpec) (*exec.Cmd, error) {
+	return nil, errors.New("not used")
+}
+
+func TestProcessSupervisorSandboxPayloadDoesNotInheritHostEnvironment(t *testing.T) {
+	t.Setenv("REAGENT_HOST_SECRET", "must-not-leak")
+	root := t.TempDir()
+	for _, tt := range []struct {
+		backend string
+		tmpDir  string
+	}{
+		{backend: "seatbelt", tmpDir: filepath.Join(root, ".tmp")},
+		{backend: "bubblewrap", tmpDir: "/tmp"},
+	} {
+		supervisor := &ProcessSupervisor{
+			workspace: &Workspace{path: root},
+			runner: policyRunner{policy: sandbox.Policy{
+				Backend: tt.backend,
+				Network: "allow",
+			}},
+		}
+		env, err := supervisor.payloadEnv(map[string]string{"EXPLICIT": "ok"})
+		if err != nil {
+			t.Fatalf("%s payloadEnv() error = %v", tt.backend, err)
+		}
+		joined := strings.Join(env, "\n")
+		if strings.Contains(joined, "REAGENT_HOST_SECRET=") {
+			t.Fatalf("%s 泄露宿主环境: %v", tt.backend, env)
+		}
+		if !strings.Contains(joined, "EXPLICIT=ok") || !strings.Contains(joined, "TMPDIR="+tt.tmpDir) {
+			t.Fatalf("%s payload 不完整: %v", tt.backend, env)
+		}
+	}
+}
+
+func TestProcessSupervisorSandboxPayloadRejectsInvalidEnvironmentName(t *testing.T) {
+	supervisor := &ProcessSupervisor{
+		workspace: &Workspace{path: t.TempDir()},
+		runner: policyRunner{policy: sandbox.Policy{
+			Backend: "bubblewrap",
+			Network: "allow",
+		}},
+	}
+	if _, err := supervisor.payloadEnv(map[string]string{"BAD=NAME": "value"}); err == nil {
+		t.Fatal("含等号的环境变量名应被拒绝")
 	}
 }
 
@@ -179,7 +235,7 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	supervisor := NewProcessSupervisor(lifecycle, workspace)
+	supervisor := NewProcessSupervisor(lifecycle, workspace, sandbox.NewHostRunner())
 	lifecycle.RequireStart()
 
 	session := mustStartProcess(t, supervisor, ProcessStart{
@@ -232,7 +288,7 @@ func newProcessSupervisorForTest(t *testing.T, workDir string) *ProcessSuperviso
 	if err != nil {
 		t.Fatalf("NewWorkspace() error = %v", err)
 	}
-	supervisor := NewProcessSupervisor(lifecycle, workspace)
+	supervisor := NewProcessSupervisor(lifecycle, workspace, sandbox.NewHostRunner())
 	lifecycle.RequireStart()
 	t.Cleanup(lifecycle.RequireStop)
 	return supervisor

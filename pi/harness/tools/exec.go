@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
+
 	"github.com/PycMono/go-reagent/pi/ai"
 )
 
@@ -53,10 +55,21 @@ func (t *ExecTool) Name() string {
 	return "exec"
 }
 
+// description 按 Runner.Policy() 生成，口径如实（设计 §9）：
+// host 保留现有非沙箱警告；沙箱后端描述实际生效的隔离与网络策略。
+func execDescription(policy sandbox.Policy) string {
+	switch policy.Backend {
+	case "seatbelt", "bubblewrap":
+		return fmt.Sprintf("在工作区中执行 shell 命令（沙箱内 /bin/sh）。前台输出按 stdout/stderr 流式返回，命令可在 yield 后转入后台；工作区是唯一可写路径，仅可读取工作区与运行必需的系统路径；网络策略：%s。", policy.Network)
+	default:
+		return "在工作区中执行 shell 命令。前台输出按 stdout/stderr 流式返回，命令可在 yield 后转入后台；命令拥有宿主进程权限，cwd 不是安全沙箱。"
+	}
+}
+
 func (t *ExecTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:        t.Name(),
-		Description: "在工作区中执行 shell 命令。前台输出按 stdout/stderr 流式返回，命令可在 yield 后转入后台；命令拥有宿主进程权限，cwd 不是安全沙箱。",
+		Description: execDescription(t.supervisor.Policy()),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

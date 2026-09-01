@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/extension"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
 	"github.com/PycMono/go-reagent/pi/middleware"
@@ -60,8 +61,16 @@ var ReadOnlyToolsRegister = fx.Options(
 	),
 )
 
+// CommandRunnerRegister 提供默认 Runner（HostRunner）。设计 §8：
+// 独立注册项，pi.Register / CLI / server 显式包含；CodingToolsRegister
+// 内部亦包含（ProcessSupervisor 是其消费者）。
+var CommandRunnerRegister = fx.Options(
+	fx.Provide(fx.Annotate(sandbox.NewHostRunner, fx.As(new(sandbox.Runner)))),
+)
+
 // CodingToolsRegister provides the complete local Coding tool set.
 var CodingToolsRegister = fx.Options(
+	CommandRunnerRegister,
 	ReadOnlyToolsRegister,
 	fx.Provide(
 		tools.NewProcessSupervisor,

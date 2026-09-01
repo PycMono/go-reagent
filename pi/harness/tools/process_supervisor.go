@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"go.uber.org/fx"
 )
 
@@ -24,6 +26,10 @@ type ProcessStart struct {
 	Timeout  time.Duration
 	OnOutput func(stream string, chunk []byte)
 }
+
+// Policy 返回当前 Runner 的生效策略（供 exec 工具描述与 CLI banner 使用，
+// 设计 §8：展示与实际生效策略一致）。
+func (s *ProcessSupervisor) Policy() sandbox.Policy { return s.runner.Policy() }
 
 type ProcessLog struct {
 	Content    string `json:"content"`
@@ -44,6 +50,7 @@ type ProcessSnapshot struct {
 
 type ProcessSupervisor struct {
 	workspace *Workspace
+	runner    sandbox.Runner
 
 	mu        sync.RWMutex
 	sessions  map[string]*processSession
@@ -83,9 +90,10 @@ type processStreamWriter struct {
 	onOutput func(string, []byte)
 }
 
-func NewProcessSupervisor(lifecycle fx.Lifecycle, workspace *Workspace) *ProcessSupervisor {
+func NewProcessSupervisor(lifecycle fx.Lifecycle, workspace *Workspace, runner sandbox.Runner) *ProcessSupervisor {
 	supervisor := &ProcessSupervisor{
 		workspace: workspace,
+		runner:    runner,
 		sessions:  make(map[string]*processSession),
 		closeDone: make(chan struct{}),
 	}
@@ -112,7 +120,11 @@ func (s *ProcessSupervisor) Start(ctx context.Context, start ProcessStart) (*pro
 	if err != nil {
 		return nil, fmt.Errorf("解析工作区目录失败: %w", err)
 	}
-	cmd, err := NewChildProcess(start.Command, workDir, start.Env)
+	payloadEnv, err := s.payloadEnv(start.Env)
+	if err != nil {
+		return nil, err
+	}
+	cmd, err := s.runner.BuildShell(start.Command, sandbox.CommandSpec{WorkDir: workDir, PayloadEnv: payloadEnv})
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +182,35 @@ func (s *ProcessSupervisor) Start(ctx context.Context, start ProcessStart) (*pro
 		}()
 	}
 	return session, nil
+}
+
+func (s *ProcessSupervisor) payloadEnv(overrides map[string]string) ([]string, error) {
+	policy := s.runner.Policy()
+	if policy.Backend == "host" {
+		return sandbox.HostPayloadEnv(overrides)
+	}
+	extras := make([]string, 0, len(overrides))
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		if key == "" || strings.ContainsAny(key, "=\x00") {
+			return nil, fmt.Errorf("无效环境变量名: %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		extras = append(extras, key+"="+overrides[key])
+	}
+	var tmpDir string
+	switch policy.Backend {
+	case "bubblewrap":
+		tmpDir = "/tmp"
+	case "seatbelt":
+		tmpDir = filepath.Join(s.workspace.path, ".tmp")
+	default:
+		return nil, fmt.Errorf("未知 Runner 后端 %q", policy.Backend)
+	}
+	return sandbox.BuildSandboxPayloadEnv(s.workspace.path, tmpDir, extras)
 }
 
 func (s *ProcessSupervisor) List() []ProcessSnapshot {
@@ -389,7 +430,7 @@ func (s *processSession) terminate(status string) error {
 	}
 	s.status = status
 	s.mu.Unlock()
-	return KillProcessGroup(s.cmd.Process)
+	return sandbox.KillProcessGroup(s.cmd.Process)
 }
 
 func (s *processSession) snapshot() ProcessSnapshot {
