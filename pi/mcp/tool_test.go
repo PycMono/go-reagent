@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/PycMono/go-reagent/pi/ai"
 )
 
 type toolCallerFake struct {
@@ -41,7 +39,7 @@ func TestProxyToolMapsDefinitionAndText(t *testing.T) {
 		definition.Description != "Search the web" || definition.ParallelSafe {
 		t.Fatalf("definition = %#v", definition)
 	}
-	if got, _ := ai.TextContent(output.Content); got != "result one\nresult two" {
+	if got, _ := output.Content.Text(); got != "result one\nresult two" {
 		t.Fatalf("text = %q", got)
 	}
 	if caller.name != "web_search_exa" || string(caller.arguments) != string(arguments) {
@@ -56,7 +54,7 @@ func TestProxyToolUsesStructuredContentWhenTextIsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := ai.TextContent(output.Content); got != `{"answer":"ok"}` {
+	if got, _ := output.Content.Text(); got != `{"answer":"ok"}` {
 		t.Fatalf("structured text = %q", got)
 	}
 }

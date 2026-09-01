@@ -72,7 +72,7 @@ func (p *loopScriptProvider) Stream(_ context.Context, messages []ai.Message, _ 
 func requestText(messages []ai.Message) string {
 	var builder strings.Builder
 	for _, message := range messages {
-		text, _ := ai.TextContent(message.Content)
+		text, _ := message.Content.Text()
 		builder.WriteString(text)
 	}
 	return builder.String()
@@ -184,7 +184,7 @@ func TestLoopDetectionRecoverThenTerminate(t *testing.T) {
 	// 提醒不进入消息历史；协议组完整：recover 的 Assistant 与合成结果都在，
 	// terminate 的 Assistant 不在。
 	for _, message := range result.newMessages {
-		text, _ := ai.TextContent(message.Content)
+		text, _ := message.Content.Text()
 		if strings.Contains(text, "循环护栏提醒") {
 			t.Fatal("reminder must never enter newMessages")
 		}
@@ -192,7 +192,7 @@ func TestLoopDetectionRecoverThenTerminate(t *testing.T) {
 	syntheticResults := 0
 	for _, message := range result.newMessages {
 		if message.Role == ai.RoleTool && message.IsError {
-			text, _ := ai.TextContent(message.Content)
+			text, _ := message.Content.Text()
 			if strings.Contains(text, "工具循环护栏阻止了本批次执行") {
 				syntheticResults++
 			}

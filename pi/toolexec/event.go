@@ -9,7 +9,7 @@ import (
 type Result struct {
 	ToolCallID string             `json:"tool_call_id"`
 	ToolName   string             `json:"tool_name"`
-	Content    []ai.ContentBlock  `json:"content"`
+	Content    ai.ContentBlocks   `json:"content"`
 	Details    any                `json:"details,omitempty"`
 	IsError    bool               `json:"is_error"`
 	ErrorCode  pierrors.ErrorCode `json:"error_code,omitempty"`

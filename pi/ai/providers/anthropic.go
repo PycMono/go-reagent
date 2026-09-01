@@ -168,48 +168,47 @@ func anthropicFinishReason(reason anthropicsdk.StopReason) ai.FinishReason {
 }
 
 func (p *AnthropicImpl) classifyError(err error) error {
-	info := providerErrorInfo{err: err}
+	info := pierrors.AIProviderErrorInfo{Err: err}
 	var apiErr *anthropicsdk.Error
 	if errors.As(err, &apiErr) {
-		info.statusCode = apiErr.StatusCode
-		info.providerCode = string(apiErr.Type())
+		info.StatusCode = apiErr.StatusCode
 		switch apiErr.Type() {
 		case anthropicsdk.ErrorTypeBillingError:
-			info.quotaExceeded = true
+			info.QuotaExceeded = true
 		case anthropicsdk.ErrorTypeRateLimitError:
-			info.statusCode = http.StatusTooManyRequests
+			info.StatusCode = http.StatusTooManyRequests
 		case anthropicsdk.ErrorTypeTimeoutError:
-			info.statusCode = http.StatusRequestTimeout
+			info.StatusCode = http.StatusRequestTimeout
 		case anthropicsdk.ErrorTypeOverloadedError,
 			anthropicsdk.ErrorTypeAPIError:
-			info.statusCode = http.StatusInternalServerError
+			info.StatusCode = http.StatusInternalServerError
 		case anthropicsdk.ErrorTypeAuthenticationError:
-			info.statusCode = http.StatusUnauthorized
+			info.StatusCode = http.StatusUnauthorized
 		case anthropicsdk.ErrorTypePermissionError:
-			info.statusCode = http.StatusForbidden
+			info.StatusCode = http.StatusForbidden
 		}
 	}
-	return classifyError(info)
+	return pierrors.ClassifyAIProvider(info)
 }
 
 func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {
-	normalized, err := normalizeMessages(messages, vision)
-	if err != nil {
-		return nil, nil, err
-	}
-	result := make([]anthropicsdk.MessageParam, 0, len(normalized))
+	result := make([]anthropicsdk.MessageParam, 0, len(messages))
 	var system []anthropicsdk.TextBlockParam
-	for _, message := range normalized {
-		switch message.role {
+	for _, message := range messages {
+		message, err := message.PrepareOutbound(vision)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch message.Role {
 		case ai.RoleSystem:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, nil, err
 			}
 			system = append(system, anthropicsdk.TextBlockParam{Text: text})
 		case ai.RoleUser:
 			var blocks []anthropicsdk.ContentBlockParamUnion
-			for _, block := range message.blocks {
+			for _, block := range message.Content {
 				switch block.Type {
 				case ai.ContentTypeText:
 					blocks = append(blocks, anthropicsdk.NewTextBlock(block.Text))
@@ -219,15 +218,15 @@ func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.Mes
 			}
 			result = append(result, anthropicsdk.NewUserMessage(blocks...))
 		case ai.RoleTool:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, nil, err
 			}
 			result = append(result, anthropicsdk.NewUserMessage(
-				anthropicsdk.NewToolResultBlock(message.toolCallID, text, message.isError),
+				anthropicsdk.NewToolResultBlock(message.ToolCallID, text, message.IsError),
 			))
 		case ai.RoleAssistant:
-			text, err := message.text()
+			text, err := message.Content.Text()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -235,8 +234,12 @@ func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.Mes
 			if text != "" {
 				blocks = append(blocks, anthropicsdk.NewTextBlock(text))
 			}
-			for _, toolCall := range message.toolCalls {
-				blocks = append(blocks, anthropicsdk.NewToolUseBlock(toolCall.id, toolCall.input, toolCall.name))
+			for _, toolCall := range message.ToolCalls {
+				var input any
+				if err := json.Unmarshal(toolCall.Arguments, &input); err != nil {
+					return nil, nil, fmt.Errorf("tool call %q arguments: %w", toolCall.ID, err)
+				}
+				blocks = append(blocks, anthropicsdk.NewToolUseBlock(toolCall.ID, input, toolCall.Name))
 			}
 			result = append(result, anthropicsdk.NewAssistantMessage(blocks...))
 		}
@@ -245,34 +248,55 @@ func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.Mes
 }
 
 func toAnthropicTools(definitions []ai.ToolDefinition) ([]anthropicsdk.ToolUnionParam, error) {
-	normalized, err := normalizeToolDefinitions(definitions)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]anthropicsdk.ToolUnionParam, 0, len(normalized))
-	for _, definition := range normalized {
+	result := make([]anthropicsdk.ToolUnionParam, 0, len(definitions))
+	for _, definition := range definitions {
+		inputSchema, err := definition.InputSchemaObject()
+		if err != nil {
+			return nil, err
+		}
 		var properties any
 		var required []string
 		extraFields := make(map[string]any)
-		for key, value := range definition.inputSchema {
+		for key, value := range inputSchema {
 			switch key {
 			case "type":
 			case "properties":
 				properties = value
 			case "required":
-				required, err = stringValues(value)
+				required, err = schemaStringValues(value)
 				if err != nil {
-					return nil, fmt.Errorf("tool %q required: %w", definition.name, err)
+					return nil, fmt.Errorf("tool %q required: %w", definition.Name, err)
 				}
 			default:
 				extraFields[key] = value
 			}
 		}
 		tool := anthropicsdk.ToolParam{
-			Name: definition.name, Description: anthropicsdk.String(definition.description),
+			Name: definition.Name, Description: anthropicsdk.String(definition.Description),
 			InputSchema: anthropicsdk.ToolInputSchemaParam{Properties: properties, Required: required, ExtraFields: extraFields},
 		}
 		result = append(result, anthropicsdk.ToolUnionParam{OfTool: &tool})
 	}
 	return result, nil
+}
+
+func schemaStringValues(value any) ([]string, error) {
+	switch values := value.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return values, nil
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				return nil, errors.New("must contain only strings")
+			}
+			result = append(result, text)
+		}
+		return result, nil
+	default:
+		return nil, errors.New("must be an array of strings")
+	}
 }

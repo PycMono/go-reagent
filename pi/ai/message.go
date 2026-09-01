@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,7 @@ type Message struct {
 	// Role 表示消息角色。
 	Role Role `json:"role"`
 	// Content 保存消息的内容块。
-	Content []ContentBlock `json:"content,omitempty"`
+	Content ContentBlocks `json:"content,omitempty"`
 	// Usage 保存生成当前模型消息时产生的用量信息。
 	Usage *Usage `json:"usage,omitempty"`
 	// FinishReason 保存模型结束当前响应的统一原因。
@@ -45,6 +46,44 @@ type Message struct {
 	ToolName string `json:"tool_name,omitempty"`
 	// IsError 表示当前工具结果是否为错误结果。
 	IsError bool `json:"is_error,omitempty"`
+}
+
+// PrepareOutbound validates and prepares a provider-bound copy of the message.
+// Image blocks are replaced by redacted placeholders when vision is disabled.
+func (message Message) PrepareOutbound(vision bool) (Message, error) {
+	if err := message.Content.ValidateForRole(message.Role); err != nil {
+		return Message{}, fmt.Errorf("message content: %w", err)
+	}
+	if vision {
+		message.Content = message.Content.Clone()
+	} else {
+		message.Content = message.Content.WithImagePlaceholders()
+	}
+
+	switch message.Role {
+	case RoleSystem, RoleUser:
+	case RoleTool:
+		if message.ToolCallID == "" {
+			return Message{}, errors.New("tool message requires tool_call_id")
+		}
+	case RoleAssistant:
+		text, err := message.Content.Text()
+		if err != nil {
+			return Message{}, err
+		}
+		if text == "" && len(message.ToolCalls) == 0 {
+			return Message{}, errors.New("assistant message contains no content or tool calls")
+		}
+		for _, toolCall := range message.ToolCalls {
+			var input any
+			if err := json.Unmarshal(toolCall.Arguments, &input); err != nil {
+				return Message{}, fmt.Errorf("tool call %q arguments: %w", toolCall.ID, err)
+			}
+		}
+	default:
+		return Message{}, fmt.Errorf("unsupported message role %q", message.Role)
+	}
+	return message, nil
 }
 
 // ValidateThinking 校验一条 Thinking 阶段响应的完整契约：消息必须是纯文本
@@ -64,7 +103,7 @@ func (message *Message) ValidateThinking() error {
 		return errors.New("provider returned tool calls while tools were disabled")
 	}
 
-	content, err := TextContent(message.Content)
+	content, err := message.Content.Text()
 	if err != nil {
 		return fmt.Errorf("response content: %w", err)
 	}
@@ -89,7 +128,7 @@ func (message *Message) ValidateAction() error {
 	if message.ToolCallID != "" {
 		return errors.New("response must not contain tool_call_id")
 	}
-	content, err := TextContent(message.Content)
+	content, err := message.Content.Text()
 	if err != nil {
 		return fmt.Errorf("response content: %w", err)
 	}

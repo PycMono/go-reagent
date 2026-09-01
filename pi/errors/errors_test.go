@@ -3,9 +3,60 @@ package errors
 import (
 	"context"
 	stderrors "errors"
+	"io"
 	"io/fs"
+	"net"
+	"net/http"
 	"testing"
 )
+
+func TestClassifyAIProviderUsesNormalizedFacts(t *testing.T) {
+	tests := []struct {
+		name string
+		info AIProviderErrorInfo
+		want ErrorCode
+	}{
+		{name: "context overflow", info: AIProviderErrorInfo{ContextOverflow: true, Err: stderrors.New("overflow")}, want: ErrorCodeAIContextOverflow},
+		{name: "quota", info: AIProviderErrorInfo{QuotaExceeded: true, Err: stderrors.New("quota")}, want: ErrorCodeAIQuotaExceeded},
+		{name: "rate limit", info: AIProviderErrorInfo{StatusCode: http.StatusTooManyRequests, Err: stderrors.New("429")}, want: ErrorCodeAIRateLimited},
+		{name: "request timeout", info: AIProviderErrorInfo{StatusCode: http.StatusRequestTimeout, Err: stderrors.New("408")}, want: ErrorCodeAITransient},
+		{name: "conflict", info: AIProviderErrorInfo{StatusCode: http.StatusConflict, Err: stderrors.New("409")}, want: ErrorCodeAITransient},
+		{name: "server", info: AIProviderErrorInfo{StatusCode: http.StatusBadGateway, Err: stderrors.New("502")}, want: ErrorCodeAITransient},
+		{name: "unauthorized", info: AIProviderErrorInfo{StatusCode: http.StatusUnauthorized, Err: stderrors.New("401")}, want: ErrorCodeAIUnauthorized},
+		{name: "forbidden", info: AIProviderErrorInfo{StatusCode: http.StatusForbidden, Err: stderrors.New("403")}, want: ErrorCodeAIUnauthorized},
+		{name: "bad request", info: AIProviderErrorInfo{StatusCode: http.StatusBadRequest, Err: stderrors.New("400")}, want: ErrorCodeAIInvalidRequest},
+		{name: "unknown", info: AIProviderErrorInfo{Err: stderrors.New("unknown")}, want: ErrorCodeAIGeneration},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyAIProvider(tt.info)
+			if ErrorCodeOf(got) != tt.want || !stderrors.Is(got, tt.info.Err) {
+				t.Fatalf("ClassifyAIProvider() = %v, want code %q with original cause", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyAIProviderUsesContextAndNetworkErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want ErrorCode
+	}{
+		{name: "canceled", err: context.Canceled, want: ErrorCodeCanceled},
+		{name: "deadline", err: context.DeadlineExceeded, want: ErrorCodeDeadlineExceeded},
+		{name: "DNS", err: &net.DNSError{IsTimeout: true}, want: ErrorCodeAITransient},
+		{name: "EOF", err: io.ErrUnexpectedEOF, want: ErrorCodeAITransient},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyAIProvider(AIProviderErrorInfo{Err: tt.err})
+			if ErrorCodeOf(got) != tt.want || !stderrors.Is(got, tt.err) {
+				t.Fatalf("ClassifyAIProvider() = %v, want code %q with original cause", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestErrorCodeValuesAreStable(t *testing.T) {
 	want := map[ErrorCode]string{

@@ -165,7 +165,7 @@ func clonePruneMessages(messages []ai.Message) []ai.Message {
 	for index, message := range messages {
 		cloned[index] = message
 		if message.Content != nil {
-			cloned[index].Content = ai.CloneBlocks(message.Content)
+			cloned[index].Content = message.Content.Clone()
 		}
 		if message.ToolCalls != nil {
 			calls := make([]ai.ToolCall, len(message.ToolCalls))

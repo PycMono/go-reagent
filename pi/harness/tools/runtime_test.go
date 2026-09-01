@@ -72,11 +72,11 @@ func toolResultText(t *testing.T, result testToolResult) string {
 	return toolEventText(t, result.Content)
 }
 
-func toolEventText(t *testing.T, content []ai.ContentBlock) string {
+func toolEventText(t *testing.T, content ai.ContentBlocks) string {
 	t.Helper()
-	text, err := ai.TextContent(content)
+	text, err := content.Text()
 	if err != nil {
-		t.Fatalf("ai.TextContent() error = %v", err)
+		t.Fatalf("ContentBlocks.Text() error = %v", err)
 	}
 	return text
 }

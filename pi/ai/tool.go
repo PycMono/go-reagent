@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 )
@@ -55,6 +56,80 @@ type ToolDefinition struct {
 	ParallelSafe bool `json:"parallel_safe,omitempty"`
 }
 
+// InputSchemaObject returns the tool input schema as a JSON object while
+// normalizing json.Number values for SDK serialization.
+func (definition ToolDefinition) InputSchemaObject() (map[string]any, error) {
+	object, err := toolSchemaObject(definition.InputSchema)
+	if err != nil {
+		return nil, fmt.Errorf("tool %q input schema: %w", definition.Name, err)
+	}
+	if schemaType, exists := object["type"]; exists && schemaType != "object" {
+		return nil, fmt.Errorf("tool %q input schema type must be object", definition.Name)
+	}
+	return object, nil
+}
+
+func toolSchemaObject(value any) (map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if object, ok := value.(map[string]any); ok {
+		normalized, err := normalizeToolSchemaNumbers(object)
+		if err != nil {
+			return nil, err
+		}
+		return normalized.(map[string]any), nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]any
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, errors.New("JSON schema must be an object")
+	}
+	return object, nil
+}
+
+func normalizeToolSchemaNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		if integer, err := typed.Int64(); err == nil {
+			return integer, nil
+		}
+		number, err := typed.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON schema number %q: %w", typed, err)
+		}
+		return number, nil
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, child := range typed {
+			normalized, err := normalizeToolSchemaNumbers(child)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = normalized
+		}
+		return result, nil
+	case []any:
+		result := make([]any, len(typed))
+		for index, child := range typed {
+			normalized, err := normalizeToolSchemaNumbers(child)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = normalized
+		}
+		return result, nil
+	default:
+		return value, nil
+	}
+}
+
 // ToolDefinitions 是一批可供模型调用的工具定义。
 type ToolDefinitions []ToolDefinition
 
@@ -79,14 +154,14 @@ func (definitions ToolDefinitions) ParallelSafety() map[string]bool {
 
 // ToolOutput is the final content produced by one tool execution.
 type ToolOutput struct {
-	Content []ContentBlock `json:"content"`
-	Details any            `json:"details,omitempty"`
+	Content ContentBlocks `json:"content"`
+	Details any           `json:"details,omitempty"`
 }
 
 // ToolUpdate is an incremental update emitted while a tool is running.
 type ToolUpdate struct {
-	Content []ContentBlock `json:"content"`
-	Details any            `json:"details,omitempty"`
+	Content ContentBlocks `json:"content"`
+	Details any           `json:"details,omitempty"`
 }
 
 // UpdateEmitter receives incremental updates from a running tool.
