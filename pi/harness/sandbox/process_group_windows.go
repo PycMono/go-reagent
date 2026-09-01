@@ -1,6 +1,6 @@
 //go:build windows
 
-package tools
+package sandbox
 
 import (
 	"errors"
@@ -21,5 +21,6 @@ func KillProcessGroup(process *os.Process) error {
 	if errors.Is(err, os.ErrProcessDone) {
 		return nil
 	}
+
 	return err
 }

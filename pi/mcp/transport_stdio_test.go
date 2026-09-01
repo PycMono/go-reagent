@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -362,6 +363,35 @@ func TestStdioTransportInvalidOptions(t *testing.T) {
 	// Timeout <= 0 兜底为 DefaultTimeout。
 	if transport.options.Timeout != DefaultTimeout {
 		t.Fatalf("Timeout = %v", transport.options.Timeout)
+	}
+}
+
+// 设计 §7：BuildCommand 与旧字段严格互斥；回调返回 (nil, nil) 报错。
+func TestStdioTransportBuildCommandMutex(t *testing.T) {
+	// 与旧字段同时非零值 → 构造报错。
+	if _, err := NewStdioTransport(StdioTransportOptions{
+		Command:      "cat",
+		BuildCommand: func() (*exec.Cmd, error) { return nil, nil },
+	}); err == nil || !strings.Contains(err.Error(), "互斥") {
+		t.Fatalf("BuildCommand 与 Command 并存应报错: %v", err)
+	}
+	if _, err := NewStdioTransport(StdioTransportOptions{
+		WorkDir:      "/tmp",
+		BuildCommand: func() (*exec.Cmd, error) { return nil, nil },
+	}); err == nil || !strings.Contains(err.Error(), "互斥") {
+		t.Fatalf("BuildCommand 与 WorkDir 并存应报错: %v", err)
+	}
+	// 回调返回 nil,nil → 构造通过（构造期无法预知），start 阶段报错。
+	transport, err := NewStdioTransport(StdioTransportOptions{
+		BuildCommand: func() (*exec.Cmd, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport.state = stdioStateStarting
+	transport.start()
+	if transport.state != stdioStateFailed {
+		t.Fatalf("nil 命令应使 start 失败, state = %v", transport.state)
 	}
 }
 

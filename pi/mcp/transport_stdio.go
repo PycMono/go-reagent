@@ -31,6 +31,12 @@ type StdioTransportOptions struct {
 	Env     []string
 	WorkDir string
 	Timeout time.Duration
+
+	// BuildCommand 与旧字段严格互斥（设计 §7）：非 nil 时 Command/Args/Env/WorkDir
+	// 必须全为零值，否则构造报错（防止两半配置静默拼接）；回调返回 (nil, nil)
+	// 同样报错。设置后进程组设置收口到 Runner，transport 不再调用
+	// configureProcessGroup（重复赋值 SysProcAttr 会互相覆盖）。
+	BuildCommand func() (*exec.Cmd, error)
 }
 
 type stdioState int
@@ -94,7 +100,13 @@ type StdioTransport struct {
 }
 
 func NewStdioTransport(options StdioTransportOptions) (*StdioTransport, error) {
-	if options.Command == "" {
+	if options.BuildCommand != nil {
+		// 回调模式：旧字段必须全为零值（设计 §7 互斥规则）。
+		if options.Command != "" || len(options.Args) > 0 ||
+			len(options.Env) > 0 || options.WorkDir != "" {
+			return nil, errors.New("mcp stdio: BuildCommand 与 Command/Args/Env/WorkDir 互斥")
+		}
+	} else if options.Command == "" {
 		return nil, errors.New("mcp stdio command is required")
 	}
 	for _, field := range append([]string{options.Command, options.WorkDir}, options.Args...) {
@@ -164,10 +176,27 @@ func (t *StdioTransport) ensureStarted() error {
 func (t *StdioTransport) start() {
 	defer close(t.started)
 
-	command := exec.Command(t.options.Command, t.options.Args...)
-	command.Dir = t.options.WorkDir
-	command.Env = t.options.Env
-	configureProcessGroup(command)
+	var command *exec.Cmd
+	if t.options.BuildCommand != nil {
+		// 回调路径：进程构造（含沙箱包装、进程组设置）收口到 Runner（设计 §7），
+		// transport 不再调用 configureProcessGroup——两者都会给 SysProcAttr
+		// 赋值，重复设置会互相覆盖。
+		cmd, err := t.options.BuildCommand()
+		if err != nil {
+			t.failStarting("build command", err)
+			return
+		}
+		if cmd == nil {
+			t.failStarting("build command", errors.New("mcp stdio: BuildCommand 返回 nil 命令"))
+			return
+		}
+		command = cmd
+	} else {
+		command = exec.Command(t.options.Command, t.options.Args...)
+		command.Dir = t.options.WorkDir
+		command.Env = t.options.Env
+		configureProcessGroup(command)
+	}
 
 	stdin, err := command.StdinPipe()
 	if err != nil {

@@ -2,16 +2,55 @@ package mcp
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PycMono/go-reagent/config"
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
+	"github.com/PycMono/go-reagent/pi/harness/tools"
 	pimcp "github.com/PycMono/go-reagent/pi/mcp"
 )
 
+// testRoot 是测试装配默认项：工作区临时目录。
+func testRoot(t *testing.T) tools.Root {
+	t.Helper()
+	return tools.Root(t.TempDir())
+}
+
+func TestSandboxStdioRejectsCWDOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	runner, err := sandbox.NewSeatbeltRunner("/usr/bin/sandbox-exec", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := stdioConfig(t, nil).MCP.Servers[0]
+	server.CWD = t.TempDir()
+	if _, err := newStdioTransport(runner, root, server); err == nil || !strings.Contains(err.Error(), "cwd 被拒") {
+		t.Fatalf("outside cwd error = %v", err)
+	}
+}
+
+func TestSandboxStdioAcceptsCWDInsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := sandbox.NewSeatbeltRunner("/usr/bin/sandbox-exec", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := stdioConfig(t, map[string]string{"EXPLICIT": "ok"}).MCP.Servers[0]
+	server.CWD = nested
+	if _, err := newStdioTransport(runner, root, server); err != nil {
+		t.Fatalf("inside cwd error = %v", err)
+	}
+}
+
 func TestNewExtensionsCreatesHTTPTransportForHTTPServer(t *testing.T) {
 	t.Setenv("EXA_API_KEY", "driver-test-key")
-	out, err := NewExtensions(httpConfig(t, "http"))
+	out, err := NewExtensions(httpConfig(t, "http"), testRoot(t), sandbox.NewHostRunner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +69,7 @@ func TestNewExtensionsCreatesStdioTransportForStdioServer(t *testing.T) {
 	out, err := NewExtensions(stdioConfig(t, map[string]string{
 		"MCP_TOKEN": "${GO_REAGENT_DRIVER_STDIO_TOKEN}",
 		"LOG_LEVEL": "warn",
-	}))
+	}), testRoot(t), sandbox.NewHostRunner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +82,7 @@ func TestNewExtensionsCreatesStdioTransportForStdioServer(t *testing.T) {
 }
 
 func TestNewExtensionsSkipsDisabledAndRejectsUnknownTransport(t *testing.T) {
-	out, err := NewExtensions(disabledConfig(t))
+	out, err := NewExtensions(disabledConfig(t), testRoot(t), sandbox.NewHostRunner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +92,7 @@ func TestNewExtensionsSkipsDisabledAndRejectsUnknownTransport(t *testing.T) {
 
 	cfg := stdioConfig(t, nil)
 	cfg.MCP.Servers[0].Transport = "grpc"
-	if _, err := NewExtensions(cfg); err == nil || !strings.Contains(err.Error(), "transport") {
+	if _, err := NewExtensions(cfg, testRoot(t), sandbox.NewHostRunner()); err == nil || !strings.Contains(err.Error(), "transport") {
 		t.Fatalf("unknown transport error = %v", err)
 	}
 }
@@ -61,7 +100,7 @@ func TestNewExtensionsSkipsDisabledAndRejectsUnknownTransport(t *testing.T) {
 func TestNewExtensionsFailsFastOnMissingEnvReference(t *testing.T) {
 	const secret = "never-print-driver-env-secret"
 	t.Setenv("GO_REAGENT_DRIVER_STDIO_TOKEN", "")
-	_, err := NewExtensions(stdioConfig(t, map[string]string{"MCP_TOKEN": "${GO_REAGENT_DRIVER_STDIO_TOKEN}"}))
+	_, err := NewExtensions(stdioConfig(t, map[string]string{"MCP_TOKEN": "${GO_REAGENT_DRIVER_STDIO_TOKEN}"}), testRoot(t), sandbox.NewHostRunner())
 	if err == nil || !strings.Contains(err.Error(), "GO_REAGENT_DRIVER_STDIO_TOKEN") {
 		t.Fatalf("env resolution error = %v", err)
 	}
@@ -125,7 +164,7 @@ func TestResolveChildEnvKeepsParentEnvironmentUnmodified(t *testing.T) {
 func TestStdioTransportReceivesDriverEnv(t *testing.T) {
 	// 端到端验证：driver 解析的 env 合并结果传入 StdioTransportOptions。
 	cfg := stdioConfig(t, map[string]string{"LOG_LEVEL": "warn"})
-	transport, err := newStdioTransport(cfg.MCP.Servers[0])
+	transport, err := newStdioTransport(sandbox.NewHostRunner(), string(testRoot(t)), cfg.MCP.Servers[0])
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
 
-package tools
+package sandbox
 
 import (
 	"errors"
@@ -20,5 +20,6 @@ func KillProcessGroup(process *os.Process) error {
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
+
 	return err
 }

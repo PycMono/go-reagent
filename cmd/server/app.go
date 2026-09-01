@@ -8,6 +8,7 @@ import (
 	"github.com/PycMono/go-reagent/infrastructure"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
+	sandboxdriver "github.com/PycMono/go-reagent/infrastructure/driver/sandbox"
 	"github.com/PycMono/go-reagent/infrastructure/notice"
 	"github.com/PycMono/go-reagent/pi"
 	"go.uber.org/fx"
@@ -19,6 +20,7 @@ var Register = fx.Options(
 	conversation.Register,
 	chatservice.Register,
 	mcpdriver.Register,
+	sandboxdriver.Register,
 	notice.Register,
 	fx.Provide(
 		config.NewFromEnvironment,
@@ -33,6 +35,7 @@ var Register = fx.Options(
 
 var agentRegister = fx.Options(
 	pi.CoreRegister,
+	pi.CommandRunnerRegister, // SDK 默认 Host，由平台 sandbox driver 在产品组合根替换
 	pi.ReadOnlyToolsRegister,
 	pi.SubagentRegister,
 	chattools.Register,
