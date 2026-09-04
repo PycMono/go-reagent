@@ -103,6 +103,24 @@ Bubblewrap 策略允许写整个 Workspace。即使移除 `write/edit/apply_patc
 生产 Agent 要运行 Skill 脚本但不能修改自己的发布资产，因此 `pi` 必须把“允许执行
 命令”和“允许修改 Bundle”拆开，不能继续用 `AllowExec` 隐含整个 Workspace 可写。
 
+### 3.5 当前没有管理员身份边界
+
+`infrastructure/middleware/visitor.go` 当前只给浏览器创建匿名 `TypeUser` Session，随后
+只向 `bizctx` 写入 UserID。仓库没有管理员登录、Role Context 或 Tenant Resolver。依赖的
+`go-gin-sdk/session` 虽然定义了 `TypeAdmin`，但“类型存在”不等于服务已经可靠认证了
+管理员。
+
+所以 Training API 上线前必须先有可信的 `Principal{TenantID, UserID, Role}`。本设计只
+定义消费管理员身份的端口，不在训练子系统里发明账号密码系统：
+
+- 普通 Chat 可以继续使用匿名 Visitor Principal；
+- Training/Release/Evaluation/Fine-tuning 路由必须经过 `RequireAdmin`；
+- Principal 必须由受信任的登录系统或 Admin Session 适配器创建，不能由请求 Header
+  直接声称角色；
+- 没有配置 Admin Auth Resolver 时，服务不注册管理页面和写路由并在启动日志明确提示；
+- 第一阶段可以使用单租户 `default`，但 TenantID 仍进入 Principal、数据库查询和文件
+  路径，避免后续多租户改造破坏安全边界。
+
 ## 4. Workify 参考实现的真实模型
 
 ### 4.1 同一个逻辑 Agent，按 SessionMember 创建运行实例
@@ -357,6 +375,56 @@ Workify `train` Skill 要求训练 Agent 创建测试会话，发送 human-proxy
 | `service` Profile 通过会话切到 `general` 才能训练 | 使用明确的 Runtime Purpose 和服务端权限策略 |
 | Bundle Extensions/Hook 是核心资产 | 第一期只支持 AGENTS、文档、Skills 和脚本 |
 
+### 4.13 Workify 源码调用链与文件分工
+
+Workify 没有一个名为“自主训练引擎”的单体模块；能力由会话物化、Runtime、Skill、两层
+Gate、Git 发布和 reload 多个模块共同完成：
+
+```text
+创建/加载 Agent SessionMember
+  → prepareAgentSessionMember
+  → materializeBundleWorktree
+  → AgentRuntimeManager.ensureMemberRuntime
+  → 独立 worker + cwd
+
+管理员发送 /skill:train
+  → slash command dispatch
+  → force mount train Skill
+  → Pi runtime turn
+  → attachGateAHook/checkGateA
+  → write/edit/bash 修改 member cwd
+
+管理员 Complete training
+  → completeAgentTraining
+  → commitBundleIfDirty
+  → withPublishLock(agentId)
+  → publishFromWorktree
+  → checkBundleCommitDiff (Gate B)
+  → buildAgentVersionResourceSnapshot
+  → commit/tag/AgentVersion/latestVersion
+  → mark reload pending
+```
+
+| Workify 文件 | 真实职责 | go-reagent 对应落位 |
+| --- | --- | --- |
+| `packages/store-spec/src/types.ts` | AgentDefinition/Version/SessionMember 数据契约 | `domain/entity/agent*` |
+| `packages/server/src/session-member-provisioning.ts` | 从版本物化每成员 cwd 和资源快照 | `agentruntime/resolver.go` + `agentbundle/worktree.go` |
+| `packages/server/src/agent-runtime/manager.ts` | 按 member 创建、复用、销毁 worker | `application/service/agentruntime/` |
+| `packages/server/src/slash-commands/training-skill.ts` | 根据 capability 强制提供 train Skill | `application/tool/agenttraining/register.go` |
+| `packages/builtin-resources/skills/train/1.0.0/SKILL.md` | 教 Agent 如何选择和修改 Bundle 资产 | 平台维护的 training policy/Skill |
+| `packages/agent/src/runtime-adapters/system-append.ts` | 注入 Bundle authoring 分类和治理提示 | Training Runtime ContextBlock |
+| `packages/agent/src/runtime-adapters/gate-a.ts` | 工具调用前检查身份、能力和路径 | Training Tool middleware + WorkspacePolicy |
+| `packages/agent/src/runtime-adapters/pi.ts` | 把 Gate A hook 接入 Pi 生命周期 | RuntimeSpec 的 ExtraHandlers |
+| `packages/server/src/routes/agent-training.ts` | Complete training 用例编排 | `agenttraining` + `agentrelease` Service |
+| `packages/server/src/bundle-commit.ts` | 发布前检查真实 Git diff | CandidateValidator/Gate B |
+| `packages/server/src/publish-from-worktree.ts` | lock、SemVer、commit/tag、补偿 | `agentrelease/publish.go` + `agentbundle/publish.go` |
+| `packages/server/src/agent-version-snapshot.ts` | 固定发布时资源快照 | AgentRelease/RuntimeConfigSnapshot |
+| `packages/server/src/session-member-reload.ts` | 发布后标记并懒 reload | Conversation pending_release_id |
+
+最关键的源码事实是：`completeAgentTraining` 不是让正在运行的 worker 覆盖生产目录；它把
+该 member cwd 作为候选交给服务端发布流程。go-reagent 方案 A 保留这条主线，同时把
+Workify 分散在 live Agent config 中的行为配置进一步收敛到不可变 AgentRelease。
+
 ## 5. 目标和非目标
 
 ### 5.1 目标
@@ -458,6 +526,7 @@ type Agent struct {
 ```go
 type BundleVersion struct {
     ID                      string
+    TenantID                string
     AgentID                 string
     Version                 string
     GitCommit               string
@@ -479,10 +548,11 @@ type BundleVersion struct {
 ```go
 type ModelRevision struct {
     ID               string
+    TenantID         string
     ProviderID       string
     ModelID          string
     Kind             ModelRevisionKind // base | fine_tuned
-    BaseModelID      *string
+    BaseRevisionID   *string
     DatasetVersionID *string
     FineTuneJobID    *string
     Status           ModelRevisionStatus
@@ -498,6 +568,7 @@ type ModelRevision struct {
 ```go
 type AgentRelease struct {
     ID                 string
+    TenantID           string
     AgentID            string
     Version            string
     BundleVersionID    string
@@ -548,8 +619,10 @@ type TrainingSession struct {
     AutoRepairAttempts   int
     LastValidationRunID  *string
     LastEvaluationRunID  *string
+    ActiveRunID          *string
     RunLeaseExpiresAt    *time.Time
     ExpiresAt            time.Time
+    Version              uint64
     CreatedAt            time.Time
     UpdatedAt            time.Time
 }
@@ -609,10 +682,11 @@ TrainingExample 只来自管理员明确审核：
 ```go
 type TrainingExample struct {
     ID                    string
+    TenantID              string
     AgentID               string
-    Input                 []ai.Message
-    ExpectedOutput        ai.Message
-    RejectedOutput        *ai.Message
+    Input                 []TrainingMessage
+    ExpectedOutput        TrainingMessage
+    RejectedOutput        *TrainingMessage
     ExpectedToolCalls     []ExpectedToolCall
     Tags                  []string
     SourceConversationID  string
@@ -621,6 +695,10 @@ type TrainingExample struct {
     ApprovedAt            time.Time
 }
 ```
+
+`TrainingMessage` 是 Fine-tuning 领域自己的规范消息结构，只包含 role、content blocks 和
+规范 Tool call/result，不 import `pi/ai` 或任何 Provider SDK。应用层在运行评测时转换为
+`pi.Message`，FineTune adapter 在提交外部任务时转换成 Provider 格式。
 
 DatasetVersion 保存规范化后的样本 ID 集合、目标 Provider 格式、内容摘要、脱敏报告和
 创建人。FineTuneJob 保存外部任务 ID、Provider、基础模型、超参数、状态、错误和 Usage。
@@ -781,6 +859,30 @@ type Options struct {
 
 Seatbelt 和 Bubblewrap 必须在 OS 层实现相同策略，不能只依赖 Tool middleware。
 
+`pi.New` 的关键装配变化如下，策略只规范化一次并传给所有可产生子进程或写句柄的组件：
+
+```go
+func New(opts Options) (*Agent, error) {
+    policy, err := NormalizeWorkspacePolicy(opts.WorkDir, opts.WorkspacePolicy)
+    if err != nil {
+        return nil, fmt.Errorf("pi: workspace policy: %w", err)
+    }
+    runner, err := sandbox.NewRunner(opts.WorkDir, policy.SandboxPolicy())
+    if err != nil {
+        return nil, fmt.Errorf("pi: select sandbox runner: %w", err)
+    }
+    workspace, err := tools.NewWorkspace(tools.Root(opts.WorkDir), policy.FilePolicy())
+    if err != nil {
+        return nil, err
+    }
+    extensions, err := mcp.New(opts.MCPServers, tools.Root(opts.WorkDir), runner, policy.MCPPolicy())
+    // 后续 Registry/Provider/Loop/Agent 装配保持现有顺序。
+}
+```
+
+这里不是要求暴露三个新的公共 Policy 类型；`SandboxPolicy/FilePolicy/MCPPolicy` 可以是
+`pi` 内部适配结果。公共 SDK 只承诺 `WorkspacePolicy`，避免调用方分别配置后产生漂移。
+
 ### 10.3 Workspace 检查接口
 
 `pi/harness` 暴露只读检查能力，供发布服务复用现有 AGENTS/Skill 解析契约：
@@ -823,7 +925,15 @@ type RuntimeManager interface {
     Invalidate(context.Context, string) error
     Close(context.Context) error
 }
+
+type ChatRuntimeProvider interface {
+    AcquireChat(context.Context, ChatIdentity) (RuntimeLease, error)
+}
 ```
+
+`ReleaseResolver` 实现 `ChatRuntimeProvider`：读取 Release、解析 Bundle/Model/ToolPolicy，
+构造 RuntimeSpec 后再调用 RuntimeManager。Conversation 只依赖 ChatRuntimeProvider，
+不能自行拼装 RuntimeSpec。
 
 缓存 Key：
 
@@ -1209,50 +1319,558 @@ Agent 详情页增加“训练”页签。开始训练前展示当前 ActiveRele
 管理员可以查看完整测试定义；发送给 Author Agent 的失败摘要必须由 Evaluation Service
 单独生成，不能把隐藏期望、Judge 提示词或完整测试 fixture 拼回训练聊天。
 
-## 17. 包边界
+## 17. 代码与文件划分
 
-建议新增：
+本节是开发落位约束，不是示意目录。文件名允许在实现计划中做小幅调整，但包职责、
+依赖方向和“一个文件只负责一个主要原因”的边界不得合并回巨型 Service。
 
-```text
-domain/entity/agent/
-domain/entity/agentrelease/
-domain/entity/agenttraining/
-domain/entity/evaluation/
-domain/entity/finetuning/
-
-domain/repository/agent/
-domain/repository/agentrelease/
-domain/repository/agenttraining/
-domain/repository/evaluation/
-domain/repository/finetuning/
-
-application/service/agentruntime/
-application/service/agenttraining/
-application/service/agentevaluation/
-application/service/agentrelease/
-application/service/finetuning/
-
-infrastructure/persistence/agent/
-infrastructure/persistence/agentrelease/
-infrastructure/persistence/agenttraining/
-infrastructure/persistence/evaluation/
-infrastructure/persistence/finetuning/
-infrastructure/driver/bundlestore/
-infrastructure/driver/finetuning/
-```
-
-依赖方向：
+### 17.1 总体依赖方向
 
 ```text
-HTTP → application services → domain repositories/ports
-                            → RuntimeManager → pi
-infrastructure → domain/application ports
-pi 不反向依赖任何业务包
+HTTP Controller → Application Service → Domain Repository/Port
+                                      → Agent Runtime Manager → pi
+Infrastructure Adapter ───────────────→ Domain/Application Port
+
+pi 不 import application/domain/infrastructure
+domain 不 import application/infrastructure/pi
+application 可以 import domain 和 pi 的公共契约
+infrastructure 实现 domain/application 定义的端口
 ```
 
-现有 `conversation.Runner` 从固定 `pi.Runner` 改为依赖 `RuntimeManager`/Release
-Resolver。Chat Service 从服务端会话读取 AgentRelease，客户端 Run 请求不允许临时
-指定 Release。
+不能把 Agent、Training、Evaluation、Fine-tuning 全部写进现有
+`application/service/chat/service.go`，也不能让 `cmd/server/app.go` 继续承担 Runtime
+组装细节。现有 Chat 只负责面向普通用户的会话用例，训练是独立应用服务。
+
+### 17.2 Phase 1A：`pi` WorkspacePolicy
+
+| 文件 | 动作 | 单一职责 |
+| --- | --- | --- |
+| `pi/workspace_policy.go` | 新增 | 定义、规范化和校验 WorkspacePolicy |
+| `pi/workspace_policy_test.go` | 新增 | 覆盖空策略、前缀逃逸、重复前缀和兼容行为 |
+| `pi/agent.go` | 修改 | `Options` 接收策略，并把规范化结果传给 Workspace、sandbox 和 MCP |
+| `pi/harness/inspect.go` | 新增 | 实现 `InspectWorkspace`，复用真实 AGENTS/Skill 解析路径 |
+| `pi/harness/inspect_test.go` | 新增 | 保证检查结果与 ContextBuilder 的发现结果一致 |
+| `pi/harness/tools/filesystem.go` | 修改 | Workspace 在打开写句柄前统一执行可写前缀检查 |
+| `pi/harness/tools/filesystem_test.go` | 修改 | 覆盖 symlink、相对路径和 restricted prefix |
+| `pi/harness/sandbox/write_policy.go` | 新增 | 把公共 WorkspacePolicy 翻译成后端无关沙箱写规则 |
+| `pi/harness/sandbox/runner.go` | 修改 | Runner 构造显式接收写策略，不使用隐式全 Workspace 可写 |
+| `pi/harness/sandbox/platform.go` | 修改 | 给 Host/Seatbelt/Bubblewrap 选择器传递同一策略 |
+| `pi/harness/sandbox/seatbelt.go` | 修改 | 生成只读 Workspace 加可写子目录的 Seatbelt profile |
+| `pi/harness/sandbox/bubblewrap.go` | 修改 | 使用 ro-bind Workspace，再 bind 可写前缀 |
+| `pi/harness/sandbox/host.go` | 修改 | restricted + exec 无法保证时 fail closed |
+| `pi/harness/sandbox/*_test.go` | 修改 | 对三个后端执行相同策略契约测试 |
+| `pi/mcp/sandbox.go` | 修改 | stdio MCP 子进程继承当前 Runtime 的写边界 |
+| `config/config.go` | 修改 | 增加服务端 Workspace policy 配置结构 |
+| `config/validate.go` | 修改 | 启动时拒绝不安全或不可表达的配置 |
+| `config/server_options.go` | 修改 | 把业务配置翻译成 `pi.Options` |
+| `config.example.json` | 修改 | 显式展示生产 chat 的 restricted 策略 |
+| `cmd/server/app.go` | 修改 | 过渡期显式选择策略，不能依赖零值 |
+
+`edit.go`、`write.go`、`apply_patch.go` 不各自实现一份路径安全逻辑；三者都经过
+`Workspace`。`exec/process` 的写限制由 sandbox 实现，Tool middleware 只提供更友好的
+错误，不能替代 OS 边界。
+
+### 17.3 Phase 1B：动态 Agent、Release 和 Runtime
+
+新增领域与端口文件：
+
+| 文件 | 内容 |
+| --- | --- |
+| `application/identity/principal.go` | Principal、Role、Context helper 和 `RequireAdmin` |
+| `application/identity/resolver.go` | AdminIdentityResolver 端口和 unavailable 语义 |
+| `domain/entity/agent/agent.go` | Agent 聚合根和 active release/training CAS version |
+| `domain/entity/agent/template.go` | 原 Profile 的创建模板投影 |
+| `domain/entity/agent/bundle_version.go` | 不可变 BundleVersion |
+| `domain/entity/agent/model_revision.go` | base/fine-tuned ModelRevision |
+| `domain/entity/agent/release.go` | 不可变 AgentRelease 和 ValidationMode |
+| `domain/entity/agent/validation_run.go` | CandidateValidationRun |
+| `domain/repository/agent/repository.go` | Agent 查询、创建和活跃指针 CAS |
+| `domain/repository/agent/release.go` | Bundle/Model/Release/Validation 查询和原子发布提交 |
+| `domain/repository/agenttemplate/catalog.go` | 只读模板 Catalog 端口 |
+| `application/service/agentcatalog/service.go` | 创建/查询 Agent，解析 Template 初始值 |
+| `application/service/agentcatalog/register.go` | Agent Catalog 的 fx 模块 |
+| `application/service/agentruntime/spec.go` | RuntimePurpose、RuntimeSpec、ResolvedTool/MCP |
+| `application/service/agentruntime/manager.go` | Acquire/Release/Invalidate/Close 生命周期 |
+| `application/service/agentruntime/cache.go` | 单飞、引用计数、LRU 和 idle eviction |
+| `application/service/agentruntime/resolver.go` | 从 AgentRelease 构造生产 RuntimeSpec |
+| `application/service/agentruntime/tool_catalog.go` | Tool revision、Effect 和安全替身选择 |
+| `application/service/agentruntime/register.go` | Runtime Manager 的 fx 模块和生命周期 |
+| `infrastructure/persistence/agent/repository.go` | Agent 聚合的 MySQL 实现 |
+| `infrastructure/persistence/agent/release.go` | 版本/Release/Validation 的 MySQL 实现 |
+| `infrastructure/persistence/agent/model.go` | 仅持久化映射需要的私有 row 类型；领域实体不塞 JSON 细节 |
+| `infrastructure/driver/agenttemplate/catalog.go` | 读取代码随附的 AgentTemplate Catalog |
+| `infrastructure/driver/adminauth/resolver.go` | 把受信任 Admin Session/上游身份映射为 Principal |
+| `infrastructure/driver/adminauth/register.go` | Admin Auth Resolver 的 fx 绑定；未配置时提供 disabled 状态 |
+| `infrastructure/middleware/admin.go` | `RequireAdmin` HTTP guard；失败直接 401/403，不进入 Controller |
+| `cmd/agent-bootstrap/main.go` | 一次性把内置 Profile 物化成初始 Bundle 和 Release |
+| `workspaces/agent-templates/catalog.yaml` | 由现有 profiles/catalog.yaml 重命名的模板目录 |
+| `workspaces/agent-templates/<code>/**` | 八个内置 Agent 的种子 AGENTS/Skills/references |
+| `migrations/0007_agent_runtime.up.sql` | Agent/Bundle/Model/Release/Validation 表及 Conversation nullable 列 |
+| `migrations/0007_agent_runtime.down.sql` | 仅回滚 schema；已发布 Bundle 由运维显式处理 |
+| `migrations/0008_agent_conversation_finalize.up.sql` | 回填核验后增加 NOT NULL/FK/索引 |
+| `migrations/0008_agent_conversation_finalize.down.sql` | 回到兼容 nullable 结构，不删除已迁移数据 |
+| `migrations/0009_agent_profile_cleanup.up.sql` | 兼容窗口结束后删除 profile_code 和旧索引 |
+| `migrations/0009_agent_profile_cleanup.down.sql` | 只恢复 nullable profile_code，不伪造历史值 |
+
+需要修改的现有文件：
+
+| 文件 | 修改点 |
+| --- | --- |
+| `domain/entity/conversation/conversation.go` | 增加 type、agent/release/pending/follow_latest/training_session 字段 |
+| `domain/repository/conversation/*.go` | 查询条件和创建参数改为 Agent/Release，迁移期只读 ProfileCode |
+| `infrastructure/persistence/conversation/*.go` | 映射新列；所有 owner 查询保留 UserID/TenantID 条件 |
+| `conversation/store.go` | 业务 RunRequest 增加 TenantID；不把 ReleaseID 暴露给 HTTP 请求 |
+| `conversation/runner.go` | 加载 Conversation 后向 Runtime Manager 获取 lease，再调用 `pi.Runner` |
+| `conversation/register.go` | 由固定 `pi.Runner` 改为注入 Runtime Provider |
+| `application/service/chat/service.go` | 创建会话时服务端解析 Agent.ActiveRelease |
+| `application/service/chat/run_manager.go` | 删除 Profile Context 注入，记录 agent/release tracing 属性 |
+| `common/dto/chat.go` | CreateConversation 从 `profile_code` 迁移到 `agent_id` |
+| `common/vo/chat.go` | 返回 agent_id/release_id，兼容期保留 profile_code |
+| `infrastructure/controller/http/chat/controller.go` | 只接收 agent_id，不允许客户端指定 release_id |
+| `infrastructure/middleware/visitor.go` | 产出普通 Principal；不得把匿名 Session 提升为管理员 |
+| `infrastructure/persistence/register.go` | 绑定 Agent/Release Repository 实现 |
+| `infrastructure/controller/http/register.go` | 注册 Agent 查询 API；管理路由挂 RequireAdmin |
+| `cmd/server/app.go` | 删除全局 `*pi.Agent`/`newAgentRunner`，改挂 Runtime Manager 生命周期 |
+
+兼容版本保留 `domain/entity/agentprofile`、`domain/repository/agentprofile` 和旧
+`GET /agent-profiles` 投影；0009 清理后删除旧包。代码仓库中的
+`workspaces/agent-templates` 只用于创建新 Agent/执行 bootstrap，生产 Runtime 永远从
+`<data-dir>/tenants/.../releases` 加载，不能回退读取模板目录。
+
+现有 `workspaces/chat/skills` 中被 Template 引用的共享 Skill 在 bootstrap 时复制进初始
+Bundle，使 Bundle 自包含；`workspaces/chat/AGENTS.md` 只保留平台级安全与回复纪律，不
+复制业务角色内容。后续修改模板不会反向改变已创建 Agent。
+
+身份认证本身是宿主系统责任。`adminauth/resolver.go` 没有配置可信实现时返回
+`ErrAdminAuthUnavailable`，而不是读取 `X-Role: admin` 之类可伪造 Header。当前仓库要
+独立提供管理员登录时，应另立认证设计，不混在 Training Service 内。Phase 1B 的生产
+验收必须指定部署实际使用的 Resolver；只有测试 Fake 而没有生产身份来源不能算完成。
+
+### 17.4 Phase 1C：Training、Candidate Git 和发布
+
+| 文件 | 内容 |
+| --- | --- |
+| `domain/entity/agenttraining/session.go` | TrainingSession 状态机和不变量 |
+| `domain/entity/agenttraining/checkpoint.go` | checkpoint/partial checkpoint 元数据 |
+| `domain/repository/agenttraining/repository.go` | Session、lease、checkpoint 和状态 CAS |
+| `application/service/agenttraining/service.go` | 依赖集合与公共鉴权/加载逻辑，不放具体用例 |
+| `application/service/agenttraining/create.go` | 创建 Session、Conversation 和 Candidate |
+| `application/service/agenttraining/run.go` | 获取 lease、执行目标 Agent、保存 Turn/checkpoint |
+| `application/service/agenttraining/checkpoint.go` | diff、列表和 restore |
+| `application/service/agenttraining/validate.go` | Gate B dry-run 和 ValidationRun |
+| `application/service/agenttraining/submit.go` | 提交 Candidate，按部署阶段推进到 ready/evaluating |
+| `application/service/agenttraining/cancel.go` | cancel/expire/stale 清理与保留规则 |
+| `application/service/agenttraining/recover.go` | 重启恢复、lease 接管和 worktree 重物化 |
+| `application/service/agenttraining/register.go` | Training Service fx 模块 |
+| `application/service/agentrelease/service.go` | 发布、激活、回滚的统一入口 |
+| `application/service/agentrelease/publish.go` | publish lock 内的 Gate B、Git、DB、补偿编排 |
+| `application/service/agentrelease/activate.go` | 历史 Release 预检和 ActiveRelease CAS |
+| `application/service/agentrelease/register.go` | Release Service fx 模块 |
+| `application/tool/agenttraining/inspect.go` | `inspect_candidate` Tool |
+| `application/tool/agenttraining/validate.go` | `validate_candidate` Tool |
+| `application/tool/agenttraining/submit.go` | `submit_candidate` Tool；无 publish Tool |
+| `application/tool/agenttraining/register.go` | 只向 training Runtime 注册作者 Tool |
+| `application/port/agentbundle/store.go` | BundleStore、CandidateWorkspace、PublishedBundle 契约 |
+| `application/port/agentlock/lock.go` | Agent 粒度分布式锁契约 |
+| `infrastructure/driver/agentbundle/git_store.go` | bare repo、ref、tag 和物化目录 |
+| `infrastructure/driver/agentbundle/worktree.go` | Candidate 创建、恢复和安全删除 |
+| `infrastructure/driver/agentbundle/diff.go` | 真实树差异、digest 和配额统计 |
+| `infrastructure/driver/agentbundle/publish.go` | squash commit/tag 与失败补偿 |
+| `infrastructure/driver/agentbundle/register.go` | BundleStore 的 fx 绑定 |
+| `infrastructure/driver/agentlock/redis.go` | 带 owner token/TTL 的 Redis publish lock |
+| `infrastructure/driver/agentlock/register.go` | Agent Lock 的 fx 绑定 |
+| `infrastructure/persistence/agenttraining/repository.go` | Training/Checkpoint MySQL 实现 |
+| `infrastructure/controller/http/agent/controller.go` | Agent/Release 管理 API |
+| `infrastructure/controller/http/agenttraining/controller.go` | Training REST/SSE API；只做绑定和响应 |
+| `common/dto/agent.go` | Agent/Release 请求 DTO |
+| `common/dto/agent_training.go` | 创建、Run、restore、publish 请求 DTO |
+| `common/vo/agent.go` | Agent/Release 响应 VO |
+| `common/vo/agent_training.go` | Session、diff、checkpoint、Validation、SSE VO |
+| `migrations/0010_agent_training.up.sql` | Training、Checkpoint、idempotency、Outbox 表 |
+| `migrations/0010_agent_training.down.sql` | 对应 schema 回滚 |
+
+Gate B 的 Bundle 语义校验放在应用层 `agenttraining/validate.go`，Git 文件枚举与安全打开
+放在 `agentbundle` adapter，AGENTS/Skill 解析继续复用 `pi/harness.InspectWorkspace`。
+这样 Git 不依赖 `pi`，`pi` 也不依赖发布业务。
+
+### 17.5 Phase 1D：管理员训练工作台
+
+当前前端是 Go template + 原生 JS，不引入新的 SPA 框架。新增：
+
+```text
+frontend/templates/pages/admin-agents.html
+frontend/templates/pages/admin-agent-training.html
+frontend/templates/components/training-header.html
+frontend/templates/components/training-chat.html
+frontend/templates/components/training-diff.html
+frontend/templates/components/training-validation.html
+frontend/static/css/pages/admin-agents.css
+frontend/static/css/pages/admin-agent-training.css
+frontend/static/js/pages/admin-agents.js
+frontend/static/js/pages/admin-agent-training.js
+frontend/static/js/pages/training-stream.js
+frontend/static/js/pages/training-diff.js
+frontend/static/js/pages/training-state.js
+frontend/static/js/pages/training_stream_test.mjs
+frontend/static/js/pages/training_diff_test.mjs
+frontend/static/js/pages/training_state_test.mjs
+frontend/static/js/pages/admin_agents_test.mjs
+```
+
+修改 `frontend/assets.go`、`frontend/templates/partials/scripts.html` 和
+`infrastructure/controller/http/page/controller.go` 注册 `/admin/agents` 和训练工作台页面。
+Agent 列表负责选择目标 Agent 和展示 ActiveRelease，不复制训练状态逻辑。普通 Chat 的
+`chat.js` 不掺入训练状态机，最多复用无业务状态的消息渲染函数。
+
+### 17.6 Phase 2 与 Phase 3 文件
+
+Phase 2 新增：
+
+```text
+domain/entity/evaluation/{suite.go,case.go,run.go,result.go}
+domain/repository/evaluation/repository.go
+application/service/agentevaluation/{service.go,runner.go,scorer.go,repair.go,register.go}
+application/port/evaluation/tool_fake.go
+application/tool/agenttraining/evaluate.go
+infrastructure/persistence/evaluation/repository.go
+infrastructure/driver/evaluation/{fake_tools.go,judge.go}
+infrastructure/controller/http/evaluation/controller.go
+common/dto/evaluation.go
+common/vo/evaluation.go
+migrations/0011_agent_evaluation.up.sql
+migrations/0011_agent_evaluation.down.sql
+```
+
+Phase 3 新增：
+
+```text
+domain/entity/finetuning/{example.go,dataset.go,job.go}
+domain/repository/finetuning/repository.go
+application/service/finetuning/{service.go,example.go,dataset.go,job.go,publish.go,register.go}
+application/port/finetuning/backend.go
+infrastructure/persistence/finetuning/repository.go
+infrastructure/driver/finetuning/backend.go
+infrastructure/controller/http/finetuning/controller.go
+common/dto/finetuning.go
+common/vo/finetuning.go
+migrations/0012_agent_finetuning.up.sql
+migrations/0012_agent_finetuning.down.sql
+```
+
+`backend.go` 只实现 Phase 3 评审时选定的第一个真实 Provider，不预先创建空的多 Provider
+文件。不同 Provider 的 JSON 转换只存在于 adapter，领域内统一使用规范消息格式。
+
+### 17.7 核心代码骨架
+
+以下代码是待审核的接口骨架，不是已实现代码；实现计划需要为每个接口先写失败测试。
+
+管理员身份只从 Context 获取：
+
+```go
+package identity
+
+type Role string
+
+const (
+    RoleUser  Role = "user"
+    RoleAdmin Role = "admin"
+)
+
+type Principal struct {
+    TenantID string
+    UserID   string
+    Role     Role
+}
+
+func FromContext(context.Context) (Principal, bool)
+func RequireAdmin(context.Context) (Principal, error)
+```
+
+Runtime Manager 只接收服务端解析完成的规格：
+
+```go
+package agentruntime
+
+type RuntimePurpose string
+
+const (
+    PurposeChat       RuntimePurpose = "chat"
+    PurposeTraining   RuntimePurpose = "training"
+    PurposeEvaluation RuntimePurpose = "evaluation"
+)
+
+type ToolEffect string
+
+const (
+    ToolReadOnly           ToolEffect = "read_only"
+    ToolReversibleWrite    ToolEffect = "reversible_write"
+    ToolExternalSideEffect ToolEffect = "external_side_effect"
+)
+
+type RuntimeLease interface {
+    Runner() pi.Runner
+    Release()
+}
+
+type RuntimeManager interface {
+    Acquire(context.Context, RuntimeSpec) (RuntimeLease, error)
+    Invalidate(context.Context, string) error
+    Close(context.Context) error
+}
+```
+
+Repository 不暴露无租户查询，也不让 Controller 直接操作 GORM：
+
+```go
+package agent
+
+type Repository interface {
+    Create(context.Context, *entity.Agent) error
+    Find(context.Context, tenantID, agentID string) (*entity.Agent, bool, error)
+    ReserveTraining(
+        context.Context, tenantID, agentID, trainingID string, expectedVersion uint64,
+    ) error
+    ReleaseTraining(
+        context.Context, tenantID, agentID, trainingID string, expectedVersion uint64,
+    ) error
+}
+
+type ReleaseRepository interface {
+    FindRelease(context.Context, tenantID, releaseID string) (*entity.AgentRelease, bool, error)
+    CommitPublish(context.Context, CommitPublishCommand) error
+    Activate(context.Context, ActivateCommand) error
+}
+```
+
+`CommitPublish` 是一个 Repository 原子操作：插入 BundleVersion/AgentRelease、CAS 更新
+Agent、清空 active training、写 Outbox。Application Service 不分别调用四个 Repo 后
+假装它们处于一个事务。
+
+状态转换集中在领域实体，不允许 Controller/Repository 任意赋字符串：
+
+```go
+package agenttraining
+
+func (s *TrainingSession) Transition(next Status, now time.Time) error {
+    if !allowedTransition(s.Status, next) {
+        return ErrInvalidTransition
+    }
+    s.Status = next
+    s.Version++
+    s.UpdatedAt = now.UTC()
+    return nil
+}
+
+func (s *TrainingSession) MarkCandidateChanged(head string, now time.Time) error {
+    if s.Status != StatusActive && s.Status != StatusReady && s.Status != StatusRepairing {
+        return ErrCandidateNotWritable
+    }
+    s.CandidateHead = head
+    s.LastValidationRunID = nil
+    s.LastEvaluationRunID = nil
+    s.Status = StatusActive
+    s.Version++
+    s.UpdatedAt = now.UTC()
+    return nil
+}
+```
+
+Bundle/Git 通过应用端口隔离：
+
+```go
+package agentbundle
+
+type Store interface {
+    CreateCandidate(context.Context, CreateCandidateSpec) (CandidateWorkspace, error)
+    RestoreCandidate(context.Context, RestoreCandidateSpec) (CandidateWorkspace, error)
+    Checkpoint(context.Context, CheckpointSpec) (Checkpoint, error)
+    Diff(context.Context, DiffSpec) (TreeDiff, error)
+    Snapshot(context.Context, SnapshotSpec) (ReadOnlySnapshot, error)
+    Publish(context.Context, PublishSpec) (PublishedBundle, error)
+    DeleteUnreferenced(context.Context, PublishedBundle) error
+    DisposeCandidate(context.Context, CandidateWorkspace) error
+}
+```
+
+Gate B 是可组合 Validator，不与 HTTP 或 Git 命令输出耦合：
+
+```go
+type CandidateValidator interface {
+    Validate(context.Context, ValidationSpec) (ValidationReport, error)
+}
+
+type ValidationSpec struct {
+    TenantID        string
+    AgentID         string
+    TrainingID      *string
+    Workspace       agentbundle.ReadOnlySnapshot
+    BaseDigest      string
+    ToolPolicy      agententity.ToolPolicySnapshot
+    RuntimeVersion  string
+}
+
+type ValidationReport struct {
+    CandidateHead   string
+    CandidateDigest string
+    ToolPolicyDigest string
+    Diagnostics     []Diagnostic
+    SmokeResults    []SmokeResult
+    Passed          bool
+}
+```
+
+`ValidationReport.Passed` 由 Validator 根据结构、路径、Secret、Skill diagnostics、配额和
+smoke 结果计算；Agent 回复中的“测试通过”文本不能构造该对象。
+
+Training Service 的公开方法与 HTTP 一一对应，但 Controller 不持有 Repository：
+
+```go
+package agenttraining
+
+type Service struct {
+    sessions  trainingrepo.Repository
+    agents    agentrepo.Repository
+    runtimes  agentruntime.RuntimeManager
+    bundles   agentbundle.Store
+    validator CandidateValidator
+}
+
+func (s *Service) Create(context.Context, CreateCommand) (*SessionView, error)
+func (s *Service) Run(context.Context, RunCommand, pi.EventListener) (pi.RunResult, error)
+func (s *Service) Diff(context.Context, Query) (*DiffView, error)
+func (s *Service) Restore(context.Context, RestoreCommand) error
+func (s *Service) Validate(context.Context, ValidateCommand) (*ValidationView, error)
+func (s *Service) Submit(context.Context, SubmitCommand) (*SessionView, error)
+func (s *Service) Cancel(context.Context, CancelCommand) error
+```
+
+`Publish` 不放在 Training Service，避免 Author 服务拥有生产切换能力：
+
+```go
+package agentrelease
+
+func (s *Service) PublishTrainingCandidate(
+    ctx context.Context,
+    cmd PublishTrainingCommand,
+) (*agent.AgentRelease, error) {
+    principal, err := identity.RequireAdmin(ctx)
+    if err != nil {
+        return nil, err
+    }
+    return s.withAgentLock(ctx, principal.TenantID, cmd.AgentID, func(ctx context.Context) (*agent.AgentRelease, error) {
+        session, evidence, err := s.loadAndRevalidate(ctx, principal, cmd)
+        if err != nil {
+            return nil, err
+        }
+        published, err := s.bundles.Publish(ctx, publishSpec(session, evidence))
+        if err != nil {
+            return nil, err
+        }
+        release := buildRelease(principal, published, evidence)
+        if err := s.releases.CommitPublish(ctx, commitCommand(session, release)); err != nil {
+            cleanupErr := s.bundles.DeleteUnreferenced(ctx, published)
+            return nil, errors.Join(err, cleanupErr)
+        }
+        s.runtimes.Invalidate(ctx, runtimeKey(session.BaseReleaseID))
+        return release, nil
+    })
+}
+```
+
+上面省略了日志字段和错误包装，但顺序是契约：先锁、再重读、再最终验证、再 Git、最后
+DB 事务；DB 已提交后 Runtime invalidation 失败只能通过 Outbox/重试向前恢复。
+
+Conversation Runner 动态选择 Runtime，但 `pi.RunRequest` 不出现业务 ID：
+
+```go
+conversation, err := repository.FindOwned(ctx, tenantID, userID, conversationID)
+if err != nil {
+    return pi.RunResult{}, err
+}
+lease, err := runtimes.AcquireChat(ctx, agentruntime.ChatIdentity{
+    TenantID: tenantID,
+    AgentID: conversation.AgentID,
+    ReleaseID: conversation.AgentReleaseID,
+})
+if err != nil {
+    return pi.RunResult{}, err
+}
+defer lease.Release()
+
+return lease.Runner().Run(ctx, pi.RunRequest{
+    History: history,
+    Input: input,
+    Context: contextBlocks,
+    Limits: limits,
+}, listener)
+```
+
+HTTP DTO 不接受管理员、租户、CandidatePath、版本号或 ReleaseID 等服务端事实：
+
+```go
+type CreateTrainingSessionDTO struct {
+    ExpiresInSeconds int `json:"expires_in_seconds" binding:"omitempty,min=600,max=604800"`
+}
+
+type RunTrainingDTO struct {
+    Content   string   `json:"content" binding:"required"`
+    ImageURLs []string `json:"image_urls" binding:"omitempty,max=4,dive,http_url"`
+}
+
+// Phase 2 才加入。
+type RunTrainingWithEvaluationDTO struct {
+    RunTrainingDTO
+    AutoRepair bool `json:"auto_repair"`
+}
+
+type PublishTrainingDTO struct {
+    AcknowledgeManualOnly bool `json:"acknowledge_manual_only"`
+}
+```
+
+`ValidationMode` 由 Release Service 根据部署阶段和有效证据派生，不能由客户端选择。
+Phase 1 的 DTO 不包含 `AutoRepair`，也不注册 `run_candidate_evaluation`；Phase 2 增加该
+字段和 Tool，避免向模型暴露永远失败的能力。
+
+fx 组合根只组合模块：
+
+```go
+var Register = fx.Options(
+    notice.Register,
+    chattools.Register,
+    agentcatalog.Register,
+    agentruntime.Register,
+    agenttraining.Register,
+    agentrelease.Register,
+    infrastructure.Register,
+    conversation.Register,
+    chatservice.Register,
+)
+```
+
+`cmd/server/app.go` 不再直接调用一次全局 `pi.New`；只有 Runtime Manager factory 根据
+Release/Training spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
+
+### 17.8 测试文件落位
+
+- 每个领域状态机在同包 `<entity>_test.go` 做表驱动状态转换测试；
+- 每个应用用例对应同名测试，例如 `run.go` 对应 `run_test.go`，不把所有场景塞进一个
+  `service_test.go`；
+- `agentbundle` 提供一套 Store contract test，使用临时 bare repo 同时验证 ref、diff、
+  checkpoint、publish 和补偿；
+- MySQL Repository 延续现有 sqlmock 单测，并增加真实 MySQL integration test 验证 CAS、
+  FK 和发布事务；
+- 各 `infrastructure/persistence/<module>/migration_test.go` 检查 0007～0012 的 up/down、
+  表名、索引和危险 DROP，延续当前 Conversation migration test 的放置方式；
+- HTTP Controller 测试只验证鉴权、DTO 绑定、错误码和 SSE framing；业务状态由 Service
+  测试负责；
+- 身份测试覆盖匿名 Visitor 永远是 user、伪造角色 Header 无效、缺少 Resolver 时管理
+  路由不可用、真实 Admin Principal 才能进入 Service；
+- Runtime Manager 增加并发 race test，覆盖相同 Key 单飞、活跃 lease 不回收、Stop 逆序
+  和 Invalidate 与 Acquire 竞争；
+- 前端继续使用 Node 内置 test runner，DOM/stream/state 各自测试；
+- Phase 1D 增加 `infrastructure/controller/http/agenttraining/e2e_test.go`，跑通“创建训练
+  → 对话修改 → diff → validate → manual-only publish → 普通会话懒迁移 → rollback”。
 
 ## 18. 数据库变更
 
@@ -1264,6 +1882,7 @@ agent_bundle_versions
 agent_model_revisions
 agent_releases
 agent_training_sessions
+agent_training_checkpoints
 agent_candidate_validation_runs
 agent_evaluation_suites
 agent_evaluation_cases
@@ -1273,11 +1892,25 @@ agent_training_examples
 agent_dataset_versions
 agent_dataset_version_examples
 agent_fine_tune_jobs
+agent_idempotency_keys
+agent_outbox_events
 ```
+
+表按阶段创建：0007 只创建 Agent/Bundle/Model/Release/Validation，bootstrap 依靠
+`tenant_id + template_code` 等唯一键保证幂等；0010 才创建
+Training/Checkpoint/Idempotency/Outbox；0011 创建 Evaluation；0012 创建
+TrainingExample/Dataset/FineTuneJob。上面的列表表示最终目标，不表示首个 migration 一次
+创建全部表。
+
+跨阶段引用先保存 nullable ID，不提前创建指向不存在表的外键：0007 中
+`active_training_session_id`、`evaluation_run_id`、`dataset_version_id`、
+`fine_tune_job_id` 只建列；0010/0011/0012 在目标表存在后再补对应 FK。0010 的
+`last_evaluation_run_id` 同理在 0011 才补 FK。
 
 修改 `agent_conversations` 的目标结构：
 
 ```text
+ADD tenant_id VARCHAR(32) NOT NULL
 ADD conversation_type VARCHAR(16) NOT NULL DEFAULT 'chat'
 ADD agent_id VARCHAR(32) NOT NULL
 ADD agent_release_id VARCHAR(32) NOT NULL
@@ -1288,20 +1921,28 @@ ADD training_session_id VARCHAR(32) NULL
 
 既有表不能直接增加无默认值的 NOT NULL Agent/Release 字段。迁移顺序固定为：
 
-1. 先创建 AgentTemplate 对应的内置 Agent、BundleVersion、ModelRevision 和
-   AgentRelease；
-2. 以 nullable 形式增加 `agent_id`、`agent_release_id`、`pending_release_id`、
-   `training_session_id`，同时增加有默认值的 `conversation_type` 和 `follow_latest`；
-3. 根据现有 `profile_code` 分批回填 `agent_id` 和 `agent_release_id`；
-4. 检查空值、未知 Profile 和跨 Agent Release 引用，任何异常都终止迁移；
-5. 把 `agent_id`、`agent_release_id` 改为 NOT NULL；
-6. 创建外键和查询索引；
+1. 执行 `0007_agent_runtime.up.sql`：创建 Agent/Release 等新表，并以 nullable 形式增加
+   `tenant_id`、`agent_id`、`agent_release_id`、`pending_release_id`、
+   `training_session_id`；
+2. 部署兼容版本，旧代码仍可读 `profile_code`，新代码同时支持新列；
+3. 运维显式运行一次 `cmd/agent-bootstrap`，为八个 Profile 创建经验证的 Agent、Bundle、
+   ModelRevision 和 AgentRelease；该命令使用幂等 key，可安全重试；
+4. bootstrap 先把现有 Conversation 的 `tenant_id` 回填为部署配置的默认租户，再根据
+   `profile_code` 分批回填 `agent_id` 和 `agent_release_id`；
+5. 独立校验命令检查空值、未知 Profile、Bundle digest 和跨 Agent Release 引用，任何异常
+   都停止发布；
+6. 执行 `0008_agent_conversation_finalize.up.sql`，把 `tenant_id`、`agent_id`、
+   `agent_release_id` 改为 NOT NULL，并创建外键和查询索引；
 7. 应用切换为只读 `agent_id/agent_release_id`，停止写 `profile_code`；
-8. 经过一个兼容版本后再删除 `profile_code` 和旧 Profile 索引。
+8. 经过一个兼容版本后执行 `0009_agent_profile_cleanup.up.sql`，删除 `profile_code` 和旧
+   Profile 索引；
+9. Phase 1C、2、3 再分别执行 0010 Training、0011 Evaluation、0012 Fine-tuning，禁止
+   在 Phase 1A 提前创建空表。
 
 关键唯一约束：
 
-- `agents(id)`；
+- `agents(id)` 和 `agents(tenant_id, id)`；
+- 内置 Agent 使用 `agents(tenant_id, template_code)` 唯一键保证 bootstrap 幂等；
 - `agent_bundle_versions(agent_id, version)`；
 - `agent_bundle_versions(agent_id, git_commit)`；
 - `agent_releases(agent_id, version)`；
@@ -1309,6 +1950,7 @@ ADD training_session_id VARCHAR(32) NULL
 - `agent_training_examples(agent_id, source_run_id, content_digest)`；
 - `agent_dataset_versions(agent_id, content_digest)`；
 - `agent_fine_tune_jobs(provider_id, external_job_id)`。
+- `agent_conversations(tenant_id, user_id, conversation_id)`。
 
 活跃 Training Session 由 `agents.active_training_session_id` 的 CAS 更新约束，不依赖
 MySQL partial unique index。
@@ -1461,13 +2103,15 @@ agent.finetune.failed
 
 ## 22. 现有 Profile 与会话迁移
 
-1. 把八个 `workspaces/chat/profiles/<code>` 转换为八个内置 AgentTemplate；
+1. 把八个 `workspaces/chat/profiles/<code>` 重命名并转换到
+   `workspaces/agent-templates/<code>`，作为八个内置 AgentTemplate；
 2. 为每个 Template 运行 Workspace Validator；全部通过后创建来源为 `migration` 的
    CandidateValidationRun，以及初始 Agent、BundleVersion、基础 ModelRevision 和
    AgentRelease，任一验证失败则停止迁移；
 3. `workspaces/chat/AGENTS.md` 中真正的平台通用纪律保留为平台 Context，不复制到每个
    Agent Bundle；Profile AGENTS 成为各初始 Bundle 的 `AGENTS.md`；
-4. Profile 专属 Skills 移入对应 Agent Bundle 的 `skills/`；
+4. Profile 专属 Skills 和被模板引用的 `workspaces/chat/skills` 在 bootstrap 时复制进
+   对应 Agent Bundle 的 `skills/`；
 5. 现有 Conversation 按 `profile_code` 映射到对应内置 Agent 和初始 Release；
 6. 新会话 API 改为提交 `agent_id`；
 7. `GET /agent-profiles` 在兼容窗口内改为返回 AgentTemplate 投影，前端迁移完成后删除；
