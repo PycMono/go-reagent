@@ -16,17 +16,12 @@ import (
 	"unicode/utf8"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
-	"go.uber.org/fx"
 
 	"github.com/PycMono/go-reagent/config"
-	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
-	sandboxdriver "github.com/PycMono/go-reagent/infrastructure/driver/sandbox"
 	"github.com/PycMono/go-reagent/pi"
-	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
-	"github.com/PycMono/go-reagent/pi/harness/tools"
 )
 
 func main() {
@@ -48,37 +43,36 @@ func main() {
 		os.Exit(exitError)
 	}
 
-	options := buildOptions(runtime, cfg, flags)
-	// fx.Populate 必须在 fx.New 之前声明：fx.App 没有运行后按类型取依赖的 API。
-	var runner pi.Runner
-	options = append(options, fx.Populate(&runner))
-	app := fx.New(options...)
-
-	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	err = app.Start(startCtx)
-	startCancel()
+	agent, err := buildAgent(runtime, cfg, flags)
 	if err != nil {
-		// Start 失败时 fx 自动回滚已启动钩子，可直接退出。
 		fmt.Fprintf(os.Stderr, "装配失败: %v\n", err)
 		os.Exit(exitError)
 	}
 
+	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	err = agent.Start(startCtx)
+	startCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "启动失败: %v\n", err)
+		os.Exit(exitError)
+	}
+
 	printBanner(os.Stderr, runtime, cfg, flags)
-	code := runSession(runner, os.Stdin, os.Stdout, os.Stderr, sessionOptions{
+	code := runSession(agent, os.Stdin, os.Stdout, os.Stderr, sessionOptions{
 		prompt:       flags.prompt,
 		promptSet:    flags.promptSet,
 		historyLimit: flags.historyLimit,
 		limits:       runtime.limits,
 		verbose:      flags.verbose,
 	})
-	shutdown(app, code)
+	shutdown(agent, code)
 }
 
 // shutdown 是 Start 之后所有路径的唯一出口；os.Exit 不执行 defer，
 // cancel 必须显式调用。
-func shutdown(app *fx.App, code int) {
+func shutdown(agent *pi.Agent, code int) {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err := app.Stop(stopCtx) // 触发 ProcessSupervisor.OnStop 等清理
+	err := agent.Stop(stopCtx) // 触发 Workspace/Supervisor 清理与扩展 Close
 	stopCancel()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "清理失败: %v\n", err)
@@ -345,54 +339,27 @@ func preflightWorkspace(workDir string) error {
 	return nil
 }
 
-// buildOptions 只负责装配；fx.Populate 由 main 在 fx.New 前追加。
-func buildOptions(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) []fx.Option {
-	options := []fx.Option{
-		fx.NopLogger,
-		fx.Supply(runtime.options, pi.WorkDir(runtime.workDir), runtime.compaction),
-		pi.CoreRegister,
-		pi.CommandRunnerRegister,
-		sandboxdriver.Register,
-		toolsetFor(flags),
-	}
+// buildAgent 用 pi.New 完成一次装配：平台沙箱 Runner 经探针校验，
+// MCP 随配置模式默认挂载（无启用项时为空扩展），-subagent 只负责
+// 追加子代理；配置中的循环护栏与 handlers 策略不得静默忽略。
+func buildAgent(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) (*pi.Agent, error) {
+	options, err := pi.Options{}, error(nil)
 	if cfg != nil {
-		// mcpdriver.Register 的 NewExtensions 直接依赖 *config.Config；
-		// 配置中的循环护栏与 permissions/retry/timeout 策略不得静默忽略。
-		// MCP 随配置模式默认挂载（无启用项时 NewExtensions 返回空扩展），
-		// -subagent 只负责追加子代理。
-		options = append(options,
-			fx.Supply(cfg),
-			fx.Provide(config.NewLoopDetectionConfig, config.NewExtraToolHandlers),
-			mcpdriver.Register,
-		)
-		if flags.subagent {
-			options = append(options, pi.SubagentRegister)
+		options, err = cfg.PIRuntimeOptions(runtime.workDir)
+		if err != nil {
+			return nil, err
+		}
+		options.BuiltinSubagent = flags.subagent
+	} else {
+		options = pi.Options{
+			WorkDir:    runtime.workDir,
+			Platform:   runtime.options,
+			Compaction: runtime.compaction,
 		}
 	}
-	return options
-}
-
-// toolsetFor 按两个布尔能力装配工具档，每个构造器只注册一次：
-// write = -allow-write || -yolo；exec = -allow-exec || -yolo。
-func toolsetFor(flags cliFlags) fx.Option {
-	write := flags.allowWrite || flags.yolo
-	exec := flags.allowExec || flags.yolo
-	options := []fx.Option{pi.ReadOnlyToolsRegister}
-	if write {
-		options = append(options, fx.Provide(
-			fx.Annotate(tools.NewEditTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-			fx.Annotate(tools.NewWriteTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-			fx.Annotate(tools.NewApplyPatchTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		))
-	}
-	if exec {
-		options = append(options, fx.Provide(
-			tools.NewProcessSupervisor,
-			fx.Annotate(tools.NewExecTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-			fx.Annotate(tools.NewProcessTool, fx.As(new(ai.Tool)), fx.ResultTags(`group:"agent_tools"`)),
-		))
-	}
-	return fx.Options(options...)
+	options.AllowWrite = flags.allowWrite || flags.yolo
+	options.AllowExec = flags.allowExec || flags.yolo
+	return pi.New(options)
 }
 
 func printBanner(w io.Writer, runtime *runtimeConfig, cfg *config.Config, flags cliFlags) {

@@ -219,7 +219,7 @@ case "stdio":
 	})
 }
 
-extension, err := pimcp.NewExtension(pimcp.ExtensionOptions{
+newExtension, err := pimcp.NewExtension(pimcp.ExtensionOptions{
 	Name:       server.Name,
 	Transport:  transport,
 	AllowTools: server.AllowTools,
@@ -429,7 +429,7 @@ stdio 保持相同顺序。进程在 `Client.Initialize` 的第一次 Send 中�
 - `allow_tools` 中任一工具不存在；
 - stdout 违反 MCP framing 或 JSON-RPC 约束。
 
-Extension 注册失败时，Extension Runtime 的现有回滚必须调用 `Close`，确保已经启动的 stdio 进程被回收。应用停止时继续通过 `extension.Closer` 关闭 Client 和 Transport。
+Extension 注册失败时，Extension Runtime 的现有回滚必须调用 `Close`，确保已经启动的 stdio 进程被回收。应用停止时继续通过 `newExtension.Closer` 关闭 Client 和 Transport。
 
 ## 协议版本
 
@@ -499,7 +499,7 @@ config/
 └── config_test.go                  # 统一配置契约、安全与错误测试
 
 pi/mcp/
-├── extension.go                    # 注入 Transport，不再固定构造 HTTP
+├── newExtension.go                    # 注入 Transport，不再固定构造 HTTP
 ├── extension_test.go               # Transport 必填与公共扩展行为
 ├── transport_stdio.go              # framing、pending 路由、状态机与生命周期
 ├── transport_stdio_test.go         # helper-process 集成式单元测试

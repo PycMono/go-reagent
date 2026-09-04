@@ -129,7 +129,7 @@ pi.dev 的 Agent SDK 使用：
 - `afterToolCall`：工具完成后观察/修改结果；
 - `shouldStopAfterTurn`：turn 结束后决定是否停止。
 
-Coding Agent extension 层对应 `tool_call`、`tool_result`、`turn_end` 等事件。它提供通用拦截点，但没有公开的批次准入 API，也没有内置的通用 Tool Loop Detector。
+Coding Agent newExtension 层对应 `tool_call`、`tool_result`、`turn_end` 等事件。它提供通用拦截点，但没有公开的批次准入 API，也没有内置的通用 Tool Loop Detector。
 
 这说明本项目不应把循环检测伪装成 `pi/event.go` 的观察事件：循环准入必须有返回值并发生在副作用之前。`EventListener` 继续负责流式观察，Detector 是请求内策略对象。
 
@@ -245,7 +245,7 @@ agent:
 - 默认启用是有意的行为型变更：升级到含本功能的版本后，未配置 `loop_detection` 的存量部署立即获得护栏；紧急回滚方式是显式 `disabled: true`，无需降级版本；
 - `excluded_tools` 使用最终暴露给模型的精确工具名匹配，大小写敏感，不支持 glob 或正则；
 - bundled application 的空白名称、前后空格和重复项在 `config` 包的 `normalizeAndValidate` 阶段 fail-fast；
-- 不要求排除项一定已注册，因为 MCP/extension 工具可能到启动期才完整出现；
+- 不要求排除项一定已注册，因为 MCP/newExtension 工具可能到启动期才完整出现；
 - 被排除的调用不进入任何历史、提醒或 critical 计数；
 - 混合批次只检测未排除调用，但只要其中一个触发阻断，仍按整批原子规则处理全部调用。
 

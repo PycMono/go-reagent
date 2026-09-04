@@ -31,6 +31,13 @@ type AIProviderErrorInfo struct {
 // ErrorCode is a stable machine-readable Pi error category.
 type ErrorCode string
 
+// CodedError 由领域错误类型实现：类型自己声明归属的通用 ErrorCode，
+// 即被 ErrorCodeOf 识别，无需在各调用点包装转换。
+type CodedError interface {
+	error
+	ErrorCode() ErrorCode
+}
+
 const (
 	ErrorCodeUnknown              ErrorCode = "unknown"
 	ErrorCodeInitialization       ErrorCode = "initialization_failed"
@@ -99,9 +106,12 @@ func ErrorCodeOf(err error) ErrorCode {
 		return ErrorCodeRunLimitExceeded
 	case stderrors.Is(err, ErrRequestInvalid):
 		return ErrorCodeRequestInvalid
-	default:
-		return ErrorCodeUnknown
 	}
+	var coded CodedError
+	if stderrors.As(err, &coded) {
+		return coded.ErrorCode()
+	}
+	return ErrorCodeUnknown
 }
 
 func Wrap(code ErrorCode, op string, err error) error {

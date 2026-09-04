@@ -135,7 +135,7 @@ cmd/reagent
 
 /tmp/go-reagent-build-cache
 
-/secure/reagent/config.<extension>
+/secure/reagent/config.<newExtension>
 ```
 
 Where a historical document describes the Go import path, use `github.com/PycMono/go-reagent/internal/...` rather than the short project name. Leave `OpenClaw` unchanged.

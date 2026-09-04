@@ -2,7 +2,10 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,44 +13,29 @@ import (
 	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
-	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
-	"github.com/PycMono/go-reagent/pi/harness"
 	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
-	"github.com/PycMono/go-reagent/pi/toolexec"
 	"go.opentelemetry.io/otel"
 )
 
-// reconProvider 返回一条完整计量的 Action 响应。
-type reconProvider struct{}
-
-func (reconProvider) Stream(context.Context, []ai.Message, []ai.ToolDefinition) ai.Stream {
-	return &scriptedReconStream{}
+// fakeOpenAIServer 返回一条 OpenAI 兼容的流式响应：文本增量 + stop 结束 +
+// 完整 Usage（input 100 / output 50），供对账断言与 Pricing 相乘。
+func fakeOpenAIServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunks := []string{
+			`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1700000000,"model":"fake","choices":[{"index":0,"delta":{"content":"对账"}}]}`,
+			`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1700000000,"model":"fake","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+			`{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1700000000,"model":"fake","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`,
+		}
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
 }
-
-type scriptedReconStream struct{ step int }
-
-func (s *scriptedReconStream) Next() bool { s.step++; return s.step <= 2 }
-func (s *scriptedReconStream) Current() ai.StreamEvent {
-	if s.step == 1 {
-		return ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: "对账"}
-	}
-	return ai.StreamEvent{Type: ai.StreamEventDone}
-}
-func (s *scriptedReconStream) Result() (*ai.Message, error) {
-	return &ai.Message{
-		Role:         ai.RoleAssistant,
-		Content:      []ai.ContentBlock{ai.TextBlock("对账")},
-		FinishReason: ai.FinishReasonStop,
-		Usage: &ai.Usage{
-			PlatformID: "test", Model: "fake",
-			InputTokens: 100, OutputTokens: 50,
-			InputPriceUSDPerMillionTokens: 1, OutputPriceUSDPerMillionTokens: 2,
-			CostUSD: (100.0*1 + 50.0*2) / 1e6,
-		},
-	}, nil
-}
-func (s *scriptedReconStream) Close() error { return nil }
 
 // reconMetrics 记录领域指标用于对账。
 type reconMetrics struct {
@@ -95,14 +83,19 @@ func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	toolRuntime, err := toolexec.NewExecutor(toolexec.ExecutorOptions{})
+	server := fakeOpenAIServer(t)
+	defer server.Close()
+	agent, err := pi.New(pi.Options{
+		WorkDir: workDir,
+		Platform: providers.Options{
+			ID: "test", Protocol: providers.ProtocolOpenAI, BaseURL: server.URL,
+			APIKey: "k", Model: "fake",
+			Pricing: &providers.Pricing{InputUSDPerMillionTokens: 1, OutputUSDPerMillionTokens: 2},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	traced := piobservability.NewTracingProvider(reconProvider{}, "openai", "test", "fake")
-	loop := pi.NewLoop(traced, toolexec.NewScheduler(toolRuntime, 1), pi.WithLoopProviderIdentity("test", "fake"))
-	builder := harness.NewContextBuilder(harness.NewPromptComposer(workDir), workDir)
-	agent := pi.New(builder, loop, toolRuntime)
 
 	store := &runnerStoreFake{conversation: conversationentity.Conversation{ID: "pk-1", ConversationID: "conversation", UserID: "user", Version: 1}}
 	runner := NewRunner(agent, store, 100, governor.Limits{})

@@ -90,7 +90,7 @@ go-reagent 已经在 `pi/mcp` 中实现通用 HTTP MCP 客户端，并在 Web �
 pi/
 └── mcp/
     ├── client.go
-    ├── extension.go
+    ├── newExtension.go
     ├── protocol.go
     ├── transport_http.go
     ├── tool.go

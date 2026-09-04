@@ -51,7 +51,7 @@
 
 **Unchanged:**
 
-- `pi/mcp/*` - the existing generic MCP protocol, transport, extension, and tool adapter already provide the required runtime path.
+- `pi/mcp/*` - the existing generic MCP protocol, transport, newExtension, and tool adapter already provide the required runtime path.
 - `config.example.json` - it already contains the required Exa server, Header environment mapping, allowlist, and empty prefix.
 
 ---

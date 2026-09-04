@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26、标准库 `net/http`/`encoding/json`/`bufio`、`go.uber.org/fx`、现有 `jsonschema/v6`、`httptest`。
 
-**Spec:** `docs/superpowers/specs/2026-08-18-pi-http-mcp-extension-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-18-pi-http-mcp-newExtension-design.md`
 
 ## Global Constraints
 
@@ -29,7 +29,7 @@
 
 ```text
 pi/
-├── extension.go
+├── newExtension.go
 ├── extension_runtime.go
 ├── extension_test.go
 ├── extension_runtime_test.go
@@ -47,7 +47,7 @@ pi/
     ├── client_test.go
     ├── tool.go
     ├── tool_test.go
-    ├── extension.go
+    ├── newExtension.go
     ├── extension_test.go
     └── exa_integration_test.go
 
@@ -180,7 +180,7 @@ git commit -m "refactor(pi): add startup tool registry"
 ### Task 2: Add the compile-time Extension Runtime and Fx wiring
 
 **Files:**
-- Create: `pi/extension.go`
+- Create: `pi/newExtension.go`
 - Create: `pi/extension_test.go`
 - Create: `pi/extension_runtime.go`
 - Create: `pi/extension_runtime_test.go`
@@ -193,7 +193,7 @@ git commit -m "refactor(pi): add startup tool registry"
 
 - [ ] **Step 1: Write failing contract and lifecycle tests**
 
-Cover sorted startup, duplicate/blank/typed-nil extensions, failure cleanup including the current extension, reverse shutdown and freeze:
+Cover sorted startup, duplicate/blank/typed-nil extensions, failure cleanup including the current newExtension, reverse shutdown and freeze:
 
 ```go
 func TestExtensionRuntimeStartsSortedAndStopsReversed(t *testing.T) {
@@ -229,7 +229,7 @@ In the failure test, make `zeta` register a tool then return `errors.New("discov
 
 Run: `go test ./pi -run 'TestExtension' -count=1`
 
-Expected: FAIL because extension contracts do not exist.
+Expected: FAIL because newExtension contracts do not exist.
 
 - [ ] **Step 3: Add the public contracts**
 
@@ -267,7 +267,7 @@ type extensionRuntime struct {
 }
 ```
 
-Validate and sort during construction. OnStart registers sequentially; failure rolls back the current owner, closes current and prior extensions in reverse, clears `started`, and returns an extension-scoped error. On success freeze the registry. OnStop attempts every closer in reverse and combines errors with `errors.Join`.
+Validate and sort during construction. OnStart registers sequentially; failure rolls back the current owner, closes current and prior extensions in reverse, clears `started`, and returns an newExtension-scoped error. On success freeze the registry. OnStop attempts every closer in reverse and combines errors with `errors.Join`.
 
 - [ ] **Step 5: Wire CoreRegister before downstream consumers**
 
@@ -286,9 +286,9 @@ func newFXToolRuntime(registry *toolRegistry, _ *extensionRuntime) ToolRuntime {
 }
 ```
 
-Provide `newFXToolRegistry`, `newExtensionRuntime`, then `newFXToolRuntime`. The explicit runtime dependency makes the extension hook precede Web server hooks. Update register tests and add an Fx-grouped fake extension whose tool appears after `RequireStart`.
+Provide `newFXToolRegistry`, `newExtensionRuntime`, then `newFXToolRuntime`. The explicit runtime dependency makes the newExtension hook precede Web server hooks. Update register tests and add an Fx-grouped fake newExtension whose tool appears after `RequireStart`.
 
-- [ ] **Step 6: Run extension and Fx tests**
+- [ ] **Step 6: Run newExtension and Fx tests**
 
 ```bash
 go test ./pi -run 'TestExtension|TestCoreRegister|Test.*ToolsRegister' -count=1
@@ -300,8 +300,8 @@ Expected: PASS.
 - [ ] **Step 7: Commit Task 2**
 
 ```bash
-git add pi/extension.go pi/extension_test.go pi/extension_runtime.go pi/extension_runtime_test.go pi/register.go pi/register_test.go
-git commit -m "feat(pi): add compile-time extension runtime"
+git add pi/newExtension.go pi/extension_test.go pi/extension_runtime.go pi/extension_runtime_test.go pi/register.go pi/register_test.go
+git commit -m "feat(pi): add compile-time newExtension runtime"
 ```
 
 ### Task 3: Implement MCP JSON-RPC and Streamable HTTP transport
@@ -530,7 +530,7 @@ git commit -m "feat(mcp): add protocol client"
 **Files:**
 - Create: `pi/mcp/tool.go`
 - Create: `pi/mcp/tool_test.go`
-- Create: `pi/mcp/extension.go`
+- Create: `pi/mcp/newExtension.go`
 - Create: `pi/mcp/extension_test.go`
 
 **Interfaces:**
@@ -572,7 +572,7 @@ Inject a fake client returning Exa tools plus an unrelated tool. Assert only all
 
 Run: `go test ./pi/mcp -run 'TestProxyTool|TestExtension' -count=1`
 
-Expected: FAIL because proxy/extension types do not exist.
+Expected: FAIL because proxy/newExtension types do not exist.
 
 - [ ] **Step 4: Implement the proxy adapter**
 
@@ -620,7 +620,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit Task 5**
 
 ```bash
-git add pi/mcp/tool.go pi/mcp/tool_test.go pi/mcp/extension.go pi/mcp/extension_test.go
+git add pi/mcp/tool.go pi/mcp/tool_test.go pi/mcp/newExtension.go pi/mcp/extension_test.go
 git commit -m "feat(mcp): expose remote tools as Pi extensions"
 ```
 
@@ -719,7 +719,7 @@ git commit -m "feat(config): add HTTP MCP server settings"
 - Produces: `newMCPExtensions(*config.Config) (mcpExtensionsOut, error)`.
 - Boundary: `agentRegister` remains usable without business Config; top-level `Register` adds MCP.
 
-- [ ] **Step 1: Write failing config-to-extension tests**
+- [ ] **Step 1: Write failing config-to-newExtension tests**
 
 Define:
 
@@ -756,9 +756,9 @@ Run: `go test ./application/web -run 'TestMCP|TestWeb.*MCP' -count=1`
 
 Expected: FAIL because the provider does not exist.
 
-- [ ] **Step 4: Implement config-to-extension conversion**
+- [ ] **Step 4: Implement config-to-newExtension conversion**
 
-For every enabled server: resolve each Header env with `os.LookupEnv`, reject missing/empty values, build a fresh `http.Header`, convert seconds to `time.Duration`, call `mcp.NewExtension`, and append the returned extension. Never log or wrap the resolved map.
+For every enabled server: resolve each Header env with `os.LookupEnv`, reject missing/empty values, build a fresh `http.Header`, convert seconds to `time.Duration`, call `mcp.NewExtension`, and append the returned newExtension. Never log or wrap the resolved map.
 
 - [ ] **Step 5: Mount only in top-level Web Register**
 
@@ -799,7 +799,7 @@ git commit -m "feat(web): register Exa through HTTP MCP"
 **Files:**
 - Create: `pi/mcp/exa_integration_test.go`
 - Modify: `pi/test/package_boundaries_test.go`
-- Modify only for a factual final mismatch: `docs/superpowers/specs/2026-08-18-pi-http-mcp-extension-design.md`
+- Modify only for a factual final mismatch: `docs/superpowers/specs/2026-08-18-pi-http-mcp-newExtension-design.md`
 
 **Interfaces:**
 - Consumes: completed MCP client and `EXA_API_KEY`.
@@ -872,7 +872,7 @@ The helper prints tool names only, never API Key, Headers or full content.
 - [ ] **Step 3: Run offline verification**
 
 ```bash
-gofmt -w pi/extension.go pi/extension_runtime.go pi/extension_test.go pi/extension_runtime_test.go pi/tool_registry.go pi/tool_registry_test.go pi/tool_runtime.go pi/register.go pi/register_test.go pi/mcp config/config.go config/validate.go config/config_test.go application/web/mcp.go application/web/mcp_test.go application/web/register.go application/web/register_test.go pi/test/package_boundaries_test.go
+gofmt -w pi/newExtension.go pi/extension_runtime.go pi/extension_test.go pi/extension_runtime_test.go pi/tool_registry.go pi/tool_registry_test.go pi/tool_runtime.go pi/register.go pi/register_test.go pi/mcp config/config.go config/validate.go config/config_test.go application/web/mcp.go application/web/mcp_test.go application/web/register.go application/web/register_test.go pi/test/package_boundaries_test.go
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -894,7 +894,7 @@ Expected: PASS after discovering and calling both tools. If credentials or outbo
 Map every spec acceptance bullet to a passing test or live-smoke status. Update the design only if the implemented contract factually differs, then run `git diff --check`.
 
 ```bash
-git add pi/mcp/exa_integration_test.go pi/test/package_boundaries_test.go docs/superpowers/specs/2026-08-18-pi-http-mcp-extension-design.md
+git add pi/mcp/exa_integration_test.go pi/test/package_boundaries_test.go docs/superpowers/specs/2026-08-18-pi-http-mcp-newExtension-design.md
 git commit -m "test(mcp): verify Exa integration boundaries"
 ```
 

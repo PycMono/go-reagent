@@ -18,7 +18,7 @@
 - Normalize ordinary tool failures to `ToolResult.IsError=true`; return Context cancellation/deadline as Go errors so the Agent loop stops.
 - Keep `ToolOutput.Details`, `ToolUpdate.Details`, and `ToolResult.Details` internal to the runtime; Provider adapters serialize only message content, tool calls, call IDs, tool names, and Claude's error flag.
 - Mark only `read` as `ParallelSafe`; preserve exclusive barriers, the configured concurrency ceiling, and original Tool Call result order.
-- Keep extension contracts under `internal`; Fx groups are `agent_tools`, `tool_middlewares`, and `reporters`.
+- Keep newExtension contracts under `internal`; Fx groups are `agent_tools`, `tool_middlewares`, and `reporters`.
 - Sort Middleware and Reporter registrations by `Order`, then `Name`; reject duplicate tool names; sort model-visible tool definitions by `Name`.
 - Use one injected `Workspace` wrapping `os.Root` and one injected `ProcessSupervisor`; Fx Stop must terminate process groups before closing Workspace.
 - Preserve existing unrelated and staged worktree changes, especially `.idea/go-reagent.iml`; every implementation commit must use `git commit --only -- <task paths>` and must inspect those paths before committing.

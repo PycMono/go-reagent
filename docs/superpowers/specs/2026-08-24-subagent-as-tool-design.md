@@ -2,13 +2,13 @@
 
 ## 状态
 
-方案已完成讨论，根据当前 `pi` 实现（Agent/Loop/Scheduler/Governor/EventListener/register/extension_runtime/tool_registry/mcp）与 Pi 官方 subagent extension、go-tiny-claw 教学实现完成交叉复核，并按聊天业务形态完成定位校准。
+方案已完成讨论，根据当前 `pi` 实现（Agent/Loop/Scheduler/Governor/EventListener/register/extension_runtime/tool_registry/mcp）与 Pi 官方 subagent newExtension、go-tiny-claw 教学实现完成交叉复核，并按聊天业务形态完成定位校准。
 
 2026-08-24 第一轮设计审计：6 项严重问题全部经代码验证成立并纳入（MCP 工具来源、父预算事后记账、取消路径漏账、ProviderRequestIndex 撞号、Subagent 字段不落库、read+web 外泄）。
 
 2026-08-24 第二轮设计审计：3 项实现阻断问题全部经代码验证成立并纳入：
 
-1. **装配生命周期**：改为"静态占位 + 启动期晚绑定"——`newSubagentTools` 不依赖 Registry，独立 `subagentBinder` 在 extension freeze 后校验并原子绑定（原方案存在 fx 依赖环与 freeze 时序矛盾）；
+1. **装配生命周期**：改为"静态占位 + 启动期晚绑定"——`newSubagentTools` 不依赖 Registry，独立 `subagentBinder` 在 newExtension freeze 后校验并原子绑定（原方案存在 fx 依赖环与 freeze 时序矛盾）；
 2. **并发安全契约**：外层 `ParallelSafe=true` 不再无条件声明，门面为底层 `ParallelSafe=false` 工具（全部 MCP 工具）提供进程级按名串行锁（原方案绕过串行屏障）；
 3. **预算触顶误判**：改用 `context.WithCancelCause` 的每批预算取消，父预算触顶正确映射为 `max_cost`/`max_total_tokens` 而非 `canceled`（原方案被 `ctx.Err()` 覆盖）。
 
@@ -92,9 +92,9 @@
 
 ## 参考实现的取舍
 
-| 决策点 | Pi 官方 extension | go-tiny-claw 教学版 | 本项目 |
+| 决策点 | Pi 官方 newExtension | go-tiny-claw 教学版 | 本项目 |
 |---|---|---|---|
-| 定位 | extension 工具，core 零改动 | 普通工具 | 同：`ai.Tool`，core 零改动 |
+| 定位 | newExtension 工具，core 零改动 | 普通工具 | 同：`ai.Tool`，core 零改动 |
 | 隔离实现 | 子进程 spawn | 进程内嵌套循环 | 进程内复用 `Loop.runDetailed`（消息历史隔离） |
 | 子循环 | 完整 pi 进程 | 手写简化循环（能力分叉） | 复用主 Loop，自动继承压缩/中间件/tracing/metrics |
 | 打破包循环 | 不涉及 | `AgentRunner` 窄接口注入 | 工具放根包 `pi`，天然无环 |

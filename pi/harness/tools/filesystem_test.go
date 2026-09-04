@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
-
-	"go.uber.org/fx/fxtest"
 )
 
 func TestWorkspaceRejectsNonRelativePathsForEveryFileOperation(t *testing.T) {
@@ -38,7 +36,7 @@ func TestWorkspaceRejectsNonRelativePathsForEveryFileOperation(t *testing.T) {
 }
 
 func TestNewWorkspaceClassifiesInvalidWorkDir(t *testing.T) {
-	_, err := NewWorkspace(fxtest.NewLifecycle(t), Root(""))
+	_, err := NewWorkspace(Root(""))
 	if !errors.Is(err, pierrors.ErrWorkspaceInvalid) {
 		t.Fatalf("NewWorkspace() error = %v, want pierrors.ErrWorkspaceInvalid", err)
 	}
@@ -116,12 +114,10 @@ func TestWorkspaceUsesLifecycleAndResolvesExistingDirectories(t *testing.T) {
 
 func newWorkspaceForTest(t *testing.T, workDir string) *Workspace {
 	t.Helper()
-	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, Root(workDir))
+	workspace, err := NewWorkspace(Root(workDir))
 	if err != nil {
 		t.Fatalf("NewWorkspace() error = %v", err)
 	}
-	lifecycle.RequireStart()
-	t.Cleanup(lifecycle.RequireStop)
+	t.Cleanup(func() { _ = workspace.Close() })
 	return workspace
 }

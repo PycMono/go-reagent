@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
-	"go.uber.org/fx/fxtest"
 )
 
 func TestProcessSupervisorSeparatesStreamsAndKeepsBoundedAbsoluteLog(t *testing.T) {
@@ -230,13 +229,11 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 	if err := os.Mkdir(filepath.Join(workDir, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, Root(workDir))
+	workspace, err := NewWorkspace(Root(workDir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	supervisor := NewProcessSupervisor(lifecycle, workspace, sandbox.NewHostRunner())
-	lifecycle.RequireStart()
+	supervisor := NewProcessSupervisor(workspace, sandbox.NewHostRunner())
 
 	session := mustStartProcess(t, supervisor, ProcessStart{
 		Command: toolHelperCommand("cwd-env"),
@@ -256,9 +253,14 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 	mustStartProcess(t, supervisor, ProcessStart{Command: toolHelperCommand("sleep", "5000")})
-	lifecycle.RequireStop()
+	if err := workspace.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if sessions := supervisor.List(); len(sessions) != 0 {
-		t.Fatalf("sessions after Fx Stop = %#v", sessions)
+		t.Fatalf("sessions after Close = %#v", sessions)
 	}
 	var closeWG sync.WaitGroup
 	closeErrors := make(chan error, 8)
@@ -283,14 +285,12 @@ func TestProcessSupervisorUsesWorkspaceAndLifecycleCloseIsIdempotent(t *testing.
 
 func newProcessSupervisorForTest(t *testing.T, workDir string) *ProcessSupervisor {
 	t.Helper()
-	lifecycle := fxtest.NewLifecycle(t)
-	workspace, err := NewWorkspace(lifecycle, Root(workDir))
+	workspace, err := NewWorkspace(Root(workDir))
 	if err != nil {
 		t.Fatalf("NewWorkspace() error = %v", err)
 	}
-	supervisor := NewProcessSupervisor(lifecycle, workspace, sandbox.NewHostRunner())
-	lifecycle.RequireStart()
-	t.Cleanup(lifecycle.RequireStop)
+	supervisor := NewProcessSupervisor(workspace, sandbox.NewHostRunner())
+	t.Cleanup(func() { _ = workspace.Close(); _ = supervisor.Close() })
 	return supervisor
 }
 
