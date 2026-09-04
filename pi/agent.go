@@ -33,7 +33,7 @@ type Runner interface {
 type Agent struct {
 	builder     *harness.ContextBuilder
 	loop        *Loop
-	toolRuntime toolexec.Executor
+	toolRuntime *toolexec.Runtime
 	notifiers   []Notifier
 	// hooks 与 subagents 仅由 pi.New 装配；直建 Agent 时为零值。
 	hooks     []lifecycleHook
@@ -60,7 +60,7 @@ func newProvider(config providers.Options) (ai.Provider, error) {
 }
 
 // New 内部完成 pi 的全部初始化，调用顺序即启动时序约束：
-// Runner → Workspace/Supervisor → 工具 → Registry → 扩展 → Executor
+// Runner → Workspace/Supervisor → 工具 → Registry → 扩展 → Tool Runtime
 // → Provider 装饰链 → Loop → Agent → subagent 绑定。
 func New(opts Options) (*Agent, error) {
 	if opts.WorkDir == "" {
@@ -106,21 +106,20 @@ func New(opts Options) (*Agent, error) {
 		return nil, err
 	}
 
-	executor := toolexec.NewExecutorFromRegistry(registry,
-		append(middleware.Defaults(), opts.ExtraHandlers...))
-	scheduler := toolexec.NewScheduler(executor, defaultMaxParallelTools)
+	toolRuntime := toolexec.NewRuntime(registry,
+		append(middleware.Defaults(), opts.ExtraHandlers...), defaultMaxParallelTools)
 
 	provider, err := newProvider(opts.Platform)
 	if err != nil {
 		return nil, err
 	}
-	loop := NewLoop(provider, scheduler, opts.Compaction,
+	loop := NewLoop(provider, toolRuntime, opts.Compaction,
 		WithLoopProviderIdentity(opts.Platform.ID, opts.Platform.Model),
 		WithLoopDetection(opts.LoopDetection))
 
 	composer := harness.NewPromptComposer(opts.WorkDir)
 	builder := harness.NewContextBuilder(composer, opts.WorkDir)
-	agent := &Agent{builder: builder, loop: loop, toolRuntime: executor, notifiers: opts.Notifiers}
+	agent := &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: opts.Notifiers}
 
 	// 钩子顺序即启动顺序：Workspace/Supervisor 的清理钩子（OnStop-only）
 	// 先注册，扩展注册+freeze 其次，subagent 绑定显式排最后。
@@ -148,7 +147,7 @@ func New(opts Options) (*Agent, error) {
 			Registry:      registry,
 			Runtime:       extRuntime,
 			Tools:         allTools,
-			ToolRuntime:   executor,
+			ToolRuntime:   toolRuntime,
 			Provider:      provider,
 			Compaction:    opts.Compaction,
 			LoopDetection: opts.LoopDetection,

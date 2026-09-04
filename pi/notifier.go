@@ -16,7 +16,7 @@ const (
 	NotificationRunError NotificationKind = "run_error"
 	// NotificationRunLimit 是 run 触发请求级预算上限（轮次/成本/Token）。
 	NotificationRunLimit NotificationKind = "run_limit"
-	// NotificationToolError 是单次工具执行失败（toolexec.Result.IsError）。
+	// NotificationToolError 是单次工具执行失败（toolexec.Event.IsError）。
 	NotificationToolError NotificationKind = "tool_error"
 )
 
@@ -43,21 +43,21 @@ type alertListener struct {
 }
 
 func (b *alertListener) OnEvent(ctx context.Context, event AgentEvent) {
-	if event.Type != AgentEventToolEnd || event.Tool == nil || event.Tool.Result == nil {
+	if event.Type != AgentEventToolEnd || event.Tool == nil {
 		return
 	}
-	result := event.Tool.Result
-	if !result.IsError {
+	toolEvent := event.Tool
+	if !toolEvent.IsError {
 		return
 	}
 	// 循环护栏 recover 的合成结果不是工具执行失败，不产生 tool_error
 	// 告警；Run 终止时由 run_error 告警兜底。
-	if result.ErrorCode == pierrors.ErrorCodeRunLoopDetected {
+	if toolEvent.ErrorCode == pierrors.ErrorCodeRunLoopDetected {
 		return
 	}
-	summary := fmt.Sprintf("工具 %s 执行失败", result.ToolName)
-	if result.ErrorCode != "" {
-		summary += fmt.Sprintf("（错误码 %s）", result.ErrorCode)
+	summary := fmt.Sprintf("工具 %s 执行失败", toolEvent.Call.Name)
+	if toolEvent.ErrorCode != "" {
+		summary += fmt.Sprintf("（错误码 %s）", toolEvent.ErrorCode)
 	}
 	b.notify(ctx, Notification{Kind: NotificationToolError, Summary: summary})
 }

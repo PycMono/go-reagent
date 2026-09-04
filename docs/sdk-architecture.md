@@ -16,7 +16,7 @@ cmd/server -> config + conversation + infrastructure + pi
 - `pi/ai`：公共消息、Usage、内容块、工具定义和统一 `Provider`。
 - `pi/ai/providers`：Provider 配置，以及 OpenAI/Anthropic 官方 SDK 适配器。
 - `pi`：唯一 Agent Core，包含公共 Run 契约、Agent、Loop、EventListener、Notifier 和事件，并通过 `register.go` 组装默认 Harness。
-- `pi/toolexec`：Tool 执行域——注册（`Registry`）、经中间件链执行单个调用（`Executor`）、批量调度（`Scheduler`）与执行生命周期事件（`Event`/`Result`）。
+- `pi/toolexec`：Tool 执行域——`Registry` 管理工具注册生命周期，`Runtime` 经中间件链执行单个调用并负责批量调度，`Event` 表达执行生命周期。
 - `pi/middleware`：Tool 执行链的中间件机制与内置 Handler（tracing、panic 恢复、schema 校验、日志、事件转发、权限拦截），详见「Tool 中间件与权限拦截」。
 - `pi/governor`：Run 治理域——资源上限（`Limits`）、预算累计与准入（`Governor`）、终止分类（`Termination`）、模型调用计量（`Invocation`）及父子运行间传递这些原语的 ctx 管道件。
 - `pi/newExtension`：扩展契约（`Extension`/`API`/`Closer`）与启动期注册运行时；`pi/mcp` 依赖本包而非根 `pi`。
@@ -72,7 +72,7 @@ type Runner interface {
 	Run(context.Context, RunRequest, EventListener) (RunResult, error)
 }
 
-func New(*harness.ContextBuilder, *Loop, toolexec.Executor) *Agent
+func New(*harness.ContextBuilder, *Loop, *toolexec.Runtime) *Agent
 ```
 
 `pi.Agent` 是唯一 Agent 类型。直接组合底层组件时调用 `pi.New`；`Agent` 直接使用具体的 `harness.ContextBuilder` 准备每次运行的上下文，不再通过只有一个实现的 Factory 转发。`pi.CoreRegister` 只组装 Agent Core，`pi.ReadOnlyToolsRegister` 提供 Workspace 和 `read`，`pi.CodingToolsRegister` 提供完整本地 Coding 工具；`pi.Register` 保留为 Core 与 Coding 工具的兼容聚合。
