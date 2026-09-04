@@ -92,7 +92,7 @@ func (t *SubagentTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:         subagentToolName(t.name),
 		Description:  t.description,
-		ParallelSafe: true, // 多个子代理调用可批次并发（受 toolexec.Scheduler maxParallel 限流）
+		ParallelSafe: true, // 多个子代理调用可批次并发（受 toolexec.Runtime maxParallel 限流）
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -259,7 +259,7 @@ func (a *subagentEventAdapter) OnEvent(_ context.Context, event AgentEvent) {
 		a.emitUpdate(fmt.Sprintf("→ [%s] %s", a.agent, event.Tool.Call.Name))
 	case AgentEventToolEnd:
 		status := "✓"
-		if event.Tool.Result != nil && event.Tool.Result.IsError {
+		if event.Tool.IsError {
 			status = "✗"
 		}
 		a.emitUpdate(fmt.Sprintf("%s [%s] %s", status, a.agent, event.Tool.Call.Name))
@@ -294,7 +294,7 @@ type SubagentBinderParams struct {
 	// 之后执行。
 	Runtime       *extension.Runtime
 	Tools         []ai.Tool // 含子代理占位;非 *SubagentTool 的项被忽略
-	ToolRuntime   toolexec.Executor
+	ToolRuntime   *toolexec.Runtime
 	Provider      ai.Provider
 	Compaction    harness.CompactionConfig
 	LoopDetection loopdetect.Config
@@ -302,11 +302,11 @@ type SubagentBinderParams struct {
 }
 
 // SubagentBinder 在启动期 freeze 后校验定义并原子绑定子管线（全有或全无）。
-// 子 toolexec.Scheduler 复用共享 toolexec.Executor：执行边界由 Loop 的可见性校验保证
+// 子 Loop 复用共享 *toolexec.Runtime：执行边界由 Loop 的可见性校验保证
 // （availableTools = 白名单 defs 快照）。
 type SubagentBinder struct {
 	registry      *toolexec.Registry
-	toolRuntime   toolexec.Executor
+	toolRuntime   *toolexec.Runtime
 	tools         []*SubagentTool
 	provider      ai.Provider
 	compaction    harness.CompactionConfig
@@ -361,8 +361,7 @@ func (b *SubagentBinder) Start(_ context.Context) error {
 			return fmt.Errorf("subagent %q: placeholder tool %q is missing from the registry",
 				tool.name, subagentToolName(tool.name))
 		}
-		scheduler := toolexec.NewScheduler(b.toolRuntime, defaultMaxParallelTools)
-		childLoop := NewLoop(b.provider, scheduler, b.compaction,
+		childLoop := NewLoop(b.provider, b.toolRuntime, b.compaction,
 			WithLoopProviderIdentity(b.platform.ID, b.platform.Model),
 			WithLoopDetection(b.loopDetection))
 		pipelines = append(pipelines, &subagentPipeline{childLoop: childLoop, childTools: defs})

@@ -41,8 +41,8 @@ Agent / Loop / Subagent ───────────> Tool Runtime
 `Definitions/Execute` 与原 Scheduler 的 `Schedule/Mode/IsSubagentTool` 都成为 Runtime
 方法。调度内部直接调用 `Runtime.Execute`，不再经过第二个对象。
 
-文件仍按关注点拆分：`runtime.go` 保存类型、构造和单次执行；`scheduler.go` 保存同一
-Runtime 的批量调度方法；`registry.go` 保持注册表实现。文件拆分不再对应三个对象。
+实现收敛为两个生产文件：`runtime.go` 保存 Runtime 的类型、构造、单次执行和批量调度；
+`registry.go` 保持 Registry 实现。
 
 ### API 变化
 
@@ -74,10 +74,7 @@ Runtime 可在 Registry freeze 前构造，但 Agent 仍只在扩展启动、注
 未注册工具、参数校验、panic、超时、重试、取消和 End Event 归一化行为保持不变。
 并发批次仍保留串行屏障、最大并发限制和结果原始顺序。
 
-## 测试
+## 验证
 
-- 保留 Registry 注册、回滚、冻结和排序测试。
-- 保留 Runtime 单次执行、nil observer、生命周期事件、错误归一化和输出限制测试。
-- 增加 Runtime 调度模式、并发上限、串行屏障和结果顺序测试。
 - 运行 `go test ./pi/... -count=1` 与 `git diff --check`。
 - 全仓测试若仍受现有 conversation Fx 装配问题影响，单独报告，不扩大本次修复范围。

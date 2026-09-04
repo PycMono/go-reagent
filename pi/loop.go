@@ -27,9 +27,9 @@ import (
 // 可观测性走 SDK 全局默认（go-context-sdk StartSpan / go-observability-sdk
 // 包级 Metrics）：Runtime 未安装时全部 Noop，Loop 不持有门面或开关。
 type Loop struct {
-	provider   ai.Provider
-	scheduler  *toolexec.Scheduler
-	compaction harness.CompactionConfig
+	provider    ai.Provider
+	toolRuntime *toolexec.Runtime
+	compaction  harness.CompactionConfig
 	// loopDetection 是不可变的循环检测配置；每次 Run 用它创建独立的
 	// request-local Detector。
 	loopDetection loopdetect.Config
@@ -46,14 +46,14 @@ type LoopOption func(*Loop)
 // 零值配置关闭主动压缩与 L1，reactive 兜底始终启用。
 func NewLoop(
 	provider ai.Provider,
-	scheduler *toolexec.Scheduler,
+	toolRuntime *toolexec.Runtime,
 	compaction harness.CompactionConfig,
 	options ...LoopOption,
 ) *Loop {
 	loop := &Loop{
-		provider:   provider,
-		scheduler:  scheduler,
-		compaction: compaction,
+		provider:    provider,
+		toolRuntime: toolRuntime,
+		compaction:  compaction,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -83,7 +83,7 @@ func WithLoopDetection(config loopdetect.Config) LoopOption {
 func (l *Loop) CompactionConfig() harness.CompactionConfig { return l.compaction }
 
 // maxSubagentCallsPerBatch 是单个工具批次允许执行的子代理调用上限
-// （toolexec.Scheduler 对 wave 内每个调用都创建 goroutine，maxParallel 只限并发
+// （toolexec.Runtime 对 wave 内每个调用都创建 goroutine，maxParallel 只限并发
 // 不限总数）。超出的调用不调度，确定性生成 IsError 结果。
 const maxSubagentCallsPerBatch = 8
 
@@ -207,14 +207,14 @@ func (l *Loop) executeTurn(
 		switch admission.Decision {
 		case loopdetect.DecisionTerminate:
 			// 不提交 Assistant、不发送 message_end、不生成 Tool Results、
-			// 不执行 Scheduler；provisional delta 由 run.failed 路径丢弃。
+			// 不执行工具调度；provisional delta 由 run.failed 路径丢弃。
 			done = true
 			return fmt.Errorf("agent 运行因工具循环护栏终止: %w",
 				pierrors.Wrap(pierrors.ErrorCodeRunLoopDetected, "tool loop detection",
 					loopdetect.NewError(admission.Intervention)))
 		case loopdetect.DecisionRecover:
 			// 提交完整协议组（原始 Assistant + 每个调用的合成结果），不调用
-			// Scheduler、不创建 BatchBudget、不调用 RecordToolBatchOutcome；
+			// 不执行工具调度、不创建 BatchBudget、不调用 RecordToolBatchOutcome；
 			// 模型获得一个恢复 turn，仍受全部预算与取消约束。
 			commitAssistantMessage(ctx, state, listener, actionResp)
 			commitLoopRecoveryResults(ctx, state, actionResp.ToolCalls, listener)
@@ -314,7 +314,7 @@ func (l *Loop) executeToolBatch(
 	if len(rejected) > 0 {
 		contexttracing.WithKV(ctx, contexttracing.KV(observability.AttrToolsRejectedCount, len(rejected)))
 	}
-	mode := l.scheduler.Mode(runnable, state.availableTools)
+	mode := l.toolRuntime.Mode(runnable, state.availableTools)
 	contexttracing.WithKV(ctx,
 		contexttracing.KV(observability.AttrToolsRequestedCount, len(actionResp.ToolCalls)),
 		contexttracing.KV(observability.AttrToolsExecutionMode, mode),
@@ -346,10 +346,10 @@ func (l *Loop) executeToolBatch(
 		}
 		call := actionResp.ToolCalls[index]
 		observer(batchCtx, toolexec.NewStartEvent(call))
-		observer(batchCtx, toolexec.NewEndEvent(call, rejected[index]))
+		observer(batchCtx, rejected[index])
 	}
 
-	scheduled, scheduleErr := l.scheduler.Schedule(scheduleCtx, runnable, state.availableTools, observer)
+	scheduled, scheduleErr := l.toolRuntime.Schedule(scheduleCtx, runnable, state.availableTools, observer)
 
 	// 结算：所有返回路径强制执行。
 	// 只追加账本，不再 observe——预算已经 governor.BatchBudget 实时扣减。
@@ -379,7 +379,7 @@ func (l *Loop) executeToolBatch(
 	}
 
 	// 按原始下标合并调度结果与合成拒绝结果。
-	results := make([]toolexec.Result, len(actionResp.ToolCalls))
+	results := make([]toolexec.Event, len(actionResp.ToolCalls))
 	for index, result := range scheduled {
 		results[origin[index]] = result
 	}
@@ -387,14 +387,14 @@ func (l *Loop) executeToolBatch(
 		results[index] = result
 	}
 
-	// 结果对齐校验：长度、ToolCallID 或工具名不一致表示 Scheduler/合并
+	// 结果对齐校验：长度、ToolCallID 或工具名不一致表示 Runtime/合并
 	// 逻辑违反内部不变量——不属于模型行为，也不能降级为“跳过循环记账后
 	// 继续”。保留全部已入账 Invocation 与 Totals，合成“执行状态未知”
 	// 结果闭合已提交的 Assistant，以 internal error 终止（Termination
 	// 为 error 而非 loop_detected）。
-	if !toolResultsAligned(actionResp.ToolCalls, results) {
+	if !toolEventsAligned(actionResp.ToolCalls, results) {
 		for _, call := range actionResp.ToolCalls {
-			appendToolResultMessage(state, newRejectedToolResult(call, pierrors.ErrorCodeInternal,
+			appendToolResultMessage(state, newRejectedToolEvent(call, pierrors.ErrorCodeInternal,
 				"工具批次结果对齐失败，执行状态未知，请勿自动重试"))
 		}
 		return fmt.Errorf("agent 运行因内部错误终止: %w",
@@ -424,28 +424,28 @@ func (l *Loop) executeToolBatch(
 func (l *Loop) planToolBatch(
 	calls []ai.ToolCall,
 	availableTools ai.ToolDefinitions,
-) (runnable []ai.ToolCall, origin []int, rejected map[int]toolexec.Result, silent map[int]bool) {
+) (runnable []ai.ToolCall, origin []int, rejected map[int]toolexec.Event, silent map[int]bool) {
 	runnable = make([]ai.ToolCall, 0, len(calls))
 	origin = make([]int, 0, len(calls))
 	subagentSeen := 0
 	for index, call := range calls {
 		if !availableTools.Has(call.Name) {
 			if rejected == nil {
-				rejected = make(map[int]toolexec.Result)
+				rejected = make(map[int]toolexec.Event)
 				silent = make(map[int]bool)
 			}
-			rejected[index] = newRejectedToolResult(call, pierrors.ErrorCodeToolPermissionDenied,
+			rejected[index] = newRejectedToolEvent(call, pierrors.ErrorCodeToolPermissionDenied,
 				fmt.Sprintf("tool %q is not available in this run", call.Name))
 			silent[index] = true
 			continue
 		}
-		if l.scheduler.IsSubagentTool(call.Name) {
+		if l.toolRuntime.IsSubagentTool(call.Name) {
 			subagentSeen++
 			if subagentSeen > maxSubagentCallsPerBatch {
 				if rejected == nil {
-					rejected = make(map[int]toolexec.Result)
+					rejected = make(map[int]toolexec.Event)
 				}
-				rejected[index] = newRejectedToolResult(call, pierrors.ErrorCodeRunLimitExceeded,
+				rejected[index] = newRejectedToolEvent(call, pierrors.ErrorCodeRunLimitExceeded,
 					fmt.Sprintf("单批子代理调用超过上限 %d，请分批委派", maxSubagentCallsPerBatch))
 				continue
 			}
@@ -466,10 +466,10 @@ func commitLoopRecoveryResults(
 	listener EventListener,
 ) {
 	for _, call := range calls {
-		result := newRejectedToolResult(call, pierrors.ErrorCodeRunLoopDetected,
+		result := newRejectedToolEvent(call, pierrors.ErrorCodeRunLoopDetected,
 			"工具循环护栏阻止了本批次执行：检测到重复且无进展的调用。请停止当前重试路径，改用不同方案，或明确说明无法继续。")
 		listener.OnEvent(ctx, NewAgentToolEvent(toolexec.NewStartEvent(call)))
-		listener.OnEvent(ctx, NewAgentToolEvent(toolexec.NewEndEvent(call, result)))
+		listener.OnEvent(ctx, NewAgentToolEvent(result))
 		appendToolResultMessage(state, result)
 	}
 }
@@ -562,40 +562,37 @@ func commitAssistantMessage(ctx context.Context, state *runState, listener Event
 	listener.OnEvent(ctx, NewMessageEndEvent(*msg))
 }
 
-// toolResultsAligned 校验合并后的结果与原始调用的长度、ToolCallID、工具名
+// toolEventsAligned 校验合并后的结束事件与原始调用的长度、ID、工具名
 // 一一对齐。
-func toolResultsAligned(calls ai.ToolCalls, results []toolexec.Result) bool {
-	if len(calls) != len(results) {
+func toolEventsAligned(calls ai.ToolCalls, events []toolexec.Event) bool {
+	if len(calls) != len(events) {
 		return false
 	}
 	for index := range calls {
-		if calls[index].ID != results[index].ToolCallID || calls[index].Name != results[index].ToolName {
+		if events[index].Phase != toolexec.EventEnd ||
+			calls[index].ID != events[index].Call.ID || calls[index].Name != events[index].Call.Name {
 			return false
 		}
 	}
 	return true
 }
 
-// newRejectedToolResult 构造一条确定性合成的 IsError 工具结果。
-func newRejectedToolResult(call ai.ToolCall, code pierrors.ErrorCode, text string) toolexec.Result {
-	return toolexec.Result{
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
-		Content:    []ai.ContentBlock{ai.TextBlock(text)},
-		IsError:    true,
-		ErrorCode:  code,
-	}
+// newRejectedToolEvent 构造一条确定性合成的 IsError 工具结束事件。
+func newRejectedToolEvent(call ai.ToolCall, code pierrors.ErrorCode, text string) toolexec.Event {
+	return toolexec.NewEndEvent(call, ai.ToolOutput{
+		Content: []ai.ContentBlock{ai.TextBlock(text)},
+	}, true, code)
 }
 
 // appendToolResultMessage 把一条工具结果按 Tool Calling 协议追加到
 // contextHistory 与 newMessages。
-func appendToolResultMessage(state *runState, result toolexec.Result) {
+func appendToolResultMessage(state *runState, event toolexec.Event) {
 	rawMessage := ai.Message{
 		Role:       ai.RoleTool,
-		Content:    result.Content.Clone(),
-		ToolCallID: result.ToolCallID,
-		ToolName:   result.ToolName,
-		IsError:    result.IsError,
+		Content:    event.Content.Clone(),
+		ToolCallID: event.Call.ID,
+		ToolName:   event.Call.Name,
+		IsError:    event.IsError,
 	}
 	state.contextHistory = append(state.contextHistory, rawMessage)
 	state.newMessages = append(state.newMessages, rawMessage)
