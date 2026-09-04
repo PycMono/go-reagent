@@ -15,9 +15,6 @@ import (
 	"unicode/utf8"
 )
 
-// maxStdioMessageBytes 是单条 JSONL 消息的上限，与 HTTP 响应上限一致。
-const maxStdioMessageBytes = int(maxHTTPResponseBytes)
-
 // stdioCloseGracePeriod 是正常关闭时等待子进程自然退出的最长时间；
 // 超时后强制终止完整进程组。变量以便测试缩短等待。
 var stdioCloseGracePeriod = 5 * time.Second
@@ -445,7 +442,7 @@ type stdioWireMessage struct {
 // Transport 进入 failed。空行与纯空白行跳过。
 func (t *StdioTransport) readLoop(reader io.Reader) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64*1024), maxStdioMessageBytes)
+	scanner.Buffer(make([]byte, 64*1024), int(maxMessageBytes))
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {

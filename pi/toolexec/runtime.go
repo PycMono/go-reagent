@@ -67,6 +67,7 @@ func (e *executor) Execute(
 	if !ok {
 		return errorResult(call, fmt.Errorf("tool %q is not registered", call.Name)), nil
 	}
+
 	observe(ctx, observer, NewStartEvent(call))
 	execution := &middleware.Execution{
 		Ctx:          ctx,
@@ -81,11 +82,13 @@ func (e *executor) Execute(
 	if contextErr := ctx.Err(); contextErr != nil {
 		err = contextErr
 	}
+
 	result := normalizeResult(call, output, err)
 	observe(ctx, observer, NewEndEvent(call, result))
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return result, err
 	}
+
 	return result, nil
 }
 

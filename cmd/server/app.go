@@ -1,42 +1,65 @@
 package main
 
 import (
+	"go.uber.org/fx"
+
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	chattools "github.com/PycMono/go-reagent/application/tool/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
 	"github.com/PycMono/go-reagent/infrastructure"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
-	mcpdriver "github.com/PycMono/go-reagent/infrastructure/driver/mcp"
-	sandboxdriver "github.com/PycMono/go-reagent/infrastructure/driver/sandbox"
 	"github.com/PycMono/go-reagent/infrastructure/notice"
 	"github.com/PycMono/go-reagent/pi"
-	"go.uber.org/fx"
+	"github.com/PycMono/go-reagent/pi/ai"
 )
 
+// Register 装配完整 Agent 依赖图：config.PIRuntimeOptions 完成全部配置
+// 翻译，组合根只叠加 group 供数后一次调用 pi.New；应用层
+// （infrastructure/conversation/chatservice）沿用各自的 Register。
 var Register = fx.Options(
-	agentRegister,
+	notice.Register,
+	chattools.Register,
+	fx.Provide(
+		config.NewFromEnvironment,
+		config.NewWorkDir,
+		agentprofiledriver.NewCatalog,
+	),
+	fx.Provide(newApp, newAgentRunner),
 	infrastructure.Register,
 	conversation.Register,
 	chatservice.Register,
-	mcpdriver.Register,
-	sandboxdriver.Register,
-	notice.Register,
-	fx.Provide(
-		config.NewFromEnvironment,
-		config.NewPlatform,
-		config.NewWorkDir,
-		config.NewCompactionConfig,
-		config.NewLoopDetectionConfig,
-		config.NewExtraToolHandlers,
-		agentprofiledriver.NewCatalog,
-	),
 )
 
-var agentRegister = fx.Options(
-	pi.CoreRegister,
-	pi.CommandRunnerRegister, // SDK 默认 Host，由平台 sandbox driver 在产品组合根替换
-	pi.ReadOnlyToolsRegister,
-	pi.SubagentRegister,
-	chattools.Register,
-)
+// appParams 是组合根收集的全部装配输入：group 汇聚应用层供数，
+// 配置翻译由 config.PIRuntimeOptions 完成。
+type appParams struct {
+	fx.In
+	WorkDir   pi.WorkDir
+	Config    *config.Config
+	ChatTools []ai.Tool     `group:"agent_tools"`
+	Notifiers []pi.Notifier `group:"agent_notifiers"`
+}
+
+// newApp 叠加应用层供数与服务器能力开关后一次调 pi.New，
+// 并把启动/停机序列挂进 fx Lifecycle。
+func newApp(lifecycle fx.Lifecycle, params appParams) (*pi.Agent, error) {
+	opts, err := params.Config.PIRuntimeOptions(string(params.WorkDir))
+	if err != nil {
+		return nil, err
+	}
+	opts.Tools = params.ChatTools
+	opts.Notifiers = params.Notifiers
+	opts.AllowWrite = true
+	opts.AllowExec = true
+	opts.BuiltinSubagent = true
+	agent, err := pi.New(opts)
+	if err != nil {
+		return nil, err
+	}
+	lifecycle.Append(fx.Hook{OnStart: agent.Start, OnStop: agent.Stop})
+	return agent, nil
+}
+
+// newAgentRunner 兼容既有消费端（conversation 依赖 pi.Runner 接口）。
+func newAgentRunner(agent *pi.Agent) pi.Runner { return agent }

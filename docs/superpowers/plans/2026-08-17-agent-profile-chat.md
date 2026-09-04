@@ -356,11 +356,11 @@ git commit -m "feat: add agent profile chat experience"
 - Modify: `config.example.json` only if the documented Workspace path is not already `workspaces/chat`
 
 **Interfaces:**
-- Documents: Profile Catalog extension procedure, immutable conversation binding, API examples, migration order, and disable-vs-delete lifecycle.
+- Documents: Profile Catalog newExtension procedure, immutable conversation binding, API examples, migration order, and disable-vs-delete lifecycle.
 
-- [ ] **Step 1: Update operator and extension documentation**
+- [ ] **Step 1: Update operator and newExtension documentation**
 
-Document exact startup requirement `agent.workspace_dir=./workspaces/chat`, migration `0004_agent_profiles.up.sql`, `GET /api/v1/agent-profiles`, required `profile_code` create body, optional list filter, and the safe extension sequence: add Catalog entry, AGENTS, optional Skills, tests, then deploy. State that a referenced Profile must first be set `selectable:false` and can be deleted only after a data migration removes all references.
+Document exact startup requirement `agent.workspace_dir=./workspaces/chat`, migration `0004_agent_profiles.up.sql`, `GET /api/v1/agent-profiles`, required `profile_code` create body, optional list filter, and the safe newExtension sequence: add Catalog entry, AGENTS, optional Skills, tests, then deploy. State that a referenced Profile must first be set `selectable:false` and can be deleted only after a data migration removes all references.
 
 - [ ] **Step 2: Run focused and full automated verification**
 

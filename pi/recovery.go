@@ -141,7 +141,7 @@ func (l *Loop) generateWithRetry(
 			// Retry Counter 仅在 scheduled 时累加一次。
 			observability.RecordRetryScheduled(ctx, state.attempts+1, delay, reason)
 			observability.RecordModelRetry(ctx,
-				labelOrUnknown(l.providerID), labelOrUnknown(l.model), state.phase, reason)
+				metricLabelOrUnknown(l.providerID), metricLabelOrUnknown(l.model), state.phase, reason)
 			logsdk.Warn(ctx, "model generation retry",
 				logsdk.Any("component", "model_recovery"),
 				logsdk.Any("error_code", pierrors.ErrorCodeOf(err)),
@@ -202,7 +202,7 @@ func (l *Loop) generate(
 		}, err
 	}
 	observability.RecordContextOverflow(ctx,
-		labelOrUnknown(l.providerID), labelOrUnknown(l.model), state.phase)
+		metricLabelOrUnknown(l.providerID), metricLabelOrUnknown(l.model), state.phase)
 	result, recoverErr := l.recoverOverflow(ctx, state, response, err, messages, ephemeral, tools, onText, onCompactionUsage)
 	result.attempts = state.attempts
 	result.compactionTriggered = state.compactionTriggered

@@ -6,12 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/fx"
-
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
-	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 func TestParseFlagsValidation(t *testing.T) {
@@ -208,9 +205,9 @@ func TestPreflightWorkspace(t *testing.T) {
 	})
 }
 
-// buildToolsetApp 用 fake platform 装配真实 fx 图，Populate executor 断言
-// 授权档位最终工具集合。构造在 fx.New 时执行，无需 Start（本用例无 MCP）。
-func buildToolsetApp(t *testing.T, flags cliFlags) toolexec.Executor {
+// buildToolsetAgent 用 fake platform 调 pi.New，断言授权档位最终工具
+// 集合。构造即可断言，无需 Start（本用例无 MCP）。
+func buildToolsetAgent(t *testing.T, flags cliFlags) *pi.Agent {
 	t.Helper()
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("指令"), 0o600); err != nil {
@@ -224,25 +221,21 @@ func buildToolsetApp(t *testing.T, flags cliFlags) toolexec.Executor {
 		},
 		workDir: workDir,
 	}
-	options := []fx.Option{
-		fx.NopLogger,
-		fx.Supply(runtime.options, pi.WorkDir(runtime.workDir), runtime.compaction),
-		pi.CoreRegister,
-		pi.CommandRunnerRegister, // 与 buildOptions 保持一致（设计 §8）
-		toolsetFor(flags),
+	agent, err := pi.New(pi.Options{
+		WorkDir:    runtime.workDir,
+		Platform:   runtime.options,
+		AllowWrite: flags.allowWrite || flags.yolo,
+		AllowExec:  flags.allowExec || flags.yolo,
+	})
+	if err != nil {
+		t.Fatalf("pi.New 失败: %v", err)
 	}
-	var executor toolexec.Executor
-	options = append(options, fx.Populate(&executor))
-	app := fx.New(options...)
-	if app.Err() != nil {
-		t.Fatalf("fx 装配失败: %v", app.Err())
-	}
-	return executor
+	return agent
 }
 
-func toolNames(executor toolexec.Executor) map[string]bool {
+func toolNames(agent *pi.Agent) map[string]bool {
 	names := make(map[string]bool)
-	for _, definition := range executor.Definitions() {
+	for _, definition := range agent.ToolDefinitions() {
 		names[definition.Name] = true
 	}
 	return names
@@ -266,7 +259,7 @@ func TestToolsetTiers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			names := toolNames(buildToolsetApp(t, tt.flags))
+			names := toolNames(buildToolsetAgent(t, tt.flags))
 			for _, want := range tt.want {
 				if !names[want] {
 					t.Errorf("缺少工具 %q，当前: %v", want, names)

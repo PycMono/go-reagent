@@ -19,35 +19,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-const maxHTTPResponseBytes int64 = 16 << 20
-
-// DefaultTimeout 是未配置 Timeout（<=0）时每次 MCP HTTP 请求的默认期限，
-// 与 go-reagent 服务的默认配置（config.example.json）保持一致。
-const DefaultTimeout = 60 * time.Second
-
-type transportError struct {
-	op     string
-	kind   string
-	status int
-	code   int
-	cause  error
-}
-
-func (err *transportError) Error() string {
-	switch {
-	case err.status != 0:
-		return fmt.Sprintf("mcp %s: HTTP status %d", err.op, err.status)
-	case err.code != 0:
-		return fmt.Sprintf("mcp %s: remote JSON-RPC error code %d", err.op, err.code)
-	case err.cause != nil:
-		return fmt.Sprintf("mcp %s: %s: %v", err.op, err.kind, err.cause)
-	default:
-		return fmt.Sprintf("mcp %s: %s", err.op, err.kind)
-	}
-}
-
-func (err *transportError) Unwrap() error { return err.cause }
-
 type HTTPTransportOptions struct {
 	Endpoint string
 	Headers  http.Header
@@ -55,16 +26,13 @@ type HTTPTransportOptions struct {
 }
 
 type HTTPTransport struct {
-	endpoint *url.URL
-	headers  http.Header
-	timeout  time.Duration
-	client   *http.Client
-	// baseTransport 是 otelhttp 包装下的真实 Transport；otelhttp.Transport
-	// 不实现 CloseIdleConnections，关闭时空闲连接必须直达它。
+	endpoint      *url.URL
+	headers       http.Header
+	timeout       time.Duration
+	client        *http.Client
 	baseTransport http.RoundTripper
-
-	sessionMu sync.RWMutex
-	sessionID string
+	sessionMu     sync.RWMutex
+	sessionID     string
 }
 
 func NewHTTPTransport(options HTTPTransportOptions) (*HTTPTransport, error) {
@@ -256,35 +224,27 @@ func (transport *HTTPTransport) captureSession(value string) {
 }
 
 func readLimitedBody(reader io.Reader) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(reader, maxHTTPResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(reader, maxMessageBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(body)) > maxHTTPResponseBytes {
+	if int64(len(body)) > maxMessageBytes {
 		return nil, errors.New("response is too large")
 	}
 	return body, nil
 }
 
 func decodeResponse(data []byte) (Response, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
 	var response Response
-	if err := decoder.Decode(&response); err != nil {
+	if err := decodeStrictJSON(data, &response); err != nil {
 		return Response{}, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return Response{}, err
-		}
-		return Response{}, errors.New("response contains trailing JSON")
 	}
 	return response, nil
 }
 
 func decodeSSEResponses(data []byte) ([]Response, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), int(maxHTTPResponseBytes))
+	scanner.Buffer(make([]byte, 64*1024), int(maxMessageBytes))
 	var responses []Response
 	var dataLines []string
 	flush := func() error {

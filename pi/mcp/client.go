@@ -6,17 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
 )
 
-type Transport interface {
-	Send(context.Context, Request) (Response, error)
-	Close(context.Context) error
-}
-
+// Client 是 MCP 规范中 Client 角色的实现：维护与单个 MCP Server 的
+// 协议会话（initialize 握手、请求 ID、tools 分页、结果校验），通过
+// Transport 收发消息。一个 Client 对应一个 server 连接。
+// 本文件同时定义各方法的消息形状（参数 / 结果）；JSON-RPC 信封在
+// transport.go。
 type Client struct {
 	transport Transport
 	nextID    atomic.Int64
@@ -28,27 +27,103 @@ type Client struct {
 	version     string
 }
 
-func NewClient(transport Transport, name, version string) (*Client, error) {
-	if transport == nil {
-		return nil, errors.New("mcp transport is required")
+const ProtocolVersion = "2025-03-26"
+
+type implementationInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type initializeParams struct {
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    map[string]any     `json:"capabilities"`
+	ClientInfo      implementationInfo `json:"clientInfo"`
+}
+
+type initializeResult struct {
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    map[string]any     `json:"capabilities"`
+	ServerInfo      implementationInfo `json:"serverInfo"`
+}
+
+type Tool struct {
+	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+type listToolsParams struct {
+	Cursor string `json:"cursor,omitempty"`
+}
+
+type listToolsResult struct {
+	Tools      []Tool `json:"tools"`
+	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+type callToolParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+type Content struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type CallToolResult struct {
+	Content           []Content `json:"content"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
+}
+
+// text 返回结果的可读文本：优先拼接全部 text 内容块；没有文本内容时
+// 序列化 structuredContent 兜底；两者皆无时返回空串。
+func (result CallToolResult) text() (string, error) {
+	texts := make([]string, 0, len(result.Content))
+	for _, content := range result.Content {
+		if content.Type != "text" {
+			return "", fmt.Errorf("unsupported content type %q", content.Type)
+		}
+		texts = append(texts, content.Text)
 	}
+	if len(texts) > 0 {
+		return strings.Join(texts, "\n"), nil
+	}
+
+	if result.StructuredContent != nil {
+		data, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			return "", fmt.Errorf("encode structured content: %w", err)
+		}
+		return string(data), nil
+	}
+
+	return "", nil
+}
+
+func NewClient(transport Transport, name, version string) (*Client, error) {
 	name = strings.TrimSpace(name)
 	version = strings.TrimSpace(version)
 	if name == "" || version == "" {
 		return nil, errors.New("mcp client name and version are required")
 	}
+
 	return &Client{transport: transport, name: name, version: version}, nil
 }
 
 func (client *Client) Initialize(ctx context.Context) error {
 	client.stateMu.Lock()
 	defer client.stateMu.Unlock()
+
 	if client.closed {
 		return errors.New("mcp client is closed")
 	}
 	if client.initialized {
 		return nil
 	}
+
 	response, err := client.send(ctx, "initialize", initializeParams{
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    map[string]any{},
@@ -57,19 +132,22 @@ func (client *Client) Initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	var result initializeResult
-	if err := decodeResult("initialize", response.Result, &result); err != nil {
-		return err
+	if err := decodeStrictJSON(response.Result, &result); err != nil {
+		return fmt.Errorf("mcp initialize: decode result: %w", err)
 	}
 	if result.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf("mcp initialize: unsupported protocol version %q", result.ProtocolVersion)
 	}
+
 	if _, err := client.transport.Send(ctx, Request{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	}); err != nil {
 		return fmt.Errorf("mcp notifications/initialized: %w", err)
 	}
+
 	client.initialized = true
 	return nil
 }
@@ -91,8 +169,8 @@ func (client *Client) ListTools(ctx context.Context) ([]Tool, error) {
 			return nil, err
 		}
 		var result listToolsResult
-		if err := decodeResult("tools/list", response.Result, &result); err != nil {
-			return nil, err
+		if err := decodeStrictJSON(response.Result, &result); err != nil {
+			return nil, fmt.Errorf("mcp tools/list: decode result: %w", err)
 		}
 		for _, tool := range result.Tools {
 			name := strings.TrimSpace(tool.Name)
@@ -120,6 +198,7 @@ func (client *Client) ListTools(ctx context.Context) ([]Tool, error) {
 func (client *Client) CallTool(ctx context.Context, name string, rawArguments json.RawMessage) (CallToolResult, error) {
 	client.stateMu.RLock()
 	defer client.stateMu.RUnlock()
+
 	if err := client.ready(); err != nil {
 		return CallToolResult{}, err
 	}
@@ -127,19 +206,37 @@ func (client *Client) CallTool(ctx context.Context, name string, rawArguments js
 	if name == "" {
 		return CallToolResult{}, errors.New("mcp tools/call: tool name is required")
 	}
-	arguments, err := decodeArguments(rawArguments)
-	if err != nil {
+
+	var arguments map[string]any
+	if err := decodeStrictJSON(rawArguments, &arguments); err != nil {
 		return CallToolResult{}, fmt.Errorf("mcp tools/call: invalid arguments: %w", err)
 	}
+	if arguments == nil {
+		return CallToolResult{}, errors.New("mcp tools/call: arguments must be a JSON object")
+	}
+
 	response, err := client.send(ctx, "tools/call", callToolParams{Name: name, Arguments: arguments})
 	if err != nil {
 		return CallToolResult{}, err
 	}
 	var result CallToolResult
-	if err := decodeResult("tools/call", response.Result, &result); err != nil {
-		return CallToolResult{}, err
+	if err := decodeStrictJSON(response.Result, &result); err != nil {
+		return CallToolResult{}, fmt.Errorf("mcp tools/call: decode result: %w", err)
 	}
 	return result, nil
+}
+
+func (client *Client) Close(ctx context.Context) error {
+	client.stateMu.Lock()
+	defer client.stateMu.Unlock()
+	if client.closed {
+		return nil
+	}
+	if err := client.transport.Close(ctx); err != nil {
+		return fmt.Errorf("mcp client close: %w", err)
+	}
+	client.closed = true
+	return nil
 }
 
 func (client *Client) ready() error {
@@ -164,51 +261,16 @@ func (client *Client) send(ctx context.Context, method string, params any) (Resp
 	return response, nil
 }
 
-func decodeResult(method string, raw json.RawMessage, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+// decodeStrictJSON 解码单个 JSON 值并拒绝尾部多余内容；UseNumber 保证
+// map[string]any 中的数字保持 json.Number 精度。
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("mcp %s: decode result: %w", method, err)
+		return err
 	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return fmt.Errorf("mcp %s: decode trailing result: %w", method, err)
-		}
-		return fmt.Errorf("mcp %s: result contains trailing JSON", method)
+	if decoder.More() {
+		return errors.New("trailing JSON")
 	}
-	return nil
-}
-
-func decodeArguments(raw json.RawMessage) (map[string]any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var arguments map[string]any
-	if err := decoder.Decode(&arguments); err != nil {
-		return nil, err
-	}
-	if arguments == nil {
-		return nil, errors.New("arguments must be a JSON object")
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("arguments contain trailing JSON")
-	}
-	return arguments, nil
-}
-
-func (client *Client) Close(ctx context.Context) error {
-	client.stateMu.Lock()
-	defer client.stateMu.Unlock()
-	if client.closed {
-		return nil
-	}
-	if err := client.transport.Close(ctx); err != nil {
-		return fmt.Errorf("mcp client close: %w", err)
-	}
-	client.closed = true
 	return nil
 }

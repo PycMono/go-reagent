@@ -8,25 +8,20 @@ import (
 	"strings"
 
 	"github.com/PycMono/go-reagent/pi/toolexec"
-	"go.uber.org/fx"
 )
 
-type Params struct {
-	fx.In
-
-	Lifecycle  fx.Lifecycle
-	Registry   *toolexec.Registry
-	Extensions []Extension `group:"agent_extensions"`
-}
-
+// Runtime 聚合扩展并在 Start 时逐个注册其工具，全部成功后 freeze
+// Registry。启动/停机由装配层显式调用 Start/Stop。
 type Runtime struct {
 	registry   *toolexec.Registry
 	extensions []Extension
 	started    []Extension
 }
 
-func NewRuntime(params Params) (*Runtime, error) {
-	extensions := append([]Extension(nil), params.Extensions...)
+// NewRuntime 校验并聚合扩展：名字去空格、非空、去重，按名称排序保证
+// 注册顺序确定。
+func NewRuntime(registry *toolexec.Registry, extensions []Extension) (*Runtime, error) {
+	extensions = append([]Extension(nil), extensions...)
 	seen := make(map[string]struct{}, len(extensions))
 	for _, extension := range extensions {
 		if isNilExtension(extension) {
@@ -45,13 +40,12 @@ func NewRuntime(params Params) (*Runtime, error) {
 		seen[name] = struct{}{}
 	}
 	sort.Slice(extensions, func(i, j int) bool { return extensions[i].Name() < extensions[j].Name() })
-
-	runtime := &Runtime{registry: params.Registry, extensions: extensions}
-	params.Lifecycle.Append(fx.Hook{OnStart: runtime.start, OnStop: runtime.stop})
-	return runtime, nil
+	return &Runtime{registry: registry, extensions: extensions}, nil
 }
 
-func (runtime *Runtime) start(ctx context.Context) error {
+// Start 逐个注册扩展工具；任一失败即回滚已注册的并关闭全部扩展。
+// 全部成功后 Freeze 注册表。
+func (runtime *Runtime) Start(ctx context.Context) error {
 	for _, extension := range runtime.extensions {
 		name := extension.Name()
 		extAPI := api{registry: runtime.registry, owner: name}
@@ -72,7 +66,8 @@ func (runtime *Runtime) start(ctx context.Context) error {
 	return nil
 }
 
-func (runtime *Runtime) stop(ctx context.Context) error {
+// Stop 倒序关闭已启动的扩展。
+func (runtime *Runtime) Stop(ctx context.Context) error {
 	var joined error
 	for index := len(runtime.started) - 1; index >= 0; index-- {
 		extension := runtime.started[index]

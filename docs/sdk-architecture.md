@@ -6,7 +6,7 @@ go-reagent 采用 Pi 风格的 Core/Harness 分层：根 `pi` 是唯一 Agent Co
 
 ```text
 pi/ai <- pi/harness <- pi
-pi/ai <- pi/middleware <- pi/toolexec <- pi/extension <- pi
+pi/ai <- pi/middleware <- pi/toolexec <- pi/newExtension <- pi
 pi/ai <- pi/governor <---------------- pi
 pi/ai <-------------- pi
 config -> pi/ai/providers + pi/middleware
@@ -19,12 +19,12 @@ cmd/server -> config + conversation + infrastructure + pi
 - `pi/toolexec`：Tool 执行域——注册（`Registry`）、经中间件链执行单个调用（`Executor`）、批量调度（`Scheduler`）与执行生命周期事件（`Event`/`Result`）。
 - `pi/middleware`：Tool 执行链的中间件机制与内置 Handler（tracing、panic 恢复、schema 校验、日志、事件转发、权限拦截），详见「Tool 中间件与权限拦截」。
 - `pi/governor`：Run 治理域——资源上限（`Limits`）、预算累计与准入（`Governor`）、终止分类（`Termination`）、模型调用计量（`Invocation`）及父子运行间传递这些原语的 ctx 管道件。
-- `pi/extension`：扩展契约（`Extension`/`API`/`Closer`）与启动期注册运行时；`pi/mcp` 依赖本包而非根 `pi`。
+- `pi/newExtension`：扩展契约（`Extension`/`API`/`Closer`）与启动期注册运行时；`pi/mcp` 依赖本包而非根 `pi`。
 - `pi/harness`：AGENTS/Skills 上下文、System Prompt、默认工具、错误分类和成本观测。
 - `config`：业务配置、多个模型平台、当前平台选择和 Configor 加载，并承担配置到 pi 装配原语的转换（`NewPlatform`/`NewWorkDir`/`NewCompactionConfig`/`NewExtraToolHandlers`）。
 - `cmd/server`：唯一进程入口与组合根，直接组合 `pi`、基础设施、Conversation 业务和 Gin；`application/service/chat`：Conversation 用例。
 
-`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness`、`pi/middleware`、`pi/toolexec`、`pi/governor`、`pi/extension` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
+`pi/ai` 不依赖根 `pi` 或业务包；`pi/harness`、`pi/middleware`、`pi/toolexec`、`pi/governor`、`pi/newExtension` 只依赖 `pi/ai` 和自己的子包，不反向依赖根 `pi`。根 `pi` 不依赖 `config`、`application`、数据库或 Transport。
 
 ## Pi SDK 契约
 

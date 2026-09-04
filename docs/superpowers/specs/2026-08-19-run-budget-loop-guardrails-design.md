@@ -118,7 +118,7 @@ Claude Agent SDK 提供 `max_turns`、`max_budget_usd`，并在结果中提供 `
 
 ### DeepSeek Harness
 
-DeepSeek Harness 核心明确不内置 turn budget，部署方应通过 `agent/turn-stopping` 等 lifecycle extension 取消运行。它的优势是结构化生命周期和持久化终止原因：`completed`、`aborted`、`blocked`、`error`、`max-tokens`、`interrupted`。
+DeepSeek Harness 核心明确不内置 turn budget，部署方应通过 `agent/turn-stopping` 等 lifecycle newExtension 取消运行。它的优势是结构化生命周期和持久化终止原因：`completed`、`aborted`、`blocked`、`error`、`max-tokens`、`interrupted`。
 
 其 `max-tokens` 是单次生成输出限制，不是整个 Run 的累计 Token 预算。被长度截断的响应会保留 Usage，但其中的工具调用不会执行。重复工具保护默认采用提醒阈值 `[3,5,8]`，属于模型可见的劝阻，不是绝对熔断。
 

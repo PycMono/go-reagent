@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,7 +10,6 @@ import (
 	"sync"
 
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
-	"go.uber.org/fx"
 )
 
 // Root is the filesystem root shared by workspace-aware tools.
@@ -26,7 +24,7 @@ type Workspace struct {
 }
 
 // NewWorkspace opens workDir once and closes it with the application lifecycle.
-func NewWorkspace(lifecycle fx.Lifecycle, workDir Root) (*Workspace, error) {
+func NewWorkspace(workDir Root) (*Workspace, error) {
 	path := strings.TrimSpace(string(workDir))
 	if path == "" {
 		return nil, fmt.Errorf("%w: workDir 不能为空", pierrors.ErrWorkspaceInvalid)
@@ -55,7 +53,6 @@ func NewWorkspace(lifecycle fx.Lifecycle, workDir Root) (*Workspace, error) {
 	}
 
 	workspace := &Workspace{path: resolvedPath, root: root}
-	lifecycle.Append(fx.Hook{OnStop: func(_ context.Context) error { return workspace.Close() }})
 	return workspace, nil
 }
 

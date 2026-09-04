@@ -2,17 +2,27 @@ package pi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
+	"github.com/PycMono/go-reagent/pi/extension"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
+	"github.com/PycMono/go-reagent/pi/harness/tools"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
+	pimcp "github.com/PycMono/go-reagent/pi/mcp"
+	"github.com/PycMono/go-reagent/pi/middleware"
 	"github.com/PycMono/go-reagent/pi/toolexec"
 )
+
+const defaultMaxParallelTools = 4
 
 // Runner 定义无状态 Agent 的单次运行行为。
 type Runner interface {
@@ -25,12 +35,159 @@ type Agent struct {
 	loop        *Loop
 	toolRuntime toolexec.Executor
 	notifiers   []Notifier
+	// hooks 与 subagents 仅由 pi.New 装配；直建 Agent 时为零值。
+	hooks     []lifecycleHook
+	subagents *SubagentBinder
 }
 
-// New 根据下层运行依赖创建 Agent；notifiers 为可选的外部通知通道
-// （group:"agent_notifiers"），空切片表示无通知。
-func New(builder *harness.ContextBuilder, loop *Loop, toolRuntime toolexec.Executor, notifiers ...Notifier) *Agent {
-	return &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: notifiers}
+// newProvider 构造带装饰链的 ai.Provider：Loop → TracingProvider →
+// CostTracker → Raw Provider（OBS-006）。装饰顺序固定，仅 pi.New 装配使用。
+func newProvider(config providers.Options) (ai.Provider, error) {
+	if config.Pricing == nil {
+		return nil, errors.New("model pricing is required")
+	}
+	next, err := providers.New(config)
+	if err != nil {
+		return nil, err
+	}
+	tracker, err := observability.NewCostTracker(next, config.ID, config.Model, *config.Pricing)
+	if err != nil {
+		return nil, err
+	}
+	// TracingProvider 只消费标准化 Usage 和包内 Timing Snapshot；Telemetry
+	// 关闭时 Span/Metric 经 SDK 全局 Noop 空转，业务结果不变（OBS-006）。
+	return observability.NewTracingProvider(tracker, string(config.Protocol), config.ID, config.Model), nil
+}
+
+// New 内部完成 pi 的全部初始化，调用顺序即启动时序约束：
+// Runner → Workspace/Supervisor → 工具 → Registry → 扩展 → Executor
+// → Provider 装饰链 → Loop → Agent → subagent 绑定。
+func New(opts Options) (*Agent, error) {
+	if opts.WorkDir == "" {
+		return nil, errors.New("pi: workdir is required")
+	}
+	// Runner 由 pi 内部按平台选择沙箱后端，不允许外部注入。
+	runner, err := sandbox.NewRunner(opts.WorkDir)
+	if err != nil {
+		return nil, fmt.Errorf("pi: select sandbox runner: %w", err)
+	}
+
+	root := tools.Root(opts.WorkDir)
+	workspace, err := tools.NewWorkspace(root)
+	if err != nil {
+		return nil, err
+	}
+	// 工具集：read 恒装，write/exec 按档位；应用层追加与 subagent 占位
+	// 亦在 Registry 构造时在册（binder 启动期校验）。
+	allTools := []ai.Tool{tools.NewReadTool(workspace)}
+	var supervisor *tools.ProcessSupervisor
+	if opts.AllowExec {
+		supervisor = tools.NewProcessSupervisor(workspace, runner)
+		allTools = append(allTools, tools.NewExecTool(supervisor), tools.NewProcessTool(supervisor))
+	}
+	if opts.AllowWrite {
+		allTools = append(allTools, tools.NewEditTool(workspace), tools.NewWriteTool(workspace), tools.NewApplyPatchTool(workspace))
+	}
+	allTools = append(allTools, opts.Tools...)
+	if opts.BuiltinSubagent {
+		allTools = append(allTools, NewResearchSubagentTool())
+	}
+
+	registry, err := toolexec.NewRegistry(allTools)
+	if err != nil {
+		return nil, err
+	}
+	extensions, err := pimcp.New(opts.MCPServers, root, runner)
+	if err != nil {
+		return nil, fmt.Errorf("pi: assemble MCP extensions: %w", err)
+	}
+	extRuntime, err := extension.NewRuntime(registry, extensions)
+	if err != nil {
+		return nil, err
+	}
+
+	executor := toolexec.NewExecutorFromRegistry(registry,
+		append(middleware.Defaults(), opts.ExtraHandlers...))
+	scheduler := toolexec.NewScheduler(executor, defaultMaxParallelTools)
+
+	provider, err := newProvider(opts.Platform)
+	if err != nil {
+		return nil, err
+	}
+	loop := NewLoop(provider, scheduler, opts.Compaction,
+		WithLoopProviderIdentity(opts.Platform.ID, opts.Platform.Model),
+		WithLoopDetection(opts.LoopDetection))
+
+	composer := harness.NewPromptComposer(opts.WorkDir)
+	builder := harness.NewContextBuilder(composer, opts.WorkDir)
+	agent := &Agent{builder: builder, loop: loop, toolRuntime: executor, notifiers: opts.Notifiers}
+
+	// 钩子顺序即启动顺序：Workspace/Supervisor 的清理钩子（OnStop-only）
+	// 先注册，扩展注册+freeze 其次，subagent 绑定显式排最后。
+	// 钩子顺序即启动顺序（Stop 逆序）：探针 → Workspace → Supervisor → 扩展。
+	agent.hooks = []lifecycleHook{
+		{onStart: func(ctx context.Context) error {
+			switch r := runner.(type) {
+			case *sandbox.SeatbeltRunner:
+				return sandbox.ProbeSeatbelt(ctx, r)
+			case *sandbox.BubblewrapRunner:
+				return sandbox.ProbeBubblewrap(ctx, r)
+			}
+			return nil
+		}},
+		{onStop: func(context.Context) error { return workspace.Close() }},
+	}
+	if supervisor != nil {
+		agent.hooks = append(agent.hooks, lifecycleHook{onStop: func(context.Context) error { return supervisor.Close() }})
+	}
+	agent.hooks = append(agent.hooks, lifecycleHook{onStart: extRuntime.Start, onStop: extRuntime.Stop})
+
+	if opts.BuiltinSubagent {
+		// binder.Start 依赖 Registry 已冻结（扩展 Start 完成后）。
+		agent.subagents = NewSubagentBinder(SubagentBinderParams{
+			Registry:      registry,
+			Runtime:       extRuntime,
+			Tools:         allTools,
+			ToolRuntime:   executor,
+			Provider:      provider,
+			Compaction:    opts.Compaction,
+			LoopDetection: opts.LoopDetection,
+			Platform:      opts.Platform,
+		})
+	}
+	return agent, nil
+}
+
+// ToolDefinitions 返回 Agent 当前注册的工具定义（诊断用）。
+func (a *Agent) ToolDefinitions() []ai.ToolDefinition { return a.toolRuntime.Definitions() }
+
+// Start 按注册顺序执行启动钩子：扩展注册+freeze → subagent 绑定
+// （全有或全无）。
+func (a *Agent) Start(ctx context.Context) error {
+	for _, hook := range a.hooks {
+		if hook.onStart != nil {
+			if err := hook.onStart(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if a.subagents != nil {
+		if err := a.subagents.Start(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stop 逆序执行停机钩子（subagent 绑定无停机钩子）。
+func (a *Agent) Stop(ctx context.Context) error {
+	var joined error
+	for index := len(a.hooks) - 1; index >= 0; index-- {
+		if hook := a.hooks[index]; hook.onStop != nil {
+			joined = errors.Join(joined, hook.onStop(ctx))
+		}
+	}
+	return joined
 }
 
 // Run 校验并执行一次相互隔离的请求。
@@ -101,9 +258,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 				{Name: "alerts", Order: 100, Listener: &alertListener{notifiers: a.notifiers}},
 			})
 		}
-		loopResult, runErr := a.loop.run(ctx, runContext, listener, gov)
-		result.NewMessages = loopResult.newMessages
-		result.Invocations = append([]governor.Invocation(nil), loopResult.invocations...)
+		newMessages, invocations, runErr := a.loop.run(ctx, runContext, listener, gov)
+		result.NewMessages = newMessages
+		result.Invocations = invocations
 		result.Termination = gov.Termination(runErr)
 		return runErr
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
@@ -174,4 +331,36 @@ func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (harn
 	}
 
 	return prepared, nil
+}
+
+// Options 是 pi.New 的全部输入：调用方把需要的东西提前传齐，
+// pi 内部完成其余装配。pi 不感知 *config.Config（config → pi 依赖方向
+// 已锁定，反向 import 会成环），config 翻译留在调用侧。
+type Options struct {
+	WorkDir         string
+	Platform        providers.Options
+	Tools           []ai.Tool             // 应用层追加工具（chat 等）
+	BuiltinSubagent bool                  // 挂载内置 research 查证子代理
+	MCPServers      []pimcp.ServerOptions // MCP server 声明（纯数据，环境解析/沙箱拉起在 pi/mcp 内完成）
+	Notifiers       []Notifier
+	ExtraHandlers   []middleware.Handler
+	Compaction      harness.CompactionConfig
+	LoopDetection   loopdetect.Config
+	// 内置 Coding 工具档位：read 恒装；write/exec 按能力开关。
+	AllowWrite bool
+	AllowExec  bool
+}
+
+// WorkDir 是 Agent 的工作区路径(由组合根供数)。
+type WorkDir string
+
+// ExtraToolHandlers 是装配层（组合根）追加在默认中间件链之后的扩展
+// Handler，如按配置挂载的权限拦截、重试与超时。fx 未提供时为零值，
+// 链保持纯默认。
+type ExtraToolHandlers []middleware.Handler
+
+// lifecycleHook 是 pi 自有的生命周期钩子：Start 顺序执行，Stop 逆序。
+type lifecycleHook struct {
+	onStart func(context.Context) error
+	onStop  func(context.Context) error
 }

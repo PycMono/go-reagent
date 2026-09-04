@@ -10,7 +10,6 @@ import (
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/toolexec"
-	"go.uber.org/fx/fxtest"
 )
 
 // testTool 是扩展注册用的最小 ai.Tool 实现。
@@ -58,20 +57,19 @@ func TestExtensionRuntimeStartsSortedAndStopsReversed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := fxtest.NewLifecycle(t)
-	_, err = NewRuntime(Params{
-		Lifecycle: lifecycle,
-		Registry:  registry,
-		Extensions: []Extension{
-			&fakeExtension{name: "zeta", events: &events},
-			&fakeExtension{name: "alpha", events: &events},
-		},
+	runtime, err := NewRuntime(registry, []Extension{
+		&fakeExtension{name: "zeta", events: &events},
+		&fakeExtension{name: "alpha", events: &events},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle.RequireStart()
-	lifecycle.RequireStop()
+	if err := runtime.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	want := []string{"start:alpha", "start:zeta", "stop:zeta", "stop:alpha"}
 	if !slices.Equal(events, want) {
 		t.Fatalf("events = %v, want %v", events, want)
@@ -84,19 +82,14 @@ func TestExtensionRuntimeRollsBackAndClosesAfterStartFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := fxtest.NewLifecycle(t)
-	_, err = NewRuntime(Params{
-		Lifecycle: lifecycle,
-		Registry:  registry,
-		Extensions: []Extension{
-			&fakeExtension{name: "alpha", events: &events, tool: "alpha_tool"},
-			&fakeExtension{name: "zeta", events: &events, tool: "secret_tool", registerErr: errors.New("discover failed")},
-		},
+	runtime, err := NewRuntime(registry, []Extension{
+		&fakeExtension{name: "alpha", events: &events, tool: "alpha_tool"},
+		&fakeExtension{name: "zeta", events: &events, tool: "secret_tool", registerErr: errors.New("discover failed")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	startErr := lifecycle.Start(context.Background())
+	startErr := runtime.Start(context.Background())
 	if startErr == nil || !strings.Contains(startErr.Error(), "zeta") {
 		t.Fatalf("start error = %v", startErr)
 	}
@@ -129,11 +122,7 @@ func TestExtensionRuntimeRejectsInvalidExtensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = NewRuntime(Params{
-				Lifecycle:  fxtest.NewLifecycle(t),
-				Registry:   registry,
-				Extensions: test.extensions,
-			})
+			_, err = NewRuntime(registry, test.extensions)
 			if err == nil {
 				t.Fatal("invalid extensions accepted")
 			}
@@ -147,22 +136,17 @@ func TestExtensionRuntimeJoinsCloseErrorsAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := fxtest.NewLifecycle(t)
-	_, err = NewRuntime(Params{
-		Lifecycle: lifecycle,
-		Registry:  registry,
-		Extensions: []Extension{
-			&fakeExtension{name: "alpha", events: &events, closeErr: errors.New("alpha close")},
-			&fakeExtension{name: "zeta", events: &events, closeErr: errors.New("zeta close")},
-		},
+	runtime, err := NewRuntime(registry, []Extension{
+		&fakeExtension{name: "alpha", events: &events, closeErr: errors.New("alpha close")},
+		&fakeExtension{name: "zeta", events: &events, closeErr: errors.New("zeta close")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.Start(context.Background()); err != nil {
+	if err := runtime.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	stopErr := lifecycle.Stop(context.Background())
+	stopErr := runtime.Stop(context.Background())
 	if stopErr == nil || !strings.Contains(stopErr.Error(), "alpha close") || !strings.Contains(stopErr.Error(), "zeta close") {
 		t.Fatalf("stop error = %v", stopErr)
 	}

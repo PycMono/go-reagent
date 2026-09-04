@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
-	"go.uber.org/fx"
 )
 
 const defaultProcessOutputBytes = 50 * 1024
@@ -90,16 +89,13 @@ type processStreamWriter struct {
 	onOutput func(string, []byte)
 }
 
-func NewProcessSupervisor(lifecycle fx.Lifecycle, workspace *Workspace, runner sandbox.Runner) *ProcessSupervisor {
+func NewProcessSupervisor(workspace *Workspace, runner sandbox.Runner) *ProcessSupervisor {
 	supervisor := &ProcessSupervisor{
 		workspace: workspace,
 		runner:    runner,
 		sessions:  make(map[string]*processSession),
 		closeDone: make(chan struct{}),
 	}
-	lifecycle.Append(fx.Hook{OnStop: func(context.Context) error {
-		return supervisor.Close()
-	}})
 	return supervisor
 }
 

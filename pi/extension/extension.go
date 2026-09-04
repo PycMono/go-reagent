@@ -23,6 +23,9 @@ type Closer interface {
 	Close(context.Context) error
 }
 
+// Extensions 是一组扩展，便于作为整体在装配层与 Runtime 之间传递。
+type Extensions []Extension
+
 // isNilExtension 报告扩展接口是否为空或装有一个类型化 nil 值。
 func isNilExtension(extension Extension) bool {
 	if extension == nil {

@@ -9,8 +9,8 @@
 本期参考 Pi SDK 与 `pi-web-access` 的分层方式，但不照搬 TypeScript 的磁盘动态加载能力：
 
 ```text
-Pi SDK extension framework
-  -> pi-web-access extension entry
+Pi SDK newExtension framework
+  -> pi-web-access newExtension entry
     -> Exa provider implementation
 
 go-reagent
@@ -57,7 +57,7 @@ Exa 是本期第一个真实接入，不是未来示例或空接口占位。
 
 ```text
 pi/
-├── extension.go                    # 扩展、ExtensionAPI 和生命周期契约
+├── newExtension.go                    # 扩展、ExtensionAPI 和生命周期契约
 ├── extension_runtime.go            # Fx 生命周期、启动顺序、回滚和冻结
 ├── extension_test.go
 ├── extension_runtime_test.go
@@ -66,7 +66,7 @@ pi/
 ├── tool_runtime.go                 # 通过 ToolRegistry 发现与执行工具
 ├── register.go                     # CoreRegister 的 Fx 组装
 └── mcp/
-    ├── extension.go                # MCP Server 发现和代理工具注册
+    ├── newExtension.go                # MCP Server 发现和代理工具注册
     ├── client.go                   # initialize/list/call/close
     ├── protocol.go                 # 本期所需 JSON-RPC/MCP 类型
     ├── transport_http.go           # Streamable HTTP、JSON/SSE 和 Session

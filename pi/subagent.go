@@ -10,14 +10,18 @@ import (
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/ai/providers"
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
+	"github.com/PycMono/go-reagent/pi/extension"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
+	"github.com/PycMono/go-reagent/pi/loopdetect"
+	"github.com/PycMono/go-reagent/pi/toolexec"
 )
 
 // SubagentTool 实现 ai.Tool。构造期不持有 Registry；子管线（白名单快照、
-// childScheduler、childLoop）由 subagentBinder 在启动期 freeze 后绑定。
+// childScheduler、childLoop）由 SubagentBinder 在启动期 freeze 后绑定。
 type SubagentTool struct {
 	name         string
 	description  string   // 给父模型看的委派指引（Definition().Description）
@@ -34,6 +38,24 @@ type subagentPipeline struct {
 
 // IsSubagentTool 实现 toolexec.SubagentTool 标记接口。
 func (t *SubagentTool) IsSubagentTool() bool { return true }
+
+// Bound 报告子管线是否已在启动期绑定（诊断用）。
+func (t *SubagentTool) Bound() bool { return t.bound.Load() != nil }
+
+// ChildTools 返回绑定的子运行工具白名单快照（诊断用，未绑定返回 nil）。
+func (t *SubagentTool) ChildTools() ai.ToolDefinitions {
+	if pipeline := t.bound.Load(); pipeline != nil {
+		return pipeline.childTools
+	}
+	return nil
+}
+
+// SetWhitelist 覆盖子运行工具白名单（测试构造非法白名单用）。
+func (t *SubagentTool) SetWhitelist(tools []string) { t.tools = tools }
+
+// NewResearchSubagentTool 创建内置查证子代理工具（未绑定占位），
+// 供 pi.New 的调用方经 Options.Subagents 传入，Start 后自动绑定。
+func NewResearchSubagentTool() *SubagentTool { return newResearchSubagentTool() }
 
 // newResearchSubagentTool 创建内置查证子代理工具（未绑定占位）。
 func newResearchSubagentTool() *SubagentTool {
@@ -139,7 +161,8 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 	gov.SetParent(governor.BatchBudgetFromCtx(ctx))
 	listener := &subagentEventAdapter{emit: emit, agent: t.name}
 
-	var result loopResult
+	var newMessages []ai.Message
+	var invocations []governor.Invocation
 	runErr := contexttracing.WithSpan(ctx, observability.AgentSpanName(t.name), func(spanCtx context.Context) error {
 		contexttracing.WithKV(spanCtx,
 			contexttracing.OperationName("invoke_agent"),
@@ -148,7 +171,7 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 		)
 		runCtx := governor.WithSubagentDepth(spanCtx, governor.SubagentDepth(ctx)+1)
 		var err error
-		result, err = pipeline.childLoop.run(runCtx, childContext, listener, gov)
+		newMessages, invocations, err = pipeline.childLoop.run(runCtx, childContext, listener, gov)
 		termination := gov.Termination(err)
 		contexttracing.WithKV(spanCtx,
 			contexttracing.KV(observability.AttrTerminationReason, string(termination.Reason)),
@@ -162,7 +185,7 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 
 	// 无论成败，只要有已计量调用即上报父运行结算阶段。
 	if recorder := governor.RecorderFromCtx(ctx); recorder != nil {
-		recorder.Record(governor.RunReport{Agent: t.name, Invocations: result.invocations})
+		recorder.Record(governor.RunReport{Agent: t.name, Invocations: invocations})
 	}
 
 	termination := gov.Termination(runErr)
@@ -195,7 +218,7 @@ func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai
 	output := ai.ToolOutput{Details: details}
 	// 无最终报告时保留空 Content：normalizeToolResult 会填入真实错误文本
 	// （失败）或 "(no output)"（成功），避免把中间状态误当报告。
-	if text := finalAssistantText(result.newMessages); strings.TrimSpace(text) != "" {
+	if text := finalAssistantText(newMessages); strings.TrimSpace(text) != "" {
 		output.Content = []ai.ContentBlock{ai.TextBlock(text)}
 	}
 	if runErr != nil {
@@ -262,4 +285,91 @@ func truncateRunes(text string, maxRunes int) string {
 		return text
 	}
 	return string(runes[:maxRunes]) + "…"
+}
+
+// SubagentBinderParams 是 NewSubagentBinder 的全部输入。
+type SubagentBinderParams struct {
+	Registry *toolexec.Registry
+	// Runtime 仅表达启动顺序：binder 的 Start 必须在扩展注册并 freeze
+	// 之后执行。
+	Runtime       *extension.Runtime
+	Tools         []ai.Tool // 含子代理占位;非 *SubagentTool 的项被忽略
+	ToolRuntime   toolexec.Executor
+	Provider      ai.Provider
+	Compaction    harness.CompactionConfig
+	LoopDetection loopdetect.Config
+	Platform      providers.Options
+}
+
+// SubagentBinder 在启动期 freeze 后校验定义并原子绑定子管线（全有或全无）。
+// 子 toolexec.Scheduler 复用共享 toolexec.Executor：执行边界由 Loop 的可见性校验保证
+// （availableTools = 白名单 defs 快照）。
+type SubagentBinder struct {
+	registry      *toolexec.Registry
+	toolRuntime   toolexec.Executor
+	tools         []*SubagentTool
+	provider      ai.Provider
+	compaction    harness.CompactionConfig
+	loopDetection loopdetect.Config
+	platform      providers.Options
+}
+
+func NewSubagentBinder(params SubagentBinderParams) *SubagentBinder {
+	binder := &SubagentBinder{
+		registry:      params.Registry,
+		toolRuntime:   params.ToolRuntime,
+		provider:      params.Provider,
+		compaction:    params.Compaction,
+		loopDetection: params.LoopDetection,
+		platform:      params.Platform,
+	}
+	for _, tool := range params.Tools {
+		if subagent, ok := tool.(*SubagentTool); ok {
+			binder.tools = append(binder.tools, subagent)
+		}
+	}
+	return binder
+}
+
+// Start 在 Registry 冻结后执行：先完成全部定义校验与管线构造，任一失败
+// 即启动失败；全部成功才统一 bound.Store（全有或全无）。
+func (b *SubagentBinder) Start(_ context.Context) error {
+	if len(b.tools) == 0 {
+		return nil
+	}
+	available := make(map[string]bool)
+	for _, definition := range b.registry.Definitions() {
+		available[definition.Name] = true
+	}
+
+	pipelines := make([]*subagentPipeline, 0, len(b.tools))
+	for _, tool := range b.tools {
+
+		// 白名单存在性（含 MCP 工具；此时 Registry 已冻结）。
+		defs := make(ai.ToolDefinitions, 0, len(tool.tools))
+		for _, name := range tool.tools {
+			definition, _, ok := b.registry.Lookup(name)
+			if !ok {
+				return fmt.Errorf("subagent %q: tool %q is not registered (available: %v)",
+					tool.name, name, available)
+			}
+			defs = append(defs, definition)
+		}
+		// 占位工具必须已在冻结 Registry 中且正是当前实例。
+		_, registered, ok := b.registry.Lookup(subagentToolName(tool.name))
+		if !ok || registered != ai.Tool(tool) {
+			return fmt.Errorf("subagent %q: placeholder tool %q is missing from the registry",
+				tool.name, subagentToolName(tool.name))
+		}
+		scheduler := toolexec.NewScheduler(b.toolRuntime, defaultMaxParallelTools)
+		childLoop := NewLoop(b.provider, scheduler, b.compaction,
+			WithLoopProviderIdentity(b.platform.ID, b.platform.Model),
+			WithLoopDetection(b.loopDetection))
+		pipelines = append(pipelines, &subagentPipeline{childLoop: childLoop, childTools: defs})
+	}
+
+	for index, tool := range b.tools {
+		tool.bound.Store(pipelines[index])
+	}
+	return nil
 }

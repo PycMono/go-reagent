@@ -31,7 +31,7 @@ The package boundaries follow Pi's design principles rather than its TypeScript 
 5. Package visibility represents a compatibility contract, not merely source organization.
 6. Existing third-party libraries remain the sole implementation for capabilities they already provide.
 
-The root SDK is intentionally narrower than Pi's extension model. `reagent.New` does not accept caller-supplied Provider, Tool, Reporter, or Store implementations. The lower-level `ai` and `agent` packages remain importable, Pi-style foundation packages, but the complete root SDK does not offer replacement hooks for its default components.
+The root SDK is intentionally narrower than Pi's newExtension model. `reagent.New` does not accept caller-supplied Provider, Tool, Reporter, or Store implementations. The lower-level `ai` and `agent` packages remain importable, Pi-style foundation packages, but the complete root SDK does not offer replacement hooks for its default components.
 
 ## Scope
 
