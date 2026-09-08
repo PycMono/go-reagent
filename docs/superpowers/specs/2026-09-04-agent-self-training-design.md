@@ -10,6 +10,9 @@
 - 训练执行与生产执行按会话隔离，候选资产通过评测和管理员审批后才能发布；
 - 目标能力同时覆盖 Workspace 资产训练和模型 Fine-tuning，但分阶段实现。
 
+2026-09-08 修订补齐状态转换、候选冻结、会话级运行目录、模型注册、评测集管理、
+迁移与恢复约束，以及现有聊天页面的兼容要求。本文仍为设计规格，不表示功能已实现。
+
 本文中的“Workify 路径”均相对于参考仓库
 `/Users/allen/projects/work/dustess/gitlab/workify`。
 
@@ -44,18 +47,29 @@ FineTune Backend   = Trainer：调用外部平台训练模型权重
 
 | 术语 | 定义 |
 | --- | --- |
+| Tenant | 一个客户组织的数据与权限隔离边界，拥有多个用户和多个不同用途的 Agent |
+| User | 客户组织中的实际操作者；具有管理员权限的用户可以创建和训练本租户 Agent |
 | Agent | 稳定业务身份，拥有名称、说明、状态和当前发布版本 |
 | Bundle | Agent 自有的行为资产集合：`AGENTS.md`、Skills、脚本、资料和清单 |
 | Bundle Version | Bundle 的不可变 Git commit/tag 和内容摘要 |
 | Model Revision | 基础模型或 Fine-tuning 产出的不可变模型引用 |
 | Agent Release | 可运行、可回滚的完整行为快照，固定 Bundle、模型、工具策略和验证证据 |
-| Training Session | 管理员与目标 Agent 的一对一训练会话 |
+| Training Session | 本租户管理员与一个目标 Agent 的一对一训练会话，可包含多轮对话和多个 checkpoint |
 | Candidate Workspace | 从基础 Release 检出的训练候选目录，只属于一个 Training Session |
 | Training Example | 管理员审核通过的输入、期望输出、负例或工具期望 |
 | Dataset Version | 由已审核 Training Examples 组成的不可变数据集 |
 | Evaluation Suite | 平台保存、训练 Agent 不可修改的测试用例集合 |
 | Evaluation Run | 一个 Candidate Release 在一个 Evaluation Suite 上的执行结果 |
 | FineTune Job | 外部模型平台上的异步微调任务 |
+
+业务归属固定为“客户组织（Tenant）→ 多个 Agent → 各自的 Release 和 TrainingSession”。
+例如，同一客户可以分别拥有客服、销售和写作 Agent；每个 Agent 独立维护行为资产、
+模型配置、工具策略、发布历史和训练历史，训练或发布其中一个不会改变其他 Agent。
+同一个模型可以供多个 Agent 使用，但它们仍是不同的业务身份。
+
+客户组织与登录用户不是同一概念：一个客户可以有多个管理员，训练者由
+`TrainingSession.AdminUserID` 标识，发布者由 `AgentRelease.PublishedBy` 标识，具体操作
+记录实际操作者审计。租户和用户身份都由宿主系统可信认证提供，不从文件夹名称推断权限。
 
 ## 3. 当前 go-reagent 的约束
 
@@ -79,8 +93,9 @@ FineTune Backend   = Trainer：调用外部平台训练模型权重
 + 一套沙箱与中间件策略
 ```
 
-因此第一阶段不把 WorkDir 改成每次 Run 动态参数，而是在应用层按 Release 或
-Training Session 创建并管理多个 `pi.Agent`。
+因此第一阶段不把 WorkDir 改成每次 Run 动态参数，而是在应用层按“生产会话 + Release”、
+Training Session 或“Evaluation Run + Case + Attempt”创建并管理多个 `pi.Agent`。
+不同生产会话不能仅因使用同一 Release 就共用固定 WorkDir 的运行实例，详见 §8.1、§10.4。
 
 ### 3.3 Profile 不是动态 Agent
 
@@ -118,8 +133,9 @@ Bubblewrap 策略允许写整个 Workspace。即使移除 `write/edit/apply_patc
 - Principal 必须由受信任的登录系统或 Admin Session 适配器创建，不能由请求 Header
   直接声称角色；
 - 没有配置 Admin Auth Resolver 时，服务不注册管理页面和写路由并在启动日志明确提示；
-- 第一阶段可以使用单租户 `default`，但 TenantID 仍进入 Principal、数据库查询和文件
-  路径，避免后续多租户改造破坏安全边界。
+- 只有明确的单客户部署才可以把 TenantID 固定为 `default`；同一部署服务多个客户时，
+  必须从可信身份上下文解析各自的租户 ID，不能把不同客户统一归入 `default`。
+  TenantID 始终进入 Principal、数据库查询和文件路径。
 
 ## 4. Workify 参考实现的真实模型
 
@@ -229,8 +245,9 @@ Agent Bundle Git repository
 ```
 
 训练 Agent 修改的是训练 SessionMember cwd。发布前，生产 Bundle 和其他会话的 cwd
-不变。训练 cwd 同时包含运行时生成目录，但 `.gitignore` 排除 Workspace 挂载、附件、
-`.workify/` 和其他非 Bundle 状态，避免发布时误带入会话数据。
+不变。训练 cwd 同时包含运行时生成目录，但 `.gitignore` 排除 Workspace 挂载、
+`.workify/` 和其他非 Bundle 状态；附件由 `.workify/` 条目覆盖，并非独立 ignore 条目，
+避免发布时误带入会话数据。
 
 证据位置：
 
@@ -503,8 +520,11 @@ type Agent struct {
     TenantID                string
     Name                    string
     Description             string
+    Presentation            AgentPresentation
     Status                  AgentStatus
     TemplateCode            string
+    BootstrapKey            *string
+    RequiredEvaluationSuiteID *string // Phase 2，不可变 Suite 版本行 ID
     ActiveReleaseID         string
     ActiveTrainingSessionID string
     Version                 uint64
@@ -517,9 +537,23 @@ type Agent struct {
 约束：
 
 - `ID` 是稳定身份，发布和回滚不改变；
+- 一个 Tenant 可以拥有多个不同用途的 Agent；每个 Agent 只属于一个 Tenant；
 - `ActiveReleaseID` 是生产流量唯一权威指针；
-- `ActiveTrainingSessionID` 非空时拒绝第二个活跃训练会话；
+- `ActiveTrainingSessionID` 非空时拒绝该 Agent 的第二个活跃训练会话；同一租户的不同
+  Agent 可以同时训练，该限制不是租户级锁；
 - 删除 Agent 前必须先停用生产会话和训练会话；第一阶段只支持 archive。
+
+`AgentPresentation` 存数据库，包含 `Icon`、`Welcome`、`Starters[{Title, Prompt}]`、`Order`。
+创建时从 Template 复制，之后可由本租户管理员独立修改；只用于卡片、欢迎页和推荐问题，
+不注入系统行为提示词、不属于 Bundle，修改不触发行为版本发布。Name/Description 同样
+只作为目录展示元数据；真正的身份规则在 Bundle AGENTS.md 中。推荐问题只有用户点击
+并发送后才成为输入。图标使用平台允许的标识、纯文本转义展示，禁止注入 HTML。
+
+租户默认助手单独保存为 `agent_tenant_settings.default_agent_id`，允许为空，设置时校验
+同租户且 Agent 有可用 ActiveRelease。停用默认 Agent 时清空设置；列表接口可按 Order、ID
+稳定选择第一个可用项作为 UI 默认值，无可用项返回 null。普通聊天历史仍按 UserID 隔离。
+BootstrapKey 只标识内置种子（如 `builtin:writing`），TemplateCode 仅记录创建来源；同一
+租户可以从同一模板创建多个不同 Agent，不对 `(tenant_id, template_code)` 施加唯一约束。
 
 ### 7.2 BundleVersion
 
@@ -562,6 +596,22 @@ type ModelRevision struct {
 
 基础模型也必须注册成 ModelRevision，避免 Release 对配置文件中的浮动模型名产生隐式
 依赖。
+
+Phase 1B 增加管理员模型注册 API（§16.5），bootstrap 也复用同一 Model Registry Service：
+
+- 认证租户范围内验证 Provider 已配置、SecretRef 可解析，执行有超时的模型可用性与能力
+  探针；失败不创建可用于 Release 的 ready revision，不接受客户端自报成功；
+- base 注册只接受平台允许的 Provider 和固定模型 ID，拒绝 `latest` 等浮动别名。若 Provider
+  无法提供不可变模型引用，不宣称可复现并拒绝进入本设计的正式 Release；
+- 按 `(tenant_id, provider_id, model_id, kind)` 唯一约束返回既有记录，引用内容不可原地
+  替换；停用只改变可用状态，保留历史引用，激活历史 Release 时重新检查可用性；
+- HTTP 仅接受 base 注册；fine_tuned 由 Phase 3 成功 Job 的受信任后台流程注册，不能
+  通过客户端设置 kind 或外部任务状态绕过评测；
+- 注册成功不会切换生产模型。创建 Agent 可选择已注册模型；已有 Agent 经 TrainingSession
+  选择 CandidateModelRevisionID，重新验证并按阶段评测、审批后形成新 Release。
+
+基础模型注册是 Phase 1B 能力，不推迟到 Fine-tuning 阶段；模型引用在本租户多个 Agent
+之间可共享，候选配置和发布指针仍各自独立。
 
 ### 7.4 AgentRelease
 
@@ -612,6 +662,7 @@ type TrainingSession struct {
     AdminUserID          string
     ConversationID       string
     BaseReleaseID        string
+    CandidateModelRevisionID string
     CandidateWorkspaceID string
     CandidateBranch      string
     CandidateHead        string
@@ -620,7 +671,10 @@ type TrainingSession struct {
     LastValidationRunID  *string
     LastEvaluationRunID  *string
     ActiveRunID          *string
-    RunLeaseExpiresAt    *time.Time
+    ActiveOperationID    *string
+    OperationKind        *string // author | restore | configure | validate | evaluate | publish
+    OperationLeaseExpiresAt *time.Time
+    OperationFence       uint64
     ExpiresAt            time.Time
     Version              uint64
     CreatedAt            time.Time
@@ -629,34 +683,54 @@ type TrainingSession struct {
 ```
 
 `CandidateWorkspaceID` 是存储适配器的逻辑定位符，不在业务表持久化某台机器的绝对
-路径；第一阶段本地适配器把它解析到租户目录下的 `training/<id>/candidate`。
+路径；第一阶段本地适配器根据已校验的 TenantID、AgentID 和 TrainingSession ID，把它
+解析到 `tenants/<tenant-id>/agents/<agent-id>/training/<training-session-id>/candidate/`。
+一个 TrainingSession 只能训练一个 Agent，其 TenantID 必须与目标 Agent 相同；
+AdminUserID 标识创建这次训练的管理员，不作为文件目录层级。
+
+CandidateModelRevisionID 初始化为 BaseRelease.ModelRevisionID，只能由管理员 API 在
+active 且持配置修改操作 lease 时修改；ready 先转 active，校验/评测期间拒绝。
+选择同租户 ready 模型后失效旧报告，禁止修改 agent.yaml 来切换模型。纯模型变更允许
+复用既有 BundleVersion，但必须为新的 ReleaseSpec 重新验证、评测和审批；“非空变更”
+以 Bundle 与运行配置联合判断。候选不包含任意客户端传入的 ToolPolicy。
 
 状态机：
 
 ```text
-active
-  ├── validating → active       校验失败，继续训练
-  ├── validating → ready        Phase 1 校验通过，等待人工确认未自动评测
-  ├── validating → evaluating   Phase 2 继续执行自动评测
-  ├── evaluating → active       评测失败，管理员继续训练
-  ├── evaluating → repairing    自动修正
-  ├── evaluating → ready        达到发布门槛
-  ├── ready → published
-  ├── ready → active            继续修改后使旧评测失效
-  ├── * → cancelled
-  ├── * → stale                 基础 Release 已变化
-  └── * → expired               Training Session 到达明确的过期时间
+active → validating → ready → published             Phase 1
+                    → evaluating → ready → published Phase 2
+                                 → repairing → active → validating
 ```
 
-任何文件变更都会使已有 CandidateValidationRun 和 EvaluationRun 失效，并把 `ready`
-恢复为 `active`。`active_training_session_id` 在 `active|validating|evaluating|repairing|ready`
+完整转换表是 `allowedTransition` 的权威定义，状态图仅展示主路径：
+
+| 起点 | 允许终点 | 条件 / 作用 |
+| --- | --- | --- |
+| `active` | `validating` | 冻结写入并获得验证操作 lease |
+| `validating` | `active` | 验证失败、被中断，或只验证成功后继续编辑 |
+| `validating` | `ready` | Phase 1 submit 成功，仍需人工确认未自动评测后才能发布 |
+| `validating` | `evaluating` | Phase 2 submit/evaluate，固定本次成功验证的快照 |
+| `evaluating` | `active` | 失败且不修正、预算耗尽、被中断或管理员结束自动循环 |
+| `evaluating` | `repairing` | 失败且允许自动修正，重新取得作者操作 lease |
+| `evaluating` | `ready` | 达到评测门槛 |
+| `repairing` | `active` | checkpoint 成功，或失败/无进展/预算耗尽；后续验证必须从 active 进入 |
+| `ready` | `active` | 开始新的作者 Turn、restore 或显式重验证；先失效旧证据再开放写入 |
+| `ready` | `published` | Release Service 完成发布事务 |
+| 任一非终态 | `cancelled`、`stale`、`expired` | 停止当前操作并确认无写入进程后关闭会话 |
+| `published`、`cancelled`、`stale`、`expired` | 无 | 终态无出边；重建须创建新 TrainingSession |
+
+任何候选内容或拟发布模型/工具配置变更都会使已有验证、评测证据失效。修正路径固定为
+`repairing → active → validating → evaluating`，不允许直接 `repairing → evaluating`。
+自动修正的剩余预算、修正次数由持久化循环状态保存，不因中间回到 active 而重置。
+`active_training_session_id` 在 `active|validating|evaluating|repairing|ready`
 期间始终被占用；`cancelled|stale|expired|published` 才释放。
 
 ### 7.6 CandidateValidationRun、EvaluationSuite 与 EvaluationRun
 
 每次 Gate B dry-run 生成不可变的 `CandidateValidationRun`，固定可选 TrainingSessionID、
 来源（training/migration/revalidation）、CandidateHead、Candidate content digest、
-ToolPolicy digest、Validator 版本、状态、诊断、脚本 smoke 结果、耗时和创建时间。所有
+ModelRevisionID、ReleaseSpec digest、ToolPolicy digest、Validator 版本、状态、诊断、
+脚本 smoke 结果、耗时和创建时间。所有
 Release 都必须引用同一 Candidate digest 的成功 ValidationRun；Phase 1 也不能只相信
 页面上一次性的“校验通过”提示。
 
@@ -674,6 +748,27 @@ EvaluationCase 支持：
 
 EvaluationRun 固定 Candidate digest、ModelRevision、ToolPolicy digest、Suite version、
 每个 Case 结果、总成本和耗时。Candidate digest 变化后旧报告不能用于发布。
+
+Phase 2 通过管理员 API 管理 Evaluation Suite，采用“完整导入一个不可变版本”的方式，
+不提供会原地修改历史 Case 的 CRUD：
+
+- Suite 按 TenantID + AgentID 归属；逻辑 SuiteKey 下可以有多个版本，每次导入由服务端
+  计算版本号和内容摘要。一条 `agent_evaluation_suites` 记录代表一个不可变版本；
+- 请求含完整 Cases、hard/soft 阈值、Judge 配置及 fixture 引用，校验 Case ID 唯一、
+  Schema/断言语法、工具替身、Judge 可用性、配额和 fixture 摘要；不接受任意服务端路径；
+- `agent_evaluation_cases.suite_id` 指向具体版本行；用例、阈值和配置修改必须导入新版本，
+  被 Run 引用的版本不可删除。Agent 无 Suite 管理工具，也不挂载隐藏期望；
+- 管理员将一个版本绑定为 `Agent.RequiredEvaluationSuiteID`；Phase 2 无绑定时 submit
+  返回“未配置评测集”，不能进入 ready。评测只使用服务端绑定的版本，不让 Author 挑选
+  简单用例或传入较低门槛；
+- EvaluationRun 固定该版本 ID 和摘要。绑定更新后保留旧报告用于审计，但旧报告不能批准
+  新发布；发布锁内重检当前绑定，变化时要求针对新 Suite 重跑评测。绑定更新与发布共用
+  Agent 锁和 CAS，不能在最终检查后悄然换门槛。绑定变更在同一事务内使 ready 候选回到
+  active 并清除旧评测引用；进行中的 Run 保留原版本完成报告，但写入 ready 前重检绑定，
+  不一致则回 active 并提示重新评测。
+
+首套生产 Suite 由管理员导入并绑定；数据库 migration 只建 schema，不塞业务测试集。
+测试 Fake/fixture 仅用于开发验收，不能当作默认生产门槛。
 
 ### 7.7 TrainingExample、DatasetVersion 与 FineTuneJob
 
@@ -705,19 +800,88 @@ DatasetVersion 保存规范化后的样本 ID 集合、目标 Provider 格式、
 
 ## 8. 文件系统和 Git 布局
 
-第一阶段使用本地文件系统和每 Agent 一个 Bundle Git repository：
+第一阶段使用本地文件系统和每 Agent 一个 Bundle Git repository。`<data-dir>` 是服务端
+配置的数据根目录占位符，例如本地开发的 `./data` 或线上持久卷的挂载目录；它不是固定
+目录名，也不是代码仓库中的模板目录。目录按“租户 → Agent → 发布版本 / 训练会话”组织：
 
 ```text
-<data-dir>/tenants/<tenant-id>/agents/<agent-id>/
-├── bundle.git/                     # 权威 bare repository
-├── releases/<bundle-version-id>/   # 不可变运行物化目录
-└── runtime-cache/                  # 可删除缓存
-
-<data-dir>/tenants/<tenant-id>/training/<training-session-id>/
-├── candidate/                      # 从 BaseRelease tag 检出的独立 worktree
-├── scratch/                        # 不进入 Bundle
-└── state/                          # 运行 checkpoint、临时报告，不进入 Bundle
+<data-dir>/
+└── tenants/
+    └── <tenant-id>/                         # 一个客户组织
+        └── agents/
+            └── <agent-id>/                  # 该客户的一个 Agent，可有多个并列目录
+                ├── bundle.git/             # 此 Agent 的权威 bare repository
+                ├── releases/
+                │   └── <bundle-version-id>/ # 已发布 Bundle，不可变运行物化目录
+                ├── training/
+                │   └── <training-session-id>/ # 此 Agent 的一次训练会话
+                │       ├── candidate/      # 从 BaseRelease tag 检出的独立 worktree
+                │       │   └── .tmp/       # 平台创建的训练进程临时目录，不属于 Bundle
+                │       ├── scratch/        # 临时工作文件，不进入 Bundle
+                │       └── state/          # 运行状态、临时报告，不进入 Bundle
+                └── runtime-cache/          # 停止对应 Runtime 后可删除、可重建
+                    ├── chat/<conversation-id>/<release-id>/
+                    │   ├── AGENTS.md       # 已发布 Bundle 的只读副本
+                    │   ├── skills/         # 其余 Bundle 文件同样复制到此根目录
+                    │   ├── scratch/        # 本会话临时产物
+                    │   └── .tmp/           # 本会话进程临时文件
+                    └── evaluation/<run-id>/<case-id>/<attempt-id>/
+                        ├── AGENTS.md       # Candidate 快照的只读副本
+                        ├── scratch/        # 本次 Case Attempt 独占
+                        └── .tmp/
 ```
+
+例如，客户 `customer-a` 可以同时拥有 `support-agent` 和 `sales-agent`，对应
+`tenants/customer-a/agents/support-agent/` 和 `tenants/customer-a/agents/sales-agent/`；
+它们各自拥有独立的 `bundle.git/`、`releases/` 和 `training/`。
+
+每个 `training/<training-session-id>/` 表示一次完整训练会话，不是一轮消息。
+`candidate/` 内保存当前候选行为文件，多轮修改的历史由 Git checkpoint 保存。
+发布会创建新的不可变 Bundle 版本和 AgentRelease，并更新该 Agent 的 ActiveReleaseID；
+不会把可写的 candidate 目录直接作为生产目录，也不会覆盖旧版本。
+
+数据库保存 TenantID、AgentID、TrainingSession ID、AdminUserID、版本引用和状态；
+文件系统保存 Bundle 内容与执行所需的目录。目录层级便于定位和清理，但不能代替数据库
+归属校验与权限检查。`releases/` 的目录键是 BundleVersionID，完整 AgentRelease 在
+数据库中另外固定模型、工具策略和验证证据。
+
+训练会话的 `scratch/`、`state/` 固定放在 `candidate/` 外，与其同级，仅供平台服务暂存
+数据，不向 Training Runner 开放根外访问；它们不属于 Candidate Git worktree。
+checkpoint commit 和持久 ref 保存在 `bundle.git/`，
+checkpoint 元数据保存在数据库，不能依赖临时 `state/` 目录恢复训练历史。
+线上第一阶段必须把持久数据放在持久卷上；对象存储和多节点物化属于后续规模化阶段。
+
+### 8.1 运行目录与只读边界
+
+`releases/<bundle-version-id>/` 是纯 Bundle 物化目录，始终不可变，不创建 scratch/tmp。
+Chat WorkDir 固定为本 Agent 的 `runtime-cache/chat/<conversation-id>/<release-id>/`：
+
+1. 服务端校验 Release 的 Bundle digest，把完整 Bundle 复制到该 WorkDir 根目录；
+2. 使用普通文件复制或写时复制，禁止使用连接权威文件的硬链接或越界符号链接；
+3. 创建 `scratch/` 和 `.tmp/`，其余文件和目录在 OS 沙箱内只读，根目录也不可写；
+4. `WritablePrefixes=["scratch", ".tmp"]`，TMPDIR 指向 WorkDir 内 `.tmp/`；沙箱还须
+   隔离系统临时目录，不能通过宿主共享 `/tmp` 读取其他会话数据；
+5. Tool、exec、MCP 和 Subagent 继承相同读写边界，不得读取其他会话的工作目录。
+
+Evaluation 与脚本 smoke 使用同样的物化方式，但按 Run/Case/Attempt 创建全新目录。
+smoke 使用 `runtime-cache/validation/<validation-run-id>/`。Training WorkDir 仍为
+`training/<training-session-id>/candidate/`；平台预建其 `.tmp/` 并设置 TMPDIR，与现有
+沙箱的根内临时目录约定一致。其他脚本中间文件必须在 checkpoint 前清理；脚本 smoke
+在隔离验证目录执行。
+平台解析 checkpoint、日志和报告时不依赖 Agent 访问同级的 `state/`。
+
+临时目录不属于可持久依赖的会话记忆：Runtime 淘汰、进程重启或版本切换后可清空。
+需要长期保存的用户产物由应用层提升到独立附件存储，不能只返回缓存中的本地路径。
+工作目录的读取与清理都要校验租户、Agent、会话归属；删除须等待对应执行和子进程结束。
+发布只保存 Bundle 内容，不把运行目录中的 scratch/tmp 重新打包；Bundle 顶层永久保留
+`scratch/`、`.tmp/`、`state/`，这些路径不能进入 Bundle commit，避免与平台目录冲突。
+Candidate 中仅允许平台创建的根级 `.tmp/` 作为非 Bundle 临时区；物化器保存路径身份并
+拒绝该目录被替换为链接或特殊文件。checkpoint/快照枚举仅排除已确认的根级 `.tmp/`
+和平台 Git 管理入口，不信任 Agent 修改的 .gitignore，不排除其他未跟踪或被忽略文件。
+暂存采用服务端文件清单，禁止直接 `git add -A`；发现暂存区/commit 含 `.tmp/` 即拒绝。
+临时目录独立计入运行磁盘配额，freeze 后可清空，不得用其持久化行为资产。
+
+### 8.2 Bundle 清单
 
 Bundle 结构：
 
@@ -737,6 +901,35 @@ agent.yaml
 `agent.yaml` 只声明非秘密的 Bundle 元数据：格式版本、入口 AGENTS、Skill roots、脚本
 运行要求和兼容的最小 Runtime 版本。模型、权限和密钥不写入该文件。
 
+第一阶段完整示例（`min_runtime_version` 仅示例，bootstrap 写部署实际兼容的版本）：
+
+```yaml
+format_version: 1
+entry_agents: AGENTS.md
+skill_roots:
+  - skills
+script_requirements:
+  - language: sh
+    min_version: "5.0.0"
+  - language: python
+    min_version: "3.11.0"
+min_runtime_version: "0.1.0"
+```
+
+| 字段 | 严格校验规则 |
+| --- | --- |
+| `format_version` | 必填整数，第一阶段只接受 1 |
+| `entry_agents` | 必填，第一阶段固定为 `AGENTS.md`，必须为根内普通 UTF-8 文件 |
+| `skill_roots` | 必填字符串数组，第一阶段固定为 `[skills]`，与真实 Skill 发现路径一致 |
+| `script_requirements` | 必填数组；无脚本时为 `[]`；条目只允许 `language`、`min_version` |
+| `language` | 仅 `sh`、`python`，不得重复；`sh` 使用平台批准的 Bash 运行器 |
+| `min_version` | 必填三段版本号，与部署镜像中批准的解释器版本比较，不触发安装 |
+| `min_runtime_version` | 必填三段版本号，由平台 Runtime 版本判断兼容性 |
+
+解析使用 YAML `KnownFields(true)`，同时拒绝重复键、多文档、类型错误和字段缺失。
+所有层级的未知键均拒绝；清单只能声明要求，不能增加模型、Tool/MCP 权限或安装依赖。
+`skills/` 即使为空也作为逻辑 Skill root，由物化器创建空目录；Git 不保存空目录。
+
 永久拒绝：
 
 - 绝对路径和越界符号链接；
@@ -751,15 +944,32 @@ agent.yaml
 
 大知识库不进入 Bundle，后续通过独立 Knowledge Base 引用。
 
+### 8.3 备份与恢复
+
+Phase 1 上线前必须具备异机备份和恢复演练，持久卷不等于备份。备份至少包含数据库
+一致性快照、所有 `bundle.git` 的对象及 refs/tags（含 `refs/training/*`）、所引用附件，
+以及不含 Secret 正文的恢复清单。Secret 由宿主密钥系统单独备份和恢复。
+
+第一阶段采用协调备份窗口：暂停训练写入、checkpoint、发布及其他业务写入，排空活跃
+操作并禁止 Git GC，再备份数据库及仓库，记录备份批次和所有引用摘要后恢复写入。
+备份失败不能标为可恢复批次。最低每日一次完整协调备份并在数据库迁移前额外备份；
+上线记录明确 RPO 不超过 24 小时，RTO 以恢复演练实测值验收。更严格的在线增量方案
+另行设计，不以 Phase 4 作为当前不备份的理由。
+
+恢复到隔离环境后运行 `git fsck`，逐条核对数据库的 Bundle commit/tag/digest、CandidateHead
+和 checkpoint refs，再重建 releases、candidate 及 runtime-cache。缺失的引用必须报告并
+阻止对应 Agent 激活，不能静默回退模板。未 checkpoint 的改动不在恢复保证内；运行中
+验证/评测标记 interrupted，Outbox 和外部 FineTune Job 按幂等规则恢复，验收后再开放流量。
+
 ## 9. Runtime Purpose 与权限模型
 
 ### 9.1 三种运行目的
 
 | Purpose | Workspace | 写权限 | Tool 集 | 会话历史 |
 | --- | --- | --- | --- | --- |
-| `chat` | 不可变 Release | 仅 `scratch/`、`.tmp/` | Release 生产 ToolPolicy | 用户会话历史 |
-| `training` | Candidate | Bundle 全树可写，平台路径除外 | 生产工具的安全替身 + 作者工具 | 管理员训练历史 |
-| `evaluation` | Candidate 快照 | 只读；仅临时目录可写 | 生产 ToolPolicy 的只读实现或测试替身 | 每个 Case 独立 |
+| `chat` | 会话 + Release 独立 WorkDir，内含只读 Bundle 副本 | 本 WorkDir 的 `scratch/`、`.tmp/` | Release 生产 ToolPolicy | 用户会话历史 |
+| `training` | Candidate | 仅可写状态且持有独占操作 lease 时可写，平台路径除外 | 生产工具的安全替身 + 作者工具 | 管理员训练历史 |
+| `evaluation` | Run + Case + Attempt 独立 WorkDir，内含只读 Candidate 副本 | 本 WorkDir 的 `scratch/`、`.tmp/` | 生产 ToolPolicy 的只读实现或测试替身 | 每个 Case 独立 |
 
 Runtime Purpose 由应用层选择，不由客户端或模型通过 `pi.RunRequest` 传入。
 
@@ -771,11 +981,27 @@ Training Service 根据以下事实派生：
 - 请求已经通过管理员认证；
 - TrainingSession 属于该管理员；
 - TrainingSession 的目标 Agent 与 Candidate 相同；
-- 会话状态为 `active|validating|evaluating|repairing|ready`；
-- 当前 Run 持有服务端签发且未过期的独占 lease。
+- 会话状态为 `active|repairing`；`ready` 必须先转回 active 并清除旧证据；
+- 当前作者 Run 持有服务端签发且未过期的 Candidate 独占操作 lease，OperationKind 为
+  `author`，且 OperationFence 与运行实例一致。
 
 普通 Chat API 永远不能请求或获得 `train_self`。这比在通用会话上开放任意 Capability
 覆盖更符合当前“管理员一对一训练”的单一产品目标。
+
+`validating|evaluating|ready` 均冻结 Candidate。所有写入入口共用操作 lease：作者 Turn、
+restore、checkpoint、验证快照和发布不得并发触碰工作树。restore 由平台在 active 状态下
+使用 `restore` lease 执行，不向模型派生 train_self；ready 的 restore 先失效证据。
+
+冻结不是只移除 write Tool：服务端先关闭作者工具调度，等待当前调用结束，停止并回收
+exec/process、MCP、Subagent 等所有可能持有写权限的进程；无法确认停止时不得开始验证、
+评测或发布。随后保存 checkpoint，释放作者 lease，以新的 fence 获取验证操作 lease，
+只对冻结快照执行检查。验证/评测期间拒绝新作者 Run 和 restore，返回状态冲突。
+
+模型调用 `validate_candidate`、`submit_candidate` 或 Phase 2 的评测 Tool 时，只记录
+本轮结束后的操作请求并返回 queued，不在仍可继续写文件的作者 Turn 中同步校验。
+Runner 停止并完成 checkpoint 后由服务编排器执行请求，结果经 SSE 推送；Agent 不能把
+queued 当作验证通过。多个同类请求合并，submit/evaluate 包含验证；失败或 partial Run
+取消排队请求，必须由后续成功 Run 修复。HTTP 直接触发检查同样先取得独占操作 lease。
 
 ### 9.3 工具矩阵
 
@@ -787,13 +1013,13 @@ Training Service 根据以下事实派生：
 | 生产业务 Tool | 按 Release | 只读实现或安全替身 | 只读实现或安全替身 |
 | `inspect_candidate` | 否 | 是 | 否 |
 | `validate_candidate` | 否 | 是 | 否 |
-| `run_candidate_evaluation` | 否 | 是 | 否 |
+| `run_candidate_evaluation`（Phase 2） | 否 | 是 | 否 |
 | `submit_candidate` | 否 | 是 | 否 |
 | `publish_release` | 否 | 否 | 否 |
 | 修改 Evaluation Suite | 否 | 否 | 否 |
 | 提交 FineTune Job | 否 | 否 | 否 |
 
-Agent 调用 `submit_candidate` 只触发服务端校验/评测并在通过后把状态变成 `ready`；
+Agent 调用 `submit_candidate` 只排队请求服务端校验/评测，服务端在通过后把状态变成 `ready`；
 发布只能由管理员 HTTP API 进入 Release Service。
 
 应用层 Tool Catalog 必须给内置 Tool 和 MCP Tool 声明 `read_only`、`reversible_write` 或
@@ -847,7 +1073,7 @@ type Options struct {
 
 - `WorkspaceWriteRestricted`：文件修改工具仍由 `AllowWrite` 决定是否注册；一旦注册，
   文件工具与 exec 都只能写 `WritablePrefixes`。Chat/Evaluation 设置
-  `AllowWrite=false`，exec 只写 `.tmp/`、`scratch/` 和平台明确提供的 Runtime 目录；
+  `AllowWrite=false`，exec 只写 §8.1 的独立 WorkDir 内 `.tmp/`、`scratch/`；
 - `WorkspaceWriteAll`：文件修改工具按 `AllowWrite` 注册；exec 可写 WorkDir，但仍受路径
   边界和平台沙箱限制；
 - `WritablePrefixes` 只允许规范化后的 WorkDir 相对目录；不能配置绝对路径、`..` 或
@@ -937,13 +1163,24 @@ type ChatRuntimeProvider interface {
 
 缓存 Key：
 
-- Chat：`release:<releaseID>:chat:<configDigest>`；
+- Chat：`tenant:<tenantID>:agent:<agentID>:chat:<conversationID>:release:<releaseID>:<configDigest>`；
 - Evaluation：
-  `evaluation:<snapshotID>:<modelRevisionID>:<toolPolicyDigest>:<configDigest>`；
-- Training：`training:<trainingSessionID>:<configDigest>`。
+  `tenant:<tenantID>:agent:<agentID>:evaluation:<runID>:<caseID>:<attemptID>:<configDigest>`；
+- Training：`tenant:<tenantID>:agent:<agentID>:training:<trainingSessionID>:<operationFence>:<configDigest>`。
+
+所有 Key 由服务端从已校验归属的记录生成，ConfigDigest 覆盖快照、模型、工具、写策略
+和工作目录规格。ChatIdentity 包含 TenantID、UserID、ConversationID、AgentID、ReleaseID，
+Resolver 校验完整归属后才解析文件路径；列举租户 Agent 仅查数据库，不预启动 Runtime。
+同一会话同一 Release 可复用空闲实例，不同会话不复用实例或 MCP 子进程；只允许缓存共享
+不可变 Bundle 内容及解析结果。Evaluation Attempt 完成即关闭，不跨 Case 复用。
+Training 的 operationFence 变化必须重建实例，不能复用持有旧写权限或后台进程的实例。
 
 Runtime Manager 负责 `pi.New`、`Agent.Start`、引用计数、空闲 LRU、`Agent.Stop` 和并发
 单飞。第一阶段限制最大 32 个热 Runtime，空闲 15 分钟回收；活跃 Run 不回收。
+
+达到容量时先淘汰空闲实例；没有可淘汰实例则有界等待并返回可重试的繁忙错误，不突破
+上限或杀死活跃 Run。同一 Conversation 的执行及版本迁移串行；迁移先取得新目录和
+Runtime，再提交会话版本，失败则保留旧版本。旧实例退出后才能清理其目录。
 
 `ResolvedTool`/`ResolvedMCPServer` 是应用层结构，包含精确 revision、Effect 和针对当前
 Purpose 选择的生产/Fake/dry-run 实现。Runtime Manager 先校验 ToolPolicy 和 Effect，
@@ -959,7 +1196,8 @@ Purpose 选择的生产/Fake/dry-run 实现。Runtime Manager 先校验 ToolPoli
 3. 用 Agent 行锁/乐观版本设置 `active_training_session_id`；
 4. 创建 TrainingSession 和类型为 `training` 的 Conversation；
 5. 从 ActiveRelease.BundleVersion tag 创建 Candidate worktree；
-6. 创建 Candidate `scratch/`、`state/` 并写入 Gitignore，同时创建持久的
+6. 在该 Agent 的 `training/<training-session-id>/` 下创建 `candidate/` 及其同级的
+   `scratch/`、`state/`；后二者位于 Git worktree 外，不纳入 Bundle。同时创建持久的
    `refs/training/<trainingID>/head`，防止删除 worktree 后 checkpoint 被 Git GC；
 7. 组装 Training RuntimeSpec：相同 Agent 身份、相同基础模型、Candidate WorkDir、
    写权限和训练工具；
@@ -978,16 +1216,17 @@ Purpose 选择的生产/Fake/dry-run 实现。Runtime Manager 先校验 ToolPoli
 
 ### 11.2 每轮对话
 
-1. 校验管理员、TrainingSession 所有权和状态，以 CAS 获取或接管本轮独占 Run lease；
+1. 校验管理员、TrainingSession 所有权和状态；ready 先转 active 并失效旧证据，再以 CAS
+   获取作者操作 lease 和新的 OperationFence；接管先执行 §19.3 的旧进程隔离；
 2. 获取 Training Runtime；
 3. 加载训练 Conversation History；
 4. 执行目标 Agent；
 5. 持久化消息、Tool 轨迹、Invocation 和成本；
-6. 计算 Candidate diff；
+6. 关闭作者调度并停止所有写入子进程后计算 Candidate diff；
 7. 有变更时创建 checkpoint commit，commit message 包含 RunID，不包含消息正文；
 8. 更新 `CandidateHead`，使之前的 CandidateValidationRun 和 EvaluationRun 失效；
 9. SSE 返回回复、文件变更摘要和验证结果；
-10. 释放本轮独占 Run lease；异常退出后 lease 到期即可安全重试。
+10. 释放作者操作 lease；有排队验证/提交请求时按 §9.2 交给服务编排器。
 
 即使 Run 失败，只要产生文件变更也创建标记为 `partial` 的 checkpoint，避免重启后
 丢失中间产物；它不能成为发布 Candidate，必须由后续成功 Run 修复并重新校验。
@@ -995,14 +1234,16 @@ Purpose 选择的生产/Fake/dry-run 实现。Runtime Manager 先校验 ToolPoli
 ### 11.3 Candidate 内部回退
 
 管理员可以查看 checkpoint 列表并把 Candidate 重置到本 TrainingSession 的某个历史
-checkpoint。不能通过该接口选择生产 Bundle 的任意 Git ref，也不能影响其他 Session。
+checkpoint。restore 仅在 active 且持有 restore 操作 lease 时执行；ready 先失效证据并
+转 active，validating/evaluating/repairing 拒绝外部 restore。恢复后使用
+MarkCandidateChanged 更新 HEAD 并清除报告。不能选择其他 Session 的 checkpoint 或任意 Git ref。
 
 ### 11.4 关闭
 
 - `published`：保留 Candidate ref 和审计，工作目录可异步清理；
 - `cancelled`：删除工作目录，保留会话消息、checkpoint commit 引用和审计；
-- Run lease 过期：不改变 TrainingSession 状态，只允许新请求接管并从 CandidateHead
-  重新物化缺失工作目录；
+- 操作 lease 过期：按 §19.3 先隔离旧进程再恢复；不能仅凭 TTL 到期就开放同一目录写入，
+  也不因此把 Session 标为 stale；
 - Session `ExpiresAt` 到期：状态变为 `expired`，释放 Agent 活跃训练指针，保留
   Candidate ref 和审计供管理员只读查看或显式克隆成新 TrainingSession。
 
@@ -1012,6 +1253,7 @@ checkpoint。不能通过该接口选择生产 Bundle 的任意 Git ref，也不
 
 训练文件工具在执行时：
 
+- 检查 active/repairing、author 操作 lease 和 fence，失效请求在写盘前拒绝；
 - 所有路径必须是 Candidate 相对路径；
 - 拒绝绝对路径、`..`、Volume path 和越界符号链接；
 - 拒绝平台保留目录；
@@ -1022,10 +1264,14 @@ checkpoint。不能通过该接口选择生产 Bundle 的任意 Git ref，也不
 
 ### 12.2 Gate B
 
-Gate B 在服务端、publish lock 内对 Base Bundle 与 CandidateHead 的真实树差异执行：
+Gate B 由服务端对已冻结 Candidate 执行：validate 持 Candidate 操作 lease；publish
+同时持 Agent publish lock 和 Candidate publish 操作 lease。先按 §8.1 排除已确认的平台
+临时区与 Git 管理入口，再确认工作树与记录的 HEAD 一致（含其他未跟踪文件），有脏
+变更或 fence 漂移即拒绝，再枚举 Base Bundle 与冻结快照的
+真实树差异；不能只读取 Agent 自报的修改列表或忽略未跟踪文件。
 
 1. 枚举新增、修改、删除和类型变化；
-2. 校验所有路径和文件类型；
+2. 按 §8.1 校验平台临时目录身份，排除该目录后校验全部 Bundle 路径和文件类型；
 3. 拒绝平台保留文件、Secret 模式、二进制可执行文件和越界链接；
 4. 校验 Bundle 配额；
 5. 调用 `harness.InspectWorkspace`；
@@ -1034,7 +1280,8 @@ Gate B 在服务端、publish lock 内对 Base Bundle 与 CandidateHead 的真�
 8. 校验 Skill 名称唯一、位置稳定、脚本引用存在；
 9. 校验 `agent.yaml` KnownFields 和 Runtime 版本；
 10. 对脚本执行静态检查和可执行性探针；
-11. 拒绝空 diff；
+11. training 发布拒绝空资产和配置变更；migration/revalidation 允许无 Base diff，但仍
+    执行全部结构、安全和脚本检查；
 12. 生成 ContentDigest 和 ToolPolicyDigest；
 13. 持久化不可变 CandidateValidationRun。
 
@@ -1051,7 +1298,7 @@ Gate B 失败不修改 Bundle 主线、Release 或生产会话。
 - 默认无网络；需要外部访问时调用注册业务 Tool/MCP；
 - Python 仅使用部署镜像已批准依赖；第一阶段不接受 `pip install`；
 - 发布探针在与生产一致的沙箱中执行 `--help` 或 Skill 声明的 smoke command；
-- 执行输出和超时进入 EvaluationRun，不进入 Bundle。
+- 执行输出和超时进入对应验证或评测报告，不进入 Bundle。
 
 脚本 smoke 属于 CandidateValidationRun；只有在 Evaluation Case 内触发的脚本输出才
 属于 EvaluationRun。
@@ -1099,7 +1346,8 @@ Candidate change
 → 失败摘要
 → 训练 Agent 内部修正 Turn
 → 新 checkpoint
-→ 重新评测
+→ active → validating（重新执行 Gate B dry-run）
+→ evaluating（新快照重新评测）
 ```
 
 固定上限：
@@ -1184,26 +1432,28 @@ type FineTuneBackend interface {
 
 `PublishCandidate` 在 Agent 分布式锁内执行：
 
-1. 再次校验管理员权限；
+1. 再次校验管理员权限，在 Agent publish lock 内取得 Candidate publish 操作 lease；
 2. 校验 TrainingSession=`ready`；
-3. 校验 Candidate digest 与成功 CandidateValidationRun 完全一致；
+3. 校验 Candidate digest、ModelRevisionID、ToolPolicy 和 ReleaseSpec digest 与成功
+   CandidateValidationRun 完全一致；
 4. 按 `ValidationMode` 校验发布证据：
    - `manual_only`：只允许 Phase 1，要求管理员在本次请求中明确确认“尚未自动评测”；
    - `evaluated`：要求成功 EvaluationRun 的 Candidate、ModelRevision、ToolPolicy 和
-     Suite version 与待发布内容完全一致；
+     Suite version 与待发布内容及 Agent 当前 RequiredEvaluationSuiteID 完全一致；
 5. 校验 BaseRelease 仍是 Agent ActiveRelease；
 6. 运行 Gate B 最终检查并生成新的 CandidateValidationRun；若 digest 或 Validator 结论
    变化，回到 `active` 重新审核，否则 Release 引用这次最终报告；
 7. 服务端计算 Bundle SemVer 和 Release SemVer；
-8. squash merge checkpoint 到 Bundle repository；
-9. 创建不可变 Git commit/tag；
-10. 物化只读 Release 目录；
-11. 创建 BundleVersion 和 AgentRelease；
+8. 资产有变化时 squash merge checkpoint 到 Bundle repository；纯模型变更复用 BundleVersion；
+9. 新 Bundle 创建不可变 Git commit/tag；
+10. 物化或校验只读 Bundle 目录；
+11. 创建或复用 BundleVersion，创建新的 AgentRelease；
 12. 原子更新 `agents.active_release_id`；
 13. 清空 `active_training_session_id`；
 14. 给 `follow_latest=true` 的生产会话设置 `pending_release_id`；
 15. 写审计和发布事件；
-16. 失效旧 Runtime cache，但不杀死正在执行的 Run。
+16. 标记待迁移会话的旧 Runtime 不再接受新 lease，但不杀死正在执行的 Run；
+    `follow_latest=false` 的会话仍可按其固定旧 Release 获取独立 Runtime。
 
 Git 操作先完成，数据库指针最后提交。数据库提交前失败时删除未引用 tag/物化目录并
 记录补偿；数据库提交后只允许向前修复，不回滚已经对外可见的 ActiveRelease 指针。
@@ -1241,17 +1491,37 @@ Release，并按同样方式设置会话 pending release。Bundle、模型和工
 
 ## 16. HTTP API
 
-### 16.1 Agent 与 Release
+### 16.1 Agent 与 Release（Phase 1B 起）
 
 ```text
 POST   /api/v1/agents
 GET    /api/v1/agents
 GET    /api/v1/agents/:agentID
+PATCH  /api/v1/agents/:agentID
 GET    /api/v1/agents/:agentID/releases
-POST   /api/v1/agents/:agentID/releases/:releaseID/activate
+PATCH  /api/v1/agents/:agentID/presentation
+PUT    /api/v1/agents/default
+GET    /api/v1/agent-templates
+POST   /api/v1/agents/:agentID/releases/:releaseID/activate  # Phase 1C
 ```
 
-### 16.2 Training Session
+GET /agents 仅返回当前租户可见 Agent，含 `items`、`default_agent_id`、`next_cursor`。
+条目含 ID、Name、Description、Presentation、ActiveRelease 摘要和服务端派生的 selectable。
+只有 enabled 且拥有可用 Release 的 Agent 才可新建聊天。管理列表可查看归档条目，普通
+用户不可借此获得训练信息。创建、展示配置、默认值设置和模板列表需管理员权限；用于
+聊天的 Agent 查询只要求有效租户用户身份。`/agents/default` 静态路由优先于 `/:agentID`。
+
+`PATCH /agents/:agentID` 仅允许本租户管理员修改 `name`、`description`、`status`，状态值
+固定为 `enabled|archived`；至少提供一个字段，拒绝未知字段，name 非空，名称/说明沿用
+创建接口的长度约束。更新不修改 AGENTS.md、模型或 ActiveRelease，不创建行为 Release。
+归档在 Agent 锁与 CAS 事务中检查 ActiveTrainingSessionID；任何非终态训练存在时返回
+409，必须先结束训练。成功归档时在同一事务内清除此 Agent 对应的 default_agent_id，
+拒绝后续新建聊天、作者训练和生产 Run；已经取得执行 lease 的生产 Turn 可以完成，
+聊天历史、Bundle 和发布版本全部保留。新建训练/生产执行准入与归档串行校验状态，避免
+检查通过后又产生新训练。重新 enable 保留既有版本，不自动设为默认助手；只有 Release
+可用时才 selectable。归档/启用分别记录 `agent.archived`、`agent.enabled` 审计。
+
+### 16.2 Training Session（Phase 1C 起，另行标明 Phase 2）
 
 ```text
 POST   /api/v1/agents/:agentID/training-sessions
@@ -1262,10 +1532,16 @@ GET    /api/v1/training-sessions/:trainingID/diff
 GET    /api/v1/training-sessions/:trainingID/checkpoints
 POST   /api/v1/training-sessions/:trainingID/checkpoints/:checkpoint/restore
 POST   /api/v1/training-sessions/:trainingID/validate
-POST   /api/v1/training-sessions/:trainingID/evaluations
+PATCH  /api/v1/training-sessions/:trainingID/model-revision
+POST   /api/v1/training-sessions/:trainingID/evaluations  # 仅 Phase 2
 POST   /api/v1/training-sessions/:trainingID/submit
 POST   /api/v1/training-sessions/:trainingID/publish
+GET    /api/v1/training-sessions/:trainingID/runs/:runID/events
 ```
+
+validate 只生成验证证据，完成后回到 active；submit 在 Phase 1 执行验证后进入 ready，
+在 Phase 2 执行验证和绑定 Suite 的评测后进入 ready；显式 evaluations 同样先验证。
+Phase 1 不注册 evaluations 路由、自动修正参数或评测事件生产者，前端也不显示相应操作。
 
 Training Run 继续使用 SSE AgentEvent；额外事件：
 
@@ -1279,7 +1555,15 @@ candidate_ready
 release_published
 ```
 
-### 16.3 Fine-tuning
+SSE 重连只订阅持久化事件，不重新执行 Run。每次连接均重新认证并校验
+TenantID + AdminUserID + TrainingSessionID + RunID，以及该 Run 的 Conversation 归属。
+Last-Event-ID 只能作为本 Run 内的游标，不能成为授权凭据；每批回放和 live 推送前校验
+会话授权仍有效，权限失效关闭流。不存在或无权读取的跨归属对象统一返回 404。
+事件使用单调递增 Run 内序号，按序幂等回放；游标超出保留窗口返回明确过期错误，前端
+重新获取会话与 Run 快照，不能重发 POST /runs 来“恢复”。事件与训练记录按相同租户
+边界持久化，保留周期由部署配置，执行请求幂等与事件重连是两个独立机制。
+
+### 16.3 Fine-tuning（仅 Phase 3）
 
 ```text
 POST   /api/v1/agents/:agentID/training-examples
@@ -1308,7 +1592,7 @@ Agent 详情页增加“训练”页签。开始训练前展示当前 ActiveRele
 - 右侧是按 checkpoint 分组的文件树、diff、Validation 和 Evaluation 报告；
 - 顶部固定显示 BaseRelease、CandidateHead、状态、累计 Token/成本和 Session 过期时间；
 - 底部操作只有“继续训练”“恢复 checkpoint”“验证/评测”“发布”“取消”；
-- 一次 Run 未结束时禁用重复发送，断线重连按 RunID 恢复 SSE，不重复执行；
+- 一次 Run 未结束时禁用重复发送，断线重连按 §16.2 校验归属并恢复 SSE，不重复执行；
 - Candidate 发生变化后立即清除旧的“可发布”标识；
 - `stale` 时只提供放弃或基于最新 Release 重建，不展示可绕过检查的发布入口；
 - Phase 1 发布对话框必须单独勾选“我确认此版本尚未经过自动评测”，不能预选；
@@ -1318,6 +1602,61 @@ Agent 详情页增加“训练”页签。开始训练前展示当前 ActiveRele
 
 管理员可以查看完整测试定义；发送给 Author Agent 的失败摘要必须由 Evaluation Service
 单独生成，不能把隐藏期望、Judge 提示词或完整测试 fixture 拼回训练聊天。
+
+### 16.5 基础模型注册（Phase 1B）
+
+```text
+POST   /api/v1/model-revisions
+GET    /api/v1/model-revisions
+GET    /api/v1/model-revisions/:revisionID
+```
+
+均要求本租户管理员身份。POST 只接收已配置 provider_id 和固定 model_id，执行 §7.3
+准入检查，成功返回不可变 ModelRevision；不接收 API Key、任意 Provider URL 或 kind。
+数据库唯一键处理重复请求，注册本身不创建 Release。Phase 1C 的候选模型接口只接收
+model_revision_id，服务端校验同租户、可用状态和当前候选工具所需的模型能力。
+
+### 16.6 评测集管理（仅 Phase 2）
+
+```text
+POST   /api/v1/agents/:agentID/evaluation-suites
+GET    /api/v1/agents/:agentID/evaluation-suites
+GET    /api/v1/agents/:agentID/evaluation-suites/:suiteVersionID
+PUT    /api/v1/agents/:agentID/evaluation-suite
+```
+
+全部经过 RequireAdmin 并校验租户和 Agent。POST 完整导入 suite_key、cases、阈值和
+fixture/Judge 配置，服务端在事务中生成版本和摘要并写 Cases；内容相同返回既有版本。
+PUT 只接收本 Agent 的 suite_version_id，绑定生产发布门槛；不修改历史版本。导入失败
+不留下半套 Cases，也不改变既有绑定。GET 详情含隐藏期望，仅管理员管理页面使用，
+不得复用到 Author Tool 响应或训练上下文。Phase 2 首次启用时先导入并绑定，再开放发布。
+
+### 16.7 现有聊天页面适配（Phase 1B）
+
+保留 Go template + 原生 JS 的聊天布局、消息渲染、图片输入、流式回复、历史搜索与会话
+管理。首页选择对象从固定 Profile 改为本租户 Agent；新建会话发送 agent_id，筛选同样
+改为 agent_id。Conversation 固定 Agent 身份，follow_latest 只更新其发布版本，不切换
+到另一个 Agent；版本更新提示不能写成“已更换助手”。
+
+`GET /agents` 的分页必须在选择器中提供加载更多或搜索；默认项即使不在首屏也通过
+同租户 Agent 详情补齐。会话 VO 直接返回关联 Agent 的名称、图标和状态，不能依赖
+当前可选列表反查，否则 Agent 归档或列表分页会导致历史只显示裸 ID。
+
+空状态分为：请求失败可重试；无 Agent 时普通用户提示联系管理员，管理员显示创建入口；
+有 Agent 但无可用 Release 时提示等待发布。后两者为正常响应，default_agent_id=null，
+禁用新建发送但保留历史阅读，不能误报“助手列表加载失败”。默认 Agent 在创建前被停用
+时服务端返回明确状态冲突，前端刷新列表，不静默换一个 Agent 发送原消息。
+
+图标、欢迎语、推荐问题、排序按 §7.1 从 Template 复制到 Agent 展示配置；聊天页面不再
+读取 Template 的实时配置。已归档 Agent 的历史仍可读，发送请求返回停用原因。
+管理员界面新增 `/admin/agents` 列表与创建入口、`/admin/agents/:agentID` 详情、详情中的
+训练入口，以及 `/admin/agents/:agentID/training/:trainingID` 工作台（Phase 1D）。普通
+聊天页仅在服务端声明管理页面已启用且当前用户有权限时显示管理入口，Phase 1B 不展示
+尚未注册的 Phase 1D 页面链接；后端仍独立鉴权，不把训练状态机塞进 chat.js。
+
+多客户页面上线前必须配置可信 Tenant/User Resolver；匿名 Cookie 仅能用于配置好的
+单客户访问，不能作为多客户租户选择依据。页面的 Local/本地工作区/Cookie 隔离等标签
+改为部署实际环境和当前组织信息，不让浏览器通过手填 tenant_id 声明组织身份。
 
 ## 17. 代码与文件划分
 
@@ -1380,6 +1719,8 @@ infrastructure 实现 domain/application 定义的端口
 | `application/identity/resolver.go` | AdminIdentityResolver 端口和 unavailable 语义 |
 | `domain/entity/agent/agent.go` | Agent 聚合根和 active release/training CAS version |
 | `domain/entity/agent/template.go` | 原 Profile 的创建模板投影 |
+| `domain/entity/agent/presentation.go` | Agent 展示配置及字段校验 |
+| `domain/entity/agent/tenant_settings.go` | 本租户默认 Agent 设置 |
 | `domain/entity/agent/bundle_version.go` | 不可变 BundleVersion |
 | `domain/entity/agent/model_revision.go` | base/fine-tuned ModelRevision |
 | `domain/entity/agent/release.go` | 不可变 AgentRelease 和 ValidationMode |
@@ -1388,11 +1729,25 @@ infrastructure 实现 domain/application 定义的端口
 | `domain/repository/agent/release.go` | Bundle/Model/Release/Validation 查询和原子发布提交 |
 | `domain/repository/agenttemplate/catalog.go` | 只读模板 Catalog 端口 |
 | `application/service/agentcatalog/service.go` | 创建/查询 Agent，解析 Template 初始值 |
+| `application/service/agentcatalog/presentation.go` | 展示配置、默认助手和归档处理 |
+| `application/service/agentcatalog/update.go` | 名称/说明、归档与启用；活跃训练冲突及默认项事务清理 |
+| `application/service/agentmodel/{service.go,register.go}` | 基础模型准入、幂等注册和查询 |
+| `application/port/agentmodel/probe.go` | Provider 固定模型引用与能力探针端口 |
+| `infrastructure/driver/agentmodel/probe.go` | 调用已配置 Provider 的有界可用性检查 |
+| `domain/repository/agent/model_revision.go` | 模型注册、唯一查询和状态检查 |
+| `infrastructure/persistence/agent/model_revision.go` | ModelRevision MySQL 实现 |
+| `infrastructure/controller/http/agentmodel/controller.go` | Phase 1B 模型注册/查询管理 API |
+| `infrastructure/controller/http/agent/controller.go` | Phase 1B Agent 查询、创建、展示配置和默认值 API |
+| `common/dto/agent.go`、`common/vo/agent.go` | Phase 1B Agent 请求、展示配置及列表分页响应 |
+| `common/dto/agent_model.go`、`common/vo/agent_model.go` | 模型注册请求、响应 |
 | `application/service/agentcatalog/register.go` | Agent Catalog 的 fx 模块 |
 | `application/service/agentruntime/spec.go` | RuntimePurpose、RuntimeSpec、ResolvedTool/MCP |
 | `application/service/agentruntime/manager.go` | Acquire/Release/Invalidate/Close 生命周期 |
 | `application/service/agentruntime/cache.go` | 单飞、引用计数、LRU 和 idle eviction |
 | `application/service/agentruntime/resolver.go` | 从 AgentRelease 构造生产 RuntimeSpec |
+| `application/service/agentruntime/workspace.go` | 会话/Case 隔离目录的物化、摘要校验和安全回收 |
+| `application/port/agentruntime/workspace.go` | 不可变快照到独立 Runtime 目录的物化契约 |
+| `infrastructure/driver/agentruntime/workspace.go` | 普通文件/写时复制、保留目录和跨平台路径实现 |
 | `application/service/agentruntime/tool_catalog.go` | Tool revision、Effect 和安全替身选择 |
 | `application/service/agentruntime/register.go` | Runtime Manager 的 fx 模块和生命周期 |
 | `infrastructure/persistence/agent/repository.go` | Agent 聚合的 MySQL 实现 |
@@ -1407,8 +1762,8 @@ infrastructure 实现 domain/application 定义的端口
 | `workspaces/agent-templates/<code>/**` | 八个内置 Agent 的种子 AGENTS/Skills/references |
 | `migrations/0007_agent_runtime.up.sql` | Agent/Bundle/Model/Release/Validation 表及 Conversation nullable 列 |
 | `migrations/0007_agent_runtime.down.sql` | 仅回滚 schema；已发布 Bundle 由运维显式处理 |
-| `migrations/0008_agent_conversation_finalize.up.sql` | 回填核验后增加 NOT NULL/FK/索引 |
-| `migrations/0008_agent_conversation_finalize.down.sql` | 回到兼容 nullable 结构，不删除已迁移数据 |
+| `migrations/0008_agent_conversation_finalize.up.sql` | 回填核验后增加 NOT NULL/FK，并替换 owner 唯一索引 |
+| `migrations/0008_agent_conversation_finalize.down.sql` | 冲突预检后恢复旧唯一索引，再回到 nullable 结构 |
 | `migrations/0009_agent_profile_cleanup.up.sql` | 兼容窗口结束后删除 profile_code 和旧索引 |
 | `migrations/0009_agent_profile_cleanup.down.sql` | 只恢复 nullable profile_code，不伪造历史值 |
 
@@ -1426,7 +1781,11 @@ infrastructure 实现 domain/application 定义的端口
 | `application/service/chat/run_manager.go` | 删除 Profile Context 注入，记录 agent/release tracing 属性 |
 | `common/dto/chat.go` | CreateConversation 从 `profile_code` 迁移到 `agent_id` |
 | `common/vo/chat.go` | 返回 agent_id/release_id，兼容期保留 profile_code |
-| `infrastructure/controller/http/chat/controller.go` | 只接收 agent_id，不允许客户端指定 release_id |
+| `frontend/static/js/pages/chat.js` | Agent 列表、分页、默认项、agent_id 创建/筛选和空状态 |
+| `frontend/templates/pages/chat.html` | 保留聊天布局，增加空状态和按角色显示的管理入口 |
+| `frontend/templates/components/conversation-sidebar.html` | Agent 筛选及真实租户/部署标签 |
+| `frontend/static/js/pages/chat_agents_test.mjs` | 默认项缺失、分页、归档历史、状态冲突与租户列表隔离 |
+| `infrastructure/controller/http/chat/controller.go` | 最终只接收 agent_id；兼容期按 §22 映射 profile_code，禁止指定 release_id |
 | `infrastructure/middleware/visitor.go` | 产出普通 Principal；不得把匿名 Session 提升为管理员 |
 | `infrastructure/persistence/register.go` | 绑定 Agent/Release Repository 实现 |
 | `infrastructure/controller/http/register.go` | 注册 Agent 查询 API；管理路由挂 RequireAdmin |
@@ -1434,8 +1793,9 @@ infrastructure 实现 domain/application 定义的端口
 
 兼容版本保留 `domain/entity/agentprofile`、`domain/repository/agentprofile` 和旧
 `GET /agent-profiles` 投影；0009 清理后删除旧包。代码仓库中的
-`workspaces/agent-templates` 只用于创建新 Agent/执行 bootstrap，生产 Runtime 永远从
-`<data-dir>/tenants/.../releases` 加载，不能回退读取模板目录。
+`workspaces/agent-templates` 只用于创建新 Agent/执行 bootstrap。生产内容来源必须是
+`<data-dir>/tenants/<tenant-id>/agents/<agent-id>/releases/<bundle-version-id>/`，实际
+WorkDir 按 §8.1 物化到会话级 runtime-cache，不能回退读取模板目录。
 
 现有 `workspaces/chat/skills` 中被 Template 引用的共享 Skill 在 bootstrap 时复制进初始
 Bundle，使 Bundle 自包含；`workspaces/chat/AGENTS.md` 只保留平台级安全与回复纪律，不
@@ -1457,6 +1817,9 @@ Bundle，使 Bundle 自包含；`workspaces/chat/AGENTS.md` 只保留平台级�
 | `application/service/agenttraining/create.go` | 创建 Session、Conversation 和 Candidate |
 | `application/service/agenttraining/run.go` | 获取 lease、执行目标 Agent、保存 Turn/checkpoint |
 | `application/service/agenttraining/checkpoint.go` | diff、列表和 restore |
+| `application/service/agenttraining/operation.go` | Candidate 操作 lease、fence、冻结与队列请求交接 |
+| `application/service/agenttraining/model.go` | 候选模型选择及验证证据失效 |
+| `application/service/agenttraining/events.go` | Run 事件持久化、归属校验和重连回放 |
 | `application/service/agenttraining/validate.go` | Gate B dry-run 和 ValidationRun |
 | `application/service/agenttraining/submit.go` | 提交 Candidate，按部署阶段推进到 ready/evaluating |
 | `application/service/agenttraining/cancel.go` | cancel/expire/stale 清理与保留规则 |
@@ -1480,11 +1843,12 @@ Bundle，使 Bundle 自包含；`workspaces/chat/AGENTS.md` 只保留平台级�
 | `infrastructure/driver/agentlock/redis.go` | 带 owner token/TTL 的 Redis publish lock |
 | `infrastructure/driver/agentlock/register.go` | Agent Lock 的 fx 绑定 |
 | `infrastructure/persistence/agenttraining/repository.go` | Training/Checkpoint MySQL 实现 |
-| `infrastructure/controller/http/agent/controller.go` | Agent/Release 管理 API |
+| `infrastructure/persistence/agenttraining/events.go` | RunEvent 持久化、按归属和游标查询 |
+| `infrastructure/controller/http/agent/controller.go` | 扩展 Phase 1B Controller，增加 Release 激活/回滚 API |
 | `infrastructure/controller/http/agenttraining/controller.go` | Training REST/SSE API；只做绑定和响应 |
-| `common/dto/agent.go` | Agent/Release 请求 DTO |
+| `common/dto/agent.go` | 扩展已有 Agent DTO，增加 Release 激活请求 |
 | `common/dto/agent_training.go` | 创建、Run、restore、publish 请求 DTO |
-| `common/vo/agent.go` | Agent/Release 响应 VO |
+| `common/vo/agent.go` | 扩展已有 Agent VO，增加 Release 管理响应 |
 | `common/vo/agent_training.go` | Session、diff、checkpoint、Validation、SSE VO |
 | `migrations/0010_agent_training.up.sql` | Training、Checkpoint、idempotency、Outbox 表 |
 | `migrations/0010_agent_training.down.sql` | 对应 schema 回滚 |
@@ -1499,6 +1863,7 @@ Gate B 的 Bundle 语义校验放在应用层 `agenttraining/validate.go`，Git 
 
 ```text
 frontend/templates/pages/admin-agents.html
+frontend/templates/pages/admin-agent-detail.html
 frontend/templates/pages/admin-agent-training.html
 frontend/templates/components/training-header.html
 frontend/templates/components/training-chat.html
@@ -1507,6 +1872,7 @@ frontend/templates/components/training-validation.html
 frontend/static/css/pages/admin-agents.css
 frontend/static/css/pages/admin-agent-training.css
 frontend/static/js/pages/admin-agents.js
+frontend/static/js/pages/admin-agent-detail.js
 frontend/static/js/pages/admin-agent-training.js
 frontend/static/js/pages/training-stream.js
 frontend/static/js/pages/training-diff.js
@@ -1518,8 +1884,9 @@ frontend/static/js/pages/admin_agents_test.mjs
 ```
 
 修改 `frontend/assets.go`、`frontend/templates/partials/scripts.html` 和
-`infrastructure/controller/http/page/controller.go` 注册 `/admin/agents` 和训练工作台页面。
-Agent 列表负责选择目标 Agent 和展示 ActiveRelease，不复制训练状态逻辑。普通 Chat 的
+`infrastructure/controller/http/page/controller.go` 注册 §16.7 的列表、详情和训练页面。
+Agent 列表负责创建/选择目标 Agent，详情负责展示配置、ActiveRelease、历史版本和训练入口，
+不复制训练状态逻辑。普通 Chat 的
 `chat.js` 不掺入训练状态机，最多复用无业务状态的消息渲染函数。
 
 ### 17.6 Phase 2 与 Phase 3 文件
@@ -1529,7 +1896,7 @@ Phase 2 新增：
 ```text
 domain/entity/evaluation/{suite.go,case.go,run.go,result.go}
 domain/repository/evaluation/repository.go
-application/service/agentevaluation/{service.go,runner.go,scorer.go,repair.go,register.go}
+application/service/agentevaluation/{service.go,suite.go,binding.go,runner.go,scorer.go,repair.go,register.go}
 application/port/evaluation/tool_fake.go
 application/tool/agenttraining/evaluate.go
 infrastructure/persistence/evaluation/repository.go
@@ -1642,7 +2009,7 @@ type ReleaseRepository interface {
 }
 ```
 
-`CommitPublish` 是一个 Repository 原子操作：插入 BundleVersion/AgentRelease、CAS 更新
+`CommitPublish` 是一个 Repository 原子操作：插入新 BundleVersion（或验证复用引用）和 AgentRelease、CAS 更新
 Agent、清空 active training、写 Outbox。Application Service 不分别调用四个 Repo 后
 假装它们处于一个事务。
 
@@ -1650,6 +2017,31 @@ Agent、清空 active training、写 Outbox。Application Service 不分别调�
 
 ```go
 package agenttraining
+
+// 终态无出边；条件检查（证据、lease、阶段）由领域方法和服务共同执行。
+func allowedTransition(from, to Status) bool {
+    switch from {
+    case StatusActive, StatusValidating, StatusEvaluating, StatusRepairing, StatusReady:
+        if to == StatusCancelled || to == StatusStale || to == StatusExpired {
+            return true
+        }
+    default:
+        return false
+    }
+    switch from {
+    case StatusActive:
+        return to == StatusValidating
+    case StatusValidating:
+        return to == StatusActive || to == StatusReady || to == StatusEvaluating
+    case StatusEvaluating:
+        return to == StatusActive || to == StatusRepairing || to == StatusReady
+    case StatusRepairing:
+        return to == StatusActive
+    case StatusReady:
+        return to == StatusActive || to == StatusPublished
+    }
+    return false
+}
 
 func (s *TrainingSession) Transition(next Status, now time.Time) error {
     if !allowedTransition(s.Status, next) {
@@ -1661,9 +2053,14 @@ func (s *TrainingSession) Transition(next Status, now time.Time) error {
     return nil
 }
 
-func (s *TrainingSession) MarkCandidateChanged(head string, now time.Time) error {
-    if s.Status != StatusActive && s.Status != StatusReady && s.Status != StatusRepairing {
+func (s *TrainingSession) MarkCandidateChanged(head string, fence uint64, now time.Time) error {
+    if s.Status != StatusActive && s.Status != StatusRepairing {
         return ErrCandidateNotWritable
+    }
+    if s.OperationKind == nil || (*s.OperationKind != "author" && *s.OperationKind != "restore") ||
+        s.ActiveOperationID == nil || s.OperationLeaseExpiresAt == nil ||
+        !now.Before(*s.OperationLeaseExpiresAt) || fence != s.OperationFence {
+        return ErrOperationLeaseLost
     }
     s.CandidateHead = head
     s.LastValidationRunID = nil
@@ -1674,6 +2071,12 @@ func (s *TrainingSession) MarkCandidateChanged(head string, now time.Time) error
     return nil
 }
 ```
+
+进入 ready 后的作者 Run/restore 先调用领域方法 `BeginCandidateEdit` 转 active 并清除
+LastValidationRunID/LastEvaluationRunID，再开放写权限；该方法与新操作 lease 的 CAS
+在同一数据库事务提交。MarkCandidateChanged 只提交已经持锁完成的 checkpoint，不负责
+事后许可写入。报告写回还必须比对 fence、CandidateHead、ReleaseSpec digest 和操作 ID，
+旧 worker 即使迟到也不能覆盖新状态。Transition 仅是状态边合法性检查，不是发布授权。
 
 Bundle/Git 通过应用端口隔离：
 
@@ -1705,6 +2108,8 @@ type ValidationSpec struct {
     TrainingID      *string
     Workspace       agentbundle.ReadOnlySnapshot
     BaseDigest      string
+    ModelRevisionID string
+    ReleaseSpecDigest string
     ToolPolicy      agententity.ToolPolicySnapshot
     RuntimeVersion  string
 }
@@ -1712,6 +2117,8 @@ type ValidationSpec struct {
 type ValidationReport struct {
     CandidateHead   string
     CandidateDigest string
+    ModelRevisionID string
+    ReleaseSpecDigest string
     ToolPolicyDigest string
     Diagnostics     []Diagnostic
     SmokeResults    []SmokeResult
@@ -1742,6 +2149,8 @@ func (s *Service) Restore(context.Context, RestoreCommand) error
 func (s *Service) Validate(context.Context, ValidateCommand) (*ValidationView, error)
 func (s *Service) Submit(context.Context, SubmitCommand) (*SessionView, error)
 func (s *Service) Cancel(context.Context, CancelCommand) error
+func (s *Service) SelectModel(context.Context, SelectModelCommand) error
+func (s *Service) StreamEvents(context.Context, EventsQuery, EventSink) error
 ```
 
 `Publish` 不放在 Training Service，避免 Author 服务拥有生产切换能力：
@@ -1758,6 +2167,11 @@ func (s *Service) PublishTrainingCandidate(
         return nil, err
     }
     return s.withAgentLock(ctx, principal.TenantID, cmd.AgentID, func(ctx context.Context) (*agent.AgentRelease, error) {
+        operation, err := s.acquirePublishOperation(ctx, principal, cmd)
+        if err != nil {
+            return nil, err
+        }
+        defer operation.Release()
         session, evidence, err := s.loadAndRevalidate(ctx, principal, cmd)
         if err != nil {
             return nil, err
@@ -1771,7 +2185,7 @@ func (s *Service) PublishTrainingCandidate(
             cleanupErr := s.bundles.DeleteUnreferenced(ctx, published)
             return nil, errors.Join(err, cleanupErr)
         }
-        s.runtimes.Invalidate(ctx, runtimeKey(session.BaseReleaseID))
+        // CommitPublish 同时写 Outbox；消费者按待迁移 Conversation 的旧 Runtime Key 失效。
         return release, nil
     })
 }
@@ -1779,6 +2193,10 @@ func (s *Service) PublishTrainingCandidate(
 
 上面省略了日志字段和错误包装，但顺序是契约：先锁、再重读、再最终验证、再 Git、最后
 DB 事务；DB 已提交后 Runtime invalidation 失败只能通过 Outbox/重试向前恢复。
+acquirePublishOperation 同时校验 ready、管理员和 fence；Git Store 的 PublishedBundle
+记录是否本次新建，DeleteUnreferenced 仅补偿本次新建且未被引用的资源，纯模型变更不能
+删除复用的旧 Bundle。Outbox 消费者只失效 follow_latest 会话的旧 Key，不按 Release
+无差别关闭所有会话实例；新 Key 在下一次 AcquireChat 时按需创建。
 
 Conversation Runner 动态选择 Runtime，但 `pi.RunRequest` 不出现业务 ID：
 
@@ -1789,6 +2207,8 @@ if err != nil {
 }
 lease, err := runtimes.AcquireChat(ctx, agentruntime.ChatIdentity{
     TenantID: tenantID,
+    UserID: userID,
+    ConversationID: conversationID,
     AgentID: conversation.AgentID,
     ReleaseID: conversation.AgentReleaseID,
 })
@@ -1839,6 +2259,7 @@ var Register = fx.Options(
     notice.Register,
     chattools.Register,
     agentcatalog.Register,
+    agentmodel.Register,
     agentruntime.Register,
     agenttraining.Register,
     agentrelease.Register,
@@ -1849,7 +2270,7 @@ var Register = fx.Options(
 ```
 
 `cmd/server/app.go` 不再直接调用一次全局 `pi.New`；只有 Runtime Manager factory 根据
-Release/Training spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
+Conversation/Release、Training 或 Evaluation spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
 
 ### 17.8 测试文件落位
 
@@ -1867,7 +2288,10 @@ Release/Training spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
 - 身份测试覆盖匿名 Visitor 永远是 user、伪造角色 Header 无效、缺少 Resolver 时管理
   路由不可用、真实 Admin Principal 才能进入 Service；
 - Runtime Manager 增加并发 race test，覆盖相同 Key 单飞、活跃 lease 不回收、Stop 逆序
-  和 Invalidate 与 Acquire 竞争；
+  和 Invalidate 与 Acquire 竞争，以及同 Release 不同会话目录/MCP 隔离；
+- 模型注册探针测试覆盖浮动别名、无权限 Provider、能力不满足及同模型幂等注册；
+- Suite 管理测试覆盖完整版本事务、重复内容幂等、跨 Agent 绑定拒绝和旧报告失效；
+- RunEvent 测试覆盖跨租户/管理员/Run 重连拒绝、序号幂等回放和过期游标；
 - 前端继续使用 Node 内置 test runner，DOM/stream/state 各自测试；
 - Phase 1D 增加 `infrastructure/controller/http/agenttraining/e2e_test.go`，跑通“创建训练
   → 对话修改 → diff → validate → manual-only publish → 普通会话懒迁移 → rollback”。
@@ -1878,11 +2302,13 @@ Release/Training spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
 
 ```text
 agents
+agent_tenant_settings
 agent_bundle_versions
 agent_model_revisions
 agent_releases
 agent_training_sessions
 agent_training_checkpoints
+agent_training_run_events
 agent_candidate_validation_runs
 agent_evaluation_suites
 agent_evaluation_cases
@@ -1896,14 +2322,14 @@ agent_idempotency_keys
 agent_outbox_events
 ```
 
-表按阶段创建：0007 只创建 Agent/Bundle/Model/Release/Validation，bootstrap 依靠
-`tenant_id + template_code` 等唯一键保证幂等；0010 才创建
-Training/Checkpoint/Idempotency/Outbox；0011 创建 Evaluation；0012 创建
+表按阶段创建：0007 创建 Agent（含 Presentation JSON、BootstrapKey）、TenantSettings、
+Bundle/Model/Release/Validation，bootstrap 依靠 `tenant_id + bootstrap_key` 唯一键保证幂等；
+0010 才创建 Training/Checkpoint/RunEvent/Idempotency/Outbox；0011 创建 Evaluation；0012 创建
 TrainingExample/Dataset/FineTuneJob。上面的列表表示最终目标，不表示首个 migration 一次
 创建全部表。
 
 跨阶段引用先保存 nullable ID，不提前创建指向不存在表的外键：0007 中
-`active_training_session_id`、`evaluation_run_id`、`dataset_version_id`、
+`active_training_session_id`、`required_evaluation_suite_id`、`evaluation_run_id`、`dataset_version_id`、
 `fine_tune_job_id` 只建列；0010/0011/0012 在目标表存在后再补对应 FK。0010 的
 `last_evaluation_run_id` 同理在 0011 才补 FK。
 
@@ -1932,21 +2358,42 @@ ADD training_session_id VARCHAR(32) NULL
 5. 独立校验命令检查空值、未知 Profile、Bundle digest 和跨 Agent Release 引用，任何异常
    都停止发布；
 6. 执行 `0008_agent_conversation_finalize.up.sql`，把 `tenant_id`、`agent_id`、
-   `agent_release_id` 改为 NOT NULL，并创建外键和查询索引；
+   `agent_release_id` 改为 NOT NULL，并创建外键和查询索引。显式创建
+   `uq_agent_conversations_tenant_owner(tenant_id, user_id, conversation_id)` 后删除旧
+   `uq_agent_conversations_owner(user_id, conversation_id)`；核验新唯一索引有效后才开放
+   多租户写入，不让两个唯一约束长期并存而误拒绝合法数据；
 7. 应用切换为只读 `agent_id/agent_release_id`，停止写 `profile_code`；
 8. 经过一个兼容版本后执行 `0009_agent_profile_cleanup.up.sql`，删除 `profile_code` 和旧
    Profile 索引；
 9. Phase 1C、2、3 再分别执行 0010 Training、0011 Evaluation、0012 Fine-tuning，禁止
    在 Phase 1A 提前创建空表。
 
+0008 down 必须在停写窗口先检测 `(user_id, conversation_id)` 跨租户重复；有重复即拒绝
+回滚并报告冲突，禁止自动合并或删除客户数据。无冲突时先重建旧
+`uq_agent_conversations_owner`，确认成功后再删除 `uq_agent_conversations_tenant_owner`，
+然后撤销该 migration 的 FK/NOT NULL。MySQL DDL 不假定可事务回滚，脚本每步检查实际
+schema 并支持中断后继续；恢复旧 schema 前必须停止多租户应用写入并完成备份。
+
+0010 的 TrainingSession 保存 ActiveOperationID、OperationKind、OperationFence、
+OperationLeaseExpiresAt 和 CandidateModelRevisionID；RunEvent 保存 tenant_id、
+training_session_id、run_id、seq、事件内容与时间。0011 的 Suite 行包含 tenant_id、agent_id、
+suite_key、version、content_digest 和完整阈值/fixture/Judge 配置，Cases 指向版本行 ID；
+同时补 Agent.RequiredEvaluationSuiteID 的 FK 与同租户同 Agent 一致性校验。
+
 关键唯一约束：
 
 - `agents(id)` 和 `agents(tenant_id, id)`；
-- 内置 Agent 使用 `agents(tenant_id, template_code)` 唯一键保证 bootstrap 幂等；
+- 内置 Agent 使用 `agents(tenant_id, bootstrap_key)`，普通创建的 BootstrapKey 为 NULL；
+- `agent_tenant_settings(tenant_id)`，default_agent_id 为同租户可空引用；
+- `agent_model_revisions(tenant_id, provider_id, model_id, kind)`；
 - `agent_bundle_versions(agent_id, version)`；
 - `agent_bundle_versions(agent_id, git_commit)`；
 - `agent_releases(agent_id, version)`；
 - `agent_training_sessions(conversation_id)`；
+- `agent_training_run_events(tenant_id, training_session_id, run_id, seq)`；
+- `agent_evaluation_suites(tenant_id, agent_id, suite_key, version)`；
+- `agent_evaluation_suites(tenant_id, agent_id, suite_key, content_digest)`；
+- `agent_evaluation_cases(suite_id, case_code)`；
 - `agent_training_examples(agent_id, source_run_id, content_digest)`；
 - `agent_dataset_versions(agent_id, content_digest)`；
 - `agent_fine_tune_jobs(provider_id, external_job_id)`。
@@ -1966,14 +2413,21 @@ FineTuneJob）都保存 `tenant_id`。Repository 方法必须把认证上下文�
 
 - 同一 TrainingSession 每次只允许一个 Run；
 - 同一 Agent 第一阶段只允许一个 active TrainingSession；
-- 发布按 AgentID 获取分布式锁；
+- 同一租户可以同时训练多个不同 Agent；训练活跃指针和发布锁均按目标 Agent 隔离；
+- 发布和评测集绑定更新按 TenantID + AgentID 获取分布式锁；
 - Runtime 创建按 Runtime Key 单飞；
 - Evaluation Case 可并发，但同一 Case 只有一个结果；
 - FineTune Job 的 webhook/poll 更新通过状态版本做幂等 CAS。
 
-Run lease 只保护一次执行并允许崩溃接管；Session `ExpiresAt` 才控制长期占用。同一 Agent
-的活跃指针覆盖 `active|validating|evaluating|repairing|ready` 全部状态，不能通过进入
-评测态绕过单 Candidate 限制。
+Candidate 操作 lease 覆盖 author/restore/configure/validate/evaluate/publish，一次只允许
+一种操作占用工作树；ActiveRunID 仅作者执行时有值，不能拿它代替验证/发布占用标识。
+获取和续租使用数据库 CAS，fence 单调递增，所有完成写回比较操作 ID、fence、HEAD 和
+ReleaseSpec 摘要。阶段交接必须在同一事务内换操作 owner/状态，不能暴露可插入新作者的
+空窗；模型参数修改、Suite 绑定变化和发布都要重检证据。
+
+lease 失效仅撤销操作授权；Session `ExpiresAt` 才控制长期占用。同一 Agent 的活跃指针
+覆盖全部非终态，不能通过进入评测态绕过单 Candidate 限制。需要同时持两把锁时统一先
+Agent publish lock、后 Candidate 操作 lease，禁止反向获取；作者 Turn 不持发布锁。
 
 创建 TrainingSession、Training Run、publish 和 FineTune submit 必须支持
 `Idempotency-Key`，作用域为 `tenant + actor + route`，并持久化请求摘要和最终响应。
@@ -1998,6 +2452,17 @@ Release，不再分配版本或重复发送事件。
 - EvaluationRun 执行中断后标记 `failed_interrupted`，不会猜测成功；
 - FineTune Job 从外部 Provider 状态恢复；
 - pending conversation migration 在下一 Turn 重试。
+
+操作续租失败时立即停止作者工具调度，并终止相关 exec/MCP/Subagent 进程。数据库 fence
+只能阻止迟到写回，不能阻止旧 shell 写盘，因此接管前必须由本机进程监管确认旧进程组
+已退出，才能重新开放 Candidate。如果无法确认旧宿主进程已隔离，保持冲突状态并交由
+运维处理，不能直接重用同一路径。第一阶段不支持跨节点抢占仍可写共享磁盘的作者进程。
+
+确认隔离后保留旧工作树用于故障诊断，从最后持久化 CandidateHead 重建；未 checkpoint
+的残留变更不自动作为成功候选。validating/evaluating 的中断报告记录 failed_interrupted，
+状态回 active 并清除可发布证据；repairing 中断同样回 active，保留已消耗次数和预算。
+恢复记录操作 ID、旧 fence 和新 fence，续跑必须重新验证。published 等终态不会被接管
+改回 active；publish 中断先对账 DB/refs/Outbox，再决定补偿或返回既有 Release。
 
 ### 19.4 部分失败
 
@@ -2027,6 +2492,8 @@ Release，不再分配版本或重复发送事件。
 ### 20.2 强制要求
 
 - 生产 Bundle 目录只读；
+- 生产会话和 Evaluation Case 的临时目录互不共享，权威 Release 目录不包含可写 scratch/tmp；
+- validating/evaluating/ready 不授予作者写权限，冻结前必须收回所有进程写句柄；
 - Training Candidate 与其他 Agent、其他 Session 隔离；
 - exec 默认禁止网络并使用最小环境；
 - Secret 不进入消息、Bundle、diff、Invocation 内容或训练数据；
@@ -2084,6 +2551,13 @@ run.cost_usd
 
 ```text
 agent.created
+agent.archived
+agent.enabled
+agent.presentation.updated
+agent.default.updated
+agent.model_revision.registered
+agent.evaluation_suite.created
+agent.evaluation_suite.bound
 agent.training.started
 agent.training.checkpointed
 agent.training.validation_failed
@@ -2118,16 +2592,27 @@ agent.finetune.failed
 8. 迁移期间 `profile_code` 只读保留一个版本，之后通过独立 migration 删除；
 9. 不允许缺失映射时静默回退到 general，迁移应失败并报告具体 code。
 
+迁移同时复制 Profile 图标、欢迎语、starters、order 到 AgentPresentation，为明确指定的
+迁移租户设置原默认 Profile 对应 Agent；普通 Template 创建不写 BootstrapKey，避免同源
+Agent 被错误去重。既有匿名历史只允许回填到该部署明确指定的单客户租户；已有多客户
+数据必须提供可信用户到租户映射，禁止全部落入 default。
+
+Phase 1B 同步升级聊天前端及列表/创建/筛选接口；兼容期后端同时接受旧 profile_code
+和新 agent_id，但单请求不能同时提供两者。旧 code 只映射为当前租户的内置迁移 Agent，
+不能用于选择从相同模板创建的其他 Agent。新前端只发送 agent_id，旧接口仅为兼容投影；
+0009 清理前必须确认旧客户端已退役。详情/VO 包含展示信息以保留已归档 Agent 的历史。
+
 ## 23. 实施阶段
 
 这是总架构设计，不应被展开成一个超大实现计划。审核通过后按以下依赖顺序分别编写、
 评审和执行实现计划，每个阶段通过验收后再进入下一阶段：
 
 1. Phase 1A：`pi` WorkspacePolicy、沙箱写边界、InspectWorkspace；
-2. Phase 1B：Agent/Release 领域模型、Profile 迁移、Runtime Manager、生产只读运行；
+2. Phase 1B：Agent/Release、基础模型注册、Profile 与聊天页面迁移、会话级 Runtime Manager、
+   生产 Bundle 只读运行；
 3. Phase 1C：TrainingSession、Candidate Git、checkpoint、Gate A/B、人工发布与回滚；
 4. Phase 1D：管理员训练工作台和完整端到端验收；
-5. Phase 2：Evaluation 与有限自主修正；
+5. Phase 2：评测集版本导入与绑定、Evaluation 与有限自主修正；
 6. Phase 3：Fine-tuning；
 7. Phase 4：规模化能力。
 
@@ -2138,6 +2623,8 @@ agent.finetune.failed
 - Agent、BundleVersion、基础 ModelRevision、AgentRelease、TrainingSession；
 - Profile → AgentTemplate 迁移；
 - Runtime Manager；
+- 会话独立 WorkDir、基础模型注册及生产前备份恢复演练；
+- Agent 展示配置、租户默认项、现有聊天页空状态及 agent_id 接口迁移；
 - Tool/MCP Effect Catalog 和 Training 安全替身策略；
 - Training Chat、Candidate Workspace、checkpoint；
 - `AGENTS.md`、文档、Skills、`.sh/.py` 脚本；
@@ -2153,6 +2640,7 @@ Phase 1 发布条件：没有自动评测时，只允许管理员明确勾选“
 ### Phase 2：Evaluation 与有限自主修正
 
 - Evaluation Suite/Case/Run；
+- 管理员完整导入不可变 Suite 版本并绑定到目标 Agent；
 - 生产权限 Evaluation Runner；
 - Tool trace、Schema、安全和 Judge 断言；
 - 最多三轮自动修正；
@@ -2184,7 +2672,7 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 
 ## 24. 测试策略
 
-### 24.1 `pi` SDK
+### 24.1 `pi` SDK 与 Runtime
 
 - `WorkspaceWriteRestricted + AllowWrite=false` 不注册文件写工具；
 - Seatbelt/Bubblewrap 下 exec 不能修改 Bundle；
@@ -2194,16 +2682,28 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 - `InspectWorkspace` 与真实 ContextBuilder 对同一 Workspace 结论一致；
 - symlink、路径逃逸和特殊文件被拒绝。
 
+Phase 1B Runtime 验证覆盖：同 Release 的两个 Conversation 拥有不同 WorkDir，不能
+互读 scratch/tmp；权威 releases 不产生任何临时目录，根只读不能 rename/unlink Bundle；
+复制过程不使用共享可写硬链接；系统临时目录、MCP 和 Subagent 不突破隔离。版本切换
+失败保留旧会话版本，follow_latest=false 不被发布事件失效；容量满时不淘汰活跃实例。
+
 ### 24.2 Training Service
 
 - 非管理员不能创建、读取、运行或发布 TrainingSession；
 - 同一 Agent 第二个 active TrainingSession 被拒绝；
+- 同一租户的两个不同 Agent 可以各自创建 active TrainingSession，候选文件、checkpoint、
+  发布版本互不影响；跨租户或跨 Agent 引用训练会话、Candidate 和 checkpoint 被拒绝；
 - Candidate 从准确 BaseRelease 创建；
 - 每轮文件变更生成 checkpoint；
 - 失败 Run 只生成 partial checkpoint；
 - restore 只能选择本 TrainingSession checkpoint；
 - Candidate 修改使旧 CandidateValidationRun 和 EvaluationRun 失效；
-- Run lease 到期可接管，但不会把 Session 错误标记为 stale；
+- validating/evaluating/ready 拒绝作者写入，ready 必须先失效证据再转 active；
+- 作者与 restore/配置修改/验证/发布竞争时只允许一个操作 lease 成功；
+- queued 验证 Tool 在作者 Turn 结束、子进程停止、checkpoint 完成前不执行检查；
+- 旧 shell 未停止时禁止接管，fence 失效的工具和报告写回在变更前被拒绝；
+- 操作 lease 到期隔离旧进程后可接管，但不会把 Session 错误标记为 stale；
+- repairing 的成功、失败和无变更均有明确出边，重新评测必先重新验证，总预算不重置；
 - Session 到期进入 expired 并释放 Agent 活跃训练指针；
 - 服务重启后能恢复 Candidate。
 
@@ -2212,7 +2712,9 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 - 合法 AGENTS、Skill、脚本能发布；
 - 保留路径、Secret、越界链接、特殊文件、超限 Bundle 被拒绝；
 - Skill diagnostics、重复名称、缺失脚本引用被拒绝；
-- 空 diff 被拒绝；
+- Bundle 和运行配置都无变化的空发布被拒绝；纯模型变更可复用 Bundle，但须重新验证；
+- agent.yaml 的有效示例可解析，未知/重复键、多文档、错误类型、缺字段、不可用解释器
+  和低于所需版本的 Runtime 被拒绝；
 - 两个并发发布只产生一个新版本；
 - BaseRelease 漂移使 Candidate stale；
 - Git/DB 各失败点执行预期补偿；
@@ -2232,6 +2734,9 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 - Candidate digest 变化阻止复用旧报告；
 - 自动修正达到轮次/预算/无进展上限会停止；
 - Tool 未调用、Tool 报错和业务失败能正确区分。
+
+Suite 导入、绑定、Case 执行均校验同租户同 Agent；版本导入失败整套回滚；历史版本
+不可变，绑定更新后旧报告不能批准发布。各 Case/Attempt 不共享目录、MCP 状态或 History。
 
 ### 24.5 Fine-tuning
 
@@ -2258,6 +2763,22 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 11. 管理员把一个修正审核成 TrainingExample；
 12. Dataset → FineTuneJob → ModelRevision → Evaluation → 新 Release 完成闭环。
 
+### 24.7 迁移、页面与恢复验收
+
+- 0008 up 先创建新唯一索引再移除旧索引，允许合法的跨租户同 user/conversation 值；
+- 0008 down 遇到旧唯一键冲突时停在预检，不删数据；无冲突时先恢复旧索引再删新索引，
+  模拟 MySQL DDL 中断后可继续恢复；
+- bootstrap 可重试，同租户从同一 Template 创建多个普通 Agent 不被种子唯一键拦截；
+- 页面保留选助手、发送图片、流式回复、历史搜索/筛选及重命名删除；新接口使用 agent_id，
+  默认项不在首屏、空租户、无发布、归档历史和创建前停用均展示正确状态；
+- 管理入口按角色显示，直接访问管理 API 仍需后端认证；SSE 重连不能跨租户、管理员、
+  TrainingSession 或 Run 回放，也不能触发重复执行；
+- Agent PATCH 拒绝跨租户、非管理员、未知状态及空名称；归档与新训练竞争时不能同时
+  成功，存在非终态训练返回 409；归档原子清理默认项，历史可读，重新启用不自动成为默认；
+- 从同批数据库和 Git 备份恢复后核验所有发布和 checkpoint 引用；删除一份 Git 对象的
+  故障演练应阻止受影响 Agent 激活并准确报告；缓存丢失可重建，未 checkpoint 不伪造恢复；
+- 登记实际备份周期、保留策略、RPO 和实测 RTO，Phase 1 上线前完成一次恢复演练。
+
 ## 25. 验收标准
 
 - 管理员能在 UI 内完成创建训练会话、聊天修改、查看 diff、评测、发布和回滚；
@@ -2278,7 +2799,7 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 1. 采用 Workify 式同一逻辑 Agent 自训练，不创建独立 Trainer Agent。
 2. 使用显式管理员 TrainingSession，不把训练能力开放给普通 Chat。
 3. TrainingSession 使用独立 Candidate Workspace 和独立 `pi.Agent` Runtime。
-4. 生产 Workspace 只读；允许执行脚本不等于允许修改 Bundle。
+4. 生产 Bundle 只读；会话 WorkDir 仅 scratch/tmp 可写，不能把权威 Release 目录作临时工作区。
 5. Training Agent 可修改资产、验证和提交 Candidate，但不能发布。
 6. Gate A 提供即时反馈，Gate B 是发布权威边界。
 7. 第一阶段一个 Agent 只允许一个 active TrainingSession。
@@ -2292,3 +2813,7 @@ Phase 2 完成后移除 `manual_only` 发布例外。
 14. Fine-tuning 在应用/基础设施层实现，`pi` 只消费最终模型引用。
 15. 普通聊天不会自动进入训练集，训练样本必须管理员审核。
 16. 发布和回滚以 AgentRelease 为单位，模型与 Bundle 一起切换。
+17. Chat Runtime 按租户、Agent、Conversation、Release 和配置缓存，不跨会话共享工作目录。
+18. Candidate 仅 active/repairing 的 author lease 可写；验证/评测/发布前先停止全部写入进程。
+19. 基础模型注册属于 Phase 1B；Suite 版本导入与门槛绑定属于 Phase 2，均由管理员管理。
+20. 现有聊天页面在 Phase 1B 完成 Agent 展示/默认值/空状态迁移，管理详情与训练工作台在 Phase 1D 提供。
