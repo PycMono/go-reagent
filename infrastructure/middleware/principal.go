@@ -6,6 +6,7 @@ import (
 
 	"github.com/PycMono/go-context-sdk/bizctx"
 	"github.com/PycMono/go-reagent/application/identity"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,6 +18,12 @@ func HostPrincipal(auth identity.Authenticator) (gin.HandlerFunc, error) {
 	}
 	return func(c *gin.Context) {
 		p, err := auth.Authenticate(c.Request)
+		if errors.Is(err, commonerrors.ErrForbidden) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"code": commonerrors.ErrForbidden.Code(), "msg": commonerrors.ErrForbidden.Message(), "data": nil,
+			})
+			return
+		}
 		if err != nil || p.Validate() != nil {
 			rejectPrincipal(c)
 			return
