@@ -12,12 +12,10 @@ func makeCall(id, name, args string) ai.ToolCall {
 	return ai.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}
 }
 
-func makeResult(call ai.ToolCall, text string) toolexec.Result {
-	return toolexec.Result{
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
-		Content:    []ai.ContentBlock{ai.TextBlock(text)},
-	}
+func makeResult(call ai.ToolCall, text string) toolexec.Event {
+	return toolexec.NewEndEvent(call, ai.ToolOutput{
+		Content: []ai.ContentBlock{ai.TextBlock(text)},
+	}, false, "")
 }
 
 // 1. JSON object key 顺序和无意义空白不同，Call signature 相同。
@@ -75,12 +73,12 @@ func TestOutcomeSignatureSensitivity(t *testing.T) {
 	sig := callSignature(call)
 	base := makeResult(call, "ok")
 
-	changed := []toolexec.Result{
-		{ToolCallID: "1", ToolName: "tool", Content: []ai.ContentBlock{ai.TextBlock("ok")}, IsError: true},
-		{ToolCallID: "1", ToolName: "tool", Content: []ai.ContentBlock{ai.TextBlock("ok")}, ErrorCode: "tool_timeout"},
-		{ToolCallID: "1", ToolName: "tool", Content: []ai.ContentBlock{ai.TextBlock("different")}},
-		{ToolCallID: "1", ToolName: "tool", Content: []ai.ContentBlock{ai.TextBlock("a"), ai.TextBlock("b")}},
-		{ToolCallID: "1", ToolName: "tool", Content: []ai.ContentBlock{{Type: "image", Text: "ok"}}},
+	changed := []toolexec.Event{
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("ok")}, IsError: true},
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("ok")}, ErrorCode: "tool_timeout"},
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("different")}},
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("a"), ai.TextBlock("b")}},
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{{Type: "image", Text: "ok"}}},
 	}
 	baseOutcome := outcomeSignature(sig, base)
 	for i, result := range changed {
@@ -90,13 +88,13 @@ func TestOutcomeSignatureSensitivity(t *testing.T) {
 	}
 }
 
-// 6. Details、ToolCallID 等易变元数据变化不改变 Outcome signature。
+// 6. Details、Call.ID 等易变元数据变化不改变 Outcome signature。
 func TestOutcomeSignatureIgnoresVolatileMetadata(t *testing.T) {
 	call := makeCall("1", "tool", `{"a":1}`)
 	sig := callSignature(call)
 	a := makeResult(call, "ok")
 	b := makeResult(call, "ok")
-	b.ToolCallID = "another-id"
+	b.Call.ID = "another-id"
 	b.Details = map[string]any{"pid": 12345, "duration_ms": 42, "ts": "2026-08-25T00:00:00Z"}
 	if outcomeSignature(sig, a) != outcomeSignature(sig, b) {
 		t.Fatal("volatile metadata must not change outcome signature")
@@ -108,15 +106,15 @@ func TestOutcomeSignatureIgnoresVolatileMetadata(t *testing.T) {
 func TestOutcomeSignatureNoDelimiterCollision(t *testing.T) {
 	call := makeCall("1", "tool", `{"a":1}`)
 	sig := callSignature(call)
-	two := toolexec.Result{ToolCallID: "1", ToolName: "tool",
+	two := toolexec.Event{Phase: toolexec.EventEnd, Call: call,
 		Content: []ai.ContentBlock{ai.TextBlock("a"), ai.TextBlock("b")}}
-	one := toolexec.Result{ToolCallID: "1", ToolName: "tool",
+	one := toolexec.Event{Phase: toolexec.EventEnd, Call: call,
 		Content: []ai.ContentBlock{ai.TextBlock("a\x00b")}}
 	if outcomeSignature(sig, two) == outcomeSignature(sig, one) {
 		t.Fatal("encoding must be unambiguous against NUL injection")
 	}
-	empty := toolexec.Result{ToolCallID: "1", ToolName: "tool", Content: nil}
-	emptyText := toolexec.Result{ToolCallID: "1", ToolName: "tool",
+	empty := toolexec.Event{Phase: toolexec.EventEnd, Call: call, Content: nil}
+	emptyText := toolexec.Event{Phase: toolexec.EventEnd, Call: call,
 		Content: []ai.ContentBlock{ai.TextBlock("")}}
 	if outcomeSignature(sig, empty) == outcomeSignature(sig, emptyText) {
 		t.Fatal("nil content and one empty block must differ")

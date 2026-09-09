@@ -65,15 +65,15 @@ func callSignature(call ai.ToolCall) signature {
 // [Text("a"), Text("b")] 与 [Text("a\x00b")] 不会碰撞；禁止用分隔符直接
 // 拼接任意文本。Details、Usage、duration、PID、timestamp、ToolCallID 等
 // 易变元数据不纳入。
-func outcomeSignature(callSig signature, result toolexec.Result) signature {
-	content := make([][]string, 0, len(result.Content))
-	for _, block := range result.Content {
+func outcomeSignature(callSig signature, event toolexec.Event) signature {
+	content := make([][]string, 0, len(event.Content))
+	for _, block := range event.Content {
 		content = append(content, []string{string(block.Type), block.Text})
 	}
 	canonical, err := json.Marshal([]any{
 		hex.EncodeToString(callSig[:]),
-		result.IsError,
-		string(result.ErrorCode),
+		event.IsError,
+		string(event.ErrorCode),
 		content,
 	})
 	if err != nil {

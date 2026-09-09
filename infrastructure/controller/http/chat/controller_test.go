@@ -234,10 +234,9 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
 		listener.OnEvent(ctx, pi.NewMessageEndEvent(ai.Message{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{skillCall}}))
 		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(skillCall)))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(skillCall, toolexec.Result{
-			ToolCallID: skillCall.ID, ToolName: skillCall.Name,
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(skillCall, ai.ToolOutput{
 			Content: []ai.ContentBlock{ai.TextBlock("private skill instructions")},
-		})))
+		}, false, "")))
 
 		fileCall := ai.ToolCall{ID: "call-file", Name: "read", Arguments: []byte(`{"path":"README.md"}`)}
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
@@ -246,10 +245,9 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewUpdateEvent(fileCall, ai.ToolUpdate{
 			Content: []ai.ContentBlock{ai.TextBlock("private streamed file body")}, Details: "private details",
 		})))
-		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(fileCall, toolexec.Result{
-			ToolCallID: fileCall.ID, ToolName: fileCall.Name,
+		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(fileCall, ai.ToolOutput{
 			Content: []ai.ContentBlock{ai.TextBlock("private file body")},
-		})))
+		}, false, "")))
 		return pi.RunResult{}, nil
 	})
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})

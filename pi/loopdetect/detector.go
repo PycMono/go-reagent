@@ -221,15 +221,16 @@ func (d *Detector) commitBatch(batch []signature) {
 // record 实现事实记账：对齐校验失败时不修改任何状态（不变量由 Loop 保证，
 // 此处仅为防御性兜底）。结果变化代表进展：重置 stable streak 为 1 并清除
 // 该 signature 的 warning 抑制状态；其他 signature 的状态不受影响。
-func (d *Detector) record(calls ai.ToolCalls, results []toolexec.Result) {
+func (d *Detector) record(calls ai.ToolCalls, events []toolexec.Event) {
 	if d.disabled {
 		return
 	}
-	if len(calls) != len(results) {
+	if len(calls) != len(events) {
 		return
 	}
 	for index := range calls {
-		if calls[index].ID != results[index].ToolCallID || calls[index].Name != results[index].ToolName {
+		if events[index].Phase != toolexec.EventEnd ||
+			calls[index].ID != events[index].Call.ID || calls[index].Name != events[index].Call.Name {
 			return
 		}
 	}
@@ -239,7 +240,7 @@ func (d *Detector) record(calls ai.ToolCalls, results []toolexec.Result) {
 			continue
 		}
 		sig := callSignature(call)
-		outcome := outcomeSignature(sig, results[index])
+		outcome := outcomeSignature(sig, events[index])
 
 		state, ok := d.stable[sig]
 		if ok && state.outcome == outcome {

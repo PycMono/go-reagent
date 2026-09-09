@@ -62,16 +62,12 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 			return result, false, true
 		case pi.AgentEventToolEnd:
 			result.Type = vo.RunEventToolCompleted
-			if event.Tool.Result != nil {
-				result.Tool.ID = event.Tool.Result.ToolCallID
-				result.Tool.Name = event.Tool.Result.ToolName
-				if !isReadTool(event.Tool.Call.Name) {
-					result.Tool.Content = mapAIContent(event.Tool.Result.Content)
-					result.Tool.Details = event.Tool.Result.Details
-				}
-				result.Tool.IsError = event.Tool.Result.IsError
-				result.Tool.ErrorCode = string(event.Tool.Result.ErrorCode)
+			if !isReadTool(event.Tool.Call.Name) {
+				result.Tool.Content = mapAIContent(event.Tool.Content)
+				result.Tool.Details = event.Tool.Details
 			}
+			result.Tool.IsError = event.Tool.IsError
+			result.Tool.ErrorCode = string(event.Tool.ErrorCode)
 			return result, true, true
 		}
 	case pi.AgentEventMessageStart:

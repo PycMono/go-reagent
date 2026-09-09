@@ -84,9 +84,9 @@ func (l *terminalListener) OnEvent(_ context.Context, event pi.AgentEvent) {
 			duration = fmt.Sprintf("（%s）", l.clock().Sub(start).Round(time.Millisecond))
 			delete(l.toolStarts, event.Tool.Call.ID)
 		}
-		if event.Tool.Result != nil && event.Tool.Result.IsError {
+		if event.Tool.IsError {
 			fmt.Fprintf(l.stderr, "❌ %s%s %s\n", event.Tool.Call.Name, duration,
-				truncate(resultText(event.Tool.Result.Content), 200))
+				truncate(resultText(event.Tool.Content), 200))
 			return
 		}
 		fmt.Fprintf(l.stderr, "✅ %s%s\n", event.Tool.Call.Name, duration)
