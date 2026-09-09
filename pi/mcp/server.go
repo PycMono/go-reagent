@@ -90,7 +90,8 @@ func newServerExtension(options ServerOptions, root tools.Root, runner sandbox.R
 			resolvedEnv[key] = value
 		}
 
-		if runner.Policy().Backend == "host" {
+		policy := runner.Policy()
+		if policy.Backend == "host" && policy.WriteMode == "all" {
 			childEnv, err := sandbox.HostPayloadEnv(resolvedEnv)
 			if err != nil {
 				return nil, err

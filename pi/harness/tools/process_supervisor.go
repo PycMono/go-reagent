@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -197,14 +196,9 @@ func (s *ProcessSupervisor) payloadEnv(overrides map[string]string) ([]string, e
 	for _, key := range keys {
 		extras = append(extras, key+"="+overrides[key])
 	}
-	var tmpDir string
-	switch policy.Backend {
-	case "bubblewrap":
-		tmpDir = "/tmp"
-	case "seatbelt":
-		tmpDir = filepath.Join(s.workspace.path, ".tmp")
-	default:
-		return nil, fmt.Errorf("未知 Runner 后端 %q", policy.Backend)
+	tmpDir, err := sandbox.PayloadTmpDir(policy, s.workspace.path)
+	if err != nil {
+		return nil, err
 	}
 	return sandbox.BuildSandboxPayloadEnv(s.workspace.path, tmpDir, extras)
 }

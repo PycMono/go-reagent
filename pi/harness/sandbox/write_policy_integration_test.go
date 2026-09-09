@@ -11,7 +11,11 @@ import (
 
 func restrictedPolicy(t *testing.T) *workspacepolicy.Normalized {
 	t.Helper()
-	n, e := workspacepolicy.Normalize(t.TempDir(), workspacepolicy.Policy{WriteMode: workspacepolicy.Restricted, WritablePrefixes: []string{"scratch space", ".tmp"}})
+	root := filepath.Join(t.TempDir(), "workspace with spaces")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	n, e := workspacepolicy.Normalize(root, workspacepolicy.Policy{WriteMode: workspacepolicy.Restricted, WritablePrefixes: []string{"scratch space", ".tmp"}})
 	if e != nil {
 		t.Fatal(e)
 	}

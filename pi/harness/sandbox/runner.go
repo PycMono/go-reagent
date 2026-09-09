@@ -153,6 +153,26 @@ func Env(workspaceRoot, tmpDir string) []string {
 	}
 }
 
+// PayloadTmpDir returns the process-visible temporary directory declared by
+// the effective policy. Backends created before write policies existed may
+// omit TmpDir only when they retain unrestricted (all) workspace writes.
+func PayloadTmpDir(policy Policy, workspaceRoot string) (string, error) {
+	if policy.TmpDir != "" {
+		return policy.TmpDir, nil
+	}
+	if policy.WriteMode != "all" {
+		return "", fmt.Errorf("%w: %s runner missing TmpDir for %s writes", ErrWritePolicyUnsupported, policy.Backend, policy.WriteMode)
+	}
+	switch policy.Backend {
+	case "bubblewrap":
+		return "/tmp", nil
+	case "seatbelt":
+		return filepath.Join(workspaceRoot, ".tmp"), nil
+	default:
+		return "", fmt.Errorf("unknown sandbox backend %q", policy.Backend)
+	}
+}
+
 var contractKeys = map[string]struct{}{"PATH": {}, "HOME": {}, "TMPDIR": {}}
 
 // BuildSandboxPayloadEnv 合并基础项与外部输入，契约变量禁止覆盖。

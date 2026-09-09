@@ -81,16 +81,18 @@ func TestProcessSupervisorSandboxPayloadDoesNotInheritHostEnvironment(t *testing
 	root := t.TempDir()
 	for _, tt := range []struct {
 		backend string
-		tmpDir  string
 	}{
-		{backend: "seatbelt", tmpDir: filepath.Join(root, ".tmp")},
-		{backend: "bubblewrap", tmpDir: "/tmp"},
+		{backend: "seatbelt"},
+		{backend: "bubblewrap"},
 	} {
+		tmpDir := filepath.Join(root, ".tmp")
 		supervisor := &ProcessSupervisor{
 			workspace: &Workspace{path: root},
 			runner: policyRunner{policy: sandbox.Policy{
-				Backend: tt.backend,
-				Network: "allow",
+				Backend:   tt.backend,
+				Network:   "allow",
+				WriteMode: "restricted",
+				TmpDir:    tmpDir,
 			}},
 		}
 		env, err := supervisor.payloadEnv(map[string]string{"EXPLICIT": "ok"})
@@ -101,8 +103,20 @@ func TestProcessSupervisorSandboxPayloadDoesNotInheritHostEnvironment(t *testing
 		if strings.Contains(joined, "REAGENT_HOST_SECRET=") {
 			t.Fatalf("%s 泄露宿主环境: %v", tt.backend, env)
 		}
-		if !strings.Contains(joined, "EXPLICIT=ok") || !strings.Contains(joined, "TMPDIR="+tt.tmpDir) {
+		if !strings.Contains(joined, "EXPLICIT=ok") || !strings.Contains(joined, "TMPDIR="+tmpDir) {
 			t.Fatalf("%s payload 不完整: %v", tt.backend, env)
+		}
+	}
+}
+
+func TestProcessSupervisorSandboxPayloadRejectsContractOverrides(t *testing.T) {
+	root := t.TempDir()
+	supervisor := &ProcessSupervisor{workspace: &Workspace{path: root}, runner: policyRunner{policy: sandbox.Policy{
+		Backend: "seatbelt", WriteMode: "restricted", TmpDir: filepath.Join(root, ".tmp"),
+	}}}
+	for _, key := range []string{"HOME", "PATH", "TMPDIR"} {
+		if _, err := supervisor.payloadEnv(map[string]string{key: "/override"}); err == nil {
+			t.Fatalf("contract variable %s override accepted", key)
 		}
 	}
 }
