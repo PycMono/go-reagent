@@ -27,7 +27,7 @@ func sandboxBuildCommand(runner sandbox.Runner, workspaceRoot string, options Se
 		return nil, fmt.Errorf("mcp server %q cwd 被拒: %w", options.Name, err)
 	}
 
-	tmpDir, err := sandboxTmpDir(runner.Policy().Backend, canonicalRoot)
+	tmpDir, err := sandbox.PayloadTmpDir(runner.Policy(), canonicalRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +55,4 @@ func environmentEntries(values map[string]string) []string {
 		entries = append(entries, key+"="+values[key])
 	}
 	return entries
-}
-
-// sandboxTmpDir 返回所选后端的 TMPDIR 策略（§5.4）；host 不走此路径。
-func sandboxTmpDir(backend, workspaceRoot string) (string, error) {
-	switch backend {
-	case "bubblewrap":
-		return "/tmp", nil
-	case "seatbelt":
-		return filepath.Join(workspaceRoot, ".tmp"), nil
-	default:
-		return "", fmt.Errorf("未知沙箱后端 %q", backend)
-	}
 }

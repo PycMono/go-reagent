@@ -2,14 +2,17 @@ package conversation_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	sqlsdk "github.com/PycMono/go-mysql-sdk"
+	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/conversation"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
 	"github.com/PycMono/go-reagent/infrastructure"
+	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	goredis "github.com/redis/go-redis/v9"
@@ -23,10 +26,13 @@ func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
 	t.Cleanup(func() { _ = redisClient.Close() })
 	app := fxtest.New(t,
 		fx.Supply(cfg),
+		fx.Supply(pi.WorkDir(filepath.Join("..", "workspaces", "chat"))),
 		fx.Replace(fx.Annotate(redisClient, fx.As(new(goredis.UniversalClient)))),
 		fx.Provide(func() pi.Runner { return &registeredRuntimeFake{} }),
+		fx.Provide(agentprofiledriver.NewCatalog),
 		infrastructure.Register,
 		conversation.Register,
+		chatservice.Register,
 		fx.Invoke(func(sqlsdk.Provider, conversationrepo.IConversationRepository, conversation.Runner) {}),
 	)
 	app.RequireStart()

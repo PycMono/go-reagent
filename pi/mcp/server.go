@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
 )
+
+const constructionCleanupTimeout = 5 * time.Second
 
 // envReferencePattern 与 config 层的 ${NAME} 引用定义保持一致。
 var envReferencePattern = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
@@ -43,7 +47,8 @@ func New(opts []ServerOptions, root tools.Root, runner sandbox.Runner) (extensio
 	for _, options := range opts {
 		ext, err := newServerExtension(options, root, runner)
 		if err != nil {
-			return nil, fmt.Errorf("create MCP server extension %q: %w", options.Name, err)
+			createErr := fmt.Errorf("create MCP server extension %q: %w", options.Name, err)
+			return nil, errors.Join(createErr, closeExtensions(extensions))
 		}
 		extensions = append(extensions, ext)
 	}
@@ -90,7 +95,8 @@ func newServerExtension(options ServerOptions, root tools.Root, runner sandbox.R
 			resolvedEnv[key] = value
 		}
 
-		if runner.Policy().Backend == "host" {
+		policy := runner.Policy()
+		if policy.Backend == "host" && policy.WriteMode == "all" {
 			childEnv, err := sandbox.HostPayloadEnv(resolvedEnv)
 			if err != nil {
 				return nil, err
@@ -127,10 +133,38 @@ func newServerExtension(options ServerOptions, root tools.Root, runner sandbox.R
 		return nil, fmt.Errorf("mcp servers.transport %q 非法", options.Transport)
 	}
 
+	return finishServerExtension(options, transport)
+}
+
+func finishServerExtension(options ServerOptions, transport Transport) (_ extension.Extension, err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), constructionCleanupTimeout)
+		defer cancel()
+		err = errors.Join(err, transport.Close(ctx))
+	}()
 	return newExtension(extensionOptions{
 		Name:       options.Name,
 		Transport:  transport,
 		AllowTools: options.AllowTools,
 		ToolPrefix: options.ToolPrefix,
 	})
+}
+
+func closeExtensions(extensions extension.Extensions) error {
+	ctx, cancel := context.WithTimeout(context.Background(), constructionCleanupTimeout)
+	defer cancel()
+	var joined error
+	for index := len(extensions) - 1; index >= 0; index-- {
+		closer, ok := extensions[index].(extension.Closer)
+		if !ok {
+			continue
+		}
+		if err := closer.Close(ctx); err != nil {
+			joined = errors.Join(joined, fmt.Errorf("close extension %q: %w", extensions[index].Name(), err))
+		}
+	}
+	return joined
 }

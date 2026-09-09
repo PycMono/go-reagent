@@ -3,9 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
@@ -222,10 +224,11 @@ func buildToolsetAgent(t *testing.T, flags cliFlags) *pi.Agent {
 		workDir: workDir,
 	}
 	agent, err := pi.New(pi.Options{
-		WorkDir:    runtime.workDir,
-		Platform:   runtime.options,
-		AllowWrite: flags.allowWrite || flags.yolo,
-		AllowExec:  flags.allowExec || flags.yolo,
+		WorkDir:         runtime.workDir,
+		Platform:        runtime.options,
+		AllowWrite:      flags.allowWrite || flags.yolo,
+		AllowExec:       flags.allowExec || flags.yolo,
+		WorkspacePolicy: pi.WorkspacePolicy{WriteMode: pi.WorkspaceWriteAll},
 	})
 	if err != nil {
 		t.Fatalf("pi.New 失败: %v", err)
@@ -269,6 +272,49 @@ func TestToolsetTiers(t *testing.T) {
 				if names[notWant] {
 					t.Errorf("不应有工具 %q，当前: %v", notWant, names)
 				}
+			}
+		})
+	}
+}
+
+func TestCLIWorkspacePolicyDefaultsToAllOnlyWhenUnset(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		policy *config.WorkspacePolicyConfig
+		flags  cliFlags
+		mode   pi.WorkspaceWriteMode
+		prefix []string
+	}{
+		{name: "unset", mode: pi.WorkspaceWriteAll},
+		{name: "restricted write", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{"scratch"}}, flags: cliFlags{allowWrite: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{"scratch"}},
+		{name: "restricted exec", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{allowExec: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{".tmp", "scratch"}},
+		{name: "restricted yolo", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{yolo: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{".tmp", "scratch"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("instructions"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runtime := &runtimeConfig{workDir: workDir, options: providers.Options{ID: "fake", Protocol: providers.ProtocolOpenAI, BaseURL: "https://fake.test/", APIKey: "k", Model: "m", Pricing: &providers.Pricing{}}}
+			var cfg *config.Config
+			if tt.policy != nil {
+				cfg = &config.Config{CurrentPlatform: "fake", Platforms: []providers.Options{runtime.options}, Agent: config.AgentConfig{WorkspacePolicy: tt.policy}}
+			}
+			options, err := cliAgentOptions(runtime, cfg, tt.flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := options.WorkspacePolicy
+			if got.WriteMode != tt.mode || !reflect.DeepEqual(got.WritablePrefixes, tt.prefix) {
+				t.Fatalf("policy = %+v, want mode %q prefixes %v", got, tt.mode, tt.prefix)
+			}
+			agent, err := pi.New(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := toolNames(agent)
+			if names["write"] != (tt.flags.allowWrite || tt.flags.yolo) || names["exec"] != (tt.flags.allowExec || tt.flags.yolo) {
+				t.Fatalf("tool registration = %v", names)
 			}
 		})
 	}

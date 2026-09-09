@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"slices"
+	"strings"
+
 	"go.uber.org/fx"
 
 	chatservice "github.com/PycMono/go-reagent/application/service/chat"
@@ -44,21 +48,44 @@ type appParams struct {
 // newApp 叠加应用层供数与服务器能力开关后一次调 pi.New，
 // 并把启动/停机序列挂进 fx Lifecycle。
 func newApp(lifecycle fx.Lifecycle, params appParams) (*pi.Agent, error) {
-	opts, err := params.Config.PIRuntimeOptions(string(params.WorkDir))
+	opts, err := serverAgentOptions(params)
 	if err != nil {
 		return nil, err
 	}
-	opts.Tools = params.ChatTools
-	opts.Notifiers = params.Notifiers
-	opts.AllowWrite = true
-	opts.AllowExec = true
-	opts.BuiltinSubagent = true
 	agent, err := pi.New(opts)
 	if err != nil {
 		return nil, err
 	}
 	lifecycle.Append(fx.Hook{OnStart: agent.Start, OnStop: agent.Stop})
 	return agent, nil
+}
+
+func serverAgentOptions(params appParams) (pi.Options, error) {
+	opts, err := params.Config.PIRuntimeOptions(string(params.WorkDir))
+	if err != nil {
+		return pi.Options{}, err
+	}
+	opts.Tools = params.ChatTools
+	opts.Notifiers = params.Notifiers
+	opts.AllowExec = true
+	opts.AllowWrite = false
+	opts.BuiltinSubagent = true
+	if params.Config.Agent.WorkspacePolicy == nil {
+		opts.WorkspacePolicy = pi.WorkspacePolicy{
+			WriteMode:        pi.WorkspaceWriteRestricted,
+			WritablePrefixes: []string{".tmp", "scratch"},
+		}
+		return opts, nil
+	}
+	if opts.WorkspacePolicy.WriteMode != pi.WorkspaceWriteRestricted || !slices.Contains(opts.WorkspacePolicy.WritablePrefixes, ".tmp") {
+		return pi.Options{}, fmt.Errorf("server agent workspace policy must be restricted and include .tmp")
+	}
+	for _, prefix := range opts.WorkspacePolicy.WritablePrefixes {
+		if prefix != ".tmp" && prefix != "scratch" && !strings.HasPrefix(prefix, "scratch/") {
+			return pi.Options{}, fmt.Errorf("server agent workspace prefix %q is not allowed", prefix)
+		}
+	}
+	return opts, nil
 }
 
 // newAgentRunner 兼容既有消费端（conversation 依赖 pi.Runner 接口）。

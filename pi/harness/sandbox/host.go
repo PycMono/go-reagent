@@ -15,10 +15,10 @@ import (
 type HostRunner struct{ policy Policy }
 
 func NewHostRunner() *HostRunner {
-	return &HostRunner{policy: Policy{Backend: "host", Network: "allow"}}
+	return &HostRunner{policy: Policy{Backend: "host", Network: "allow", WriteMode: "all"}}
 }
 
-func (r *HostRunner) Policy() Policy { return r.policy }
+func (r *HostRunner) Policy() Policy { return clonePolicy(r.policy) }
 
 func (r *HostRunner) BuildShell(command string, spec CommandSpec) (*exec.Cmd, error) {
 	if command == "" {

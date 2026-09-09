@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
@@ -16,6 +17,7 @@ type Config struct {
 	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
 	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`
+	Identity        IdentityConfig      `json:"identity" yaml:"identity" toml:"identity"`
 	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	MCP             MCPConfig           `json:"mcp" yaml:"mcp" toml:"mcp"`
 	Notice          NoticeConfig        `json:"notice" yaml:"notice" toml:"notice"`
@@ -74,7 +76,8 @@ type ObservabilityContentConfig struct {
 }
 
 type AgentConfig struct {
-	WorkspaceDir string `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	WorkspaceDir    string                 `json:"workspace_dir" yaml:"workspace_dir" toml:"workspace_dir"`
+	WorkspacePolicy *WorkspacePolicyConfig `json:"workspace_policy" yaml:"workspace_policy" toml:"workspace_policy"`
 	// Limits 是运行预算；未配置（零值）的字段由 pi 层回填
 	// governor.DefaultLimits（20 轮 / $1 / 2M tokens），config 不填默认。
 	Limits governor.Limits `json:"limits" yaml:"limits" toml:"limits"`
@@ -82,6 +85,18 @@ type AgentConfig struct {
 	LoopDetection loopdetect.Config `json:"loop_detection" yaml:"loop_detection" toml:"loop_detection"`
 	// EnableContextPrune 显式启用主动上下文压缩的 L1 只读工具结果裁剪。
 	EnableContextPrune bool `json:"enable_context_prune" yaml:"enable_context_prune" toml:"enable_context_prune"`
+}
+
+type WorkspacePolicyConfig struct {
+	WriteMode        string   `json:"write_mode" yaml:"write_mode" toml:"write_mode"`
+	WritablePrefixes []string `json:"writable_prefixes" yaml:"writable_prefixes" toml:"writable_prefixes"`
+}
+
+func (config WorkspacePolicyConfig) PI() pi.WorkspacePolicy {
+	return pi.WorkspacePolicy{
+		WriteMode:        pi.WorkspaceWriteMode(config.WriteMode),
+		WritablePrefixes: append([]string(nil), config.WritablePrefixes...),
+	}
 }
 
 type MCPConfig struct {

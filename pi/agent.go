@@ -16,6 +16,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
+	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
 	pimcp "github.com/PycMono/go-reagent/pi/mcp"
 	"github.com/PycMono/go-reagent/pi/middleware"
@@ -62,27 +63,38 @@ func newProvider(config providers.Options) (ai.Provider, error) {
 // New 内部完成 pi 的全部初始化，调用顺序即启动时序约束：
 // Runner → Workspace/Supervisor → 工具 → Registry → 扩展 → Tool Runtime
 // → Provider 装饰链 → Loop → Agent → subagent 绑定。
-func New(opts Options) (*Agent, error) {
+func New(opts Options) (agent *Agent, err error) {
 	if opts.WorkDir == "" {
 		return nil, errors.New("pi: workdir is required")
 	}
+	normalized, needsProcess, err := normalizeWorkspaceOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	root := tools.Root(normalized.Root())
 	// Runner 由 pi 内部按平台选择沙箱后端，不允许外部注入。
-	runner, err := sandbox.NewRunner(opts.WorkDir)
+	runner, err := sandbox.NewRunnerWithPolicy(normalized.Root(), normalized, needsProcess)
 	if err != nil {
 		return nil, fmt.Errorf("pi: select sandbox runner: %w", err)
 	}
 
-	root := tools.Root(opts.WorkDir)
-	workspace, err := tools.NewWorkspace(root)
+	workspace, err := tools.NewWorkspaceWithPolicy(root, normalized)
 	if err != nil {
 		return nil, err
 	}
+	cleanup := constructionCleanup{workspace.Close}
+	defer func() {
+		if cleanup != nil {
+			err = errors.Join(err, cleanup.close())
+		}
+	}()
 	// 工具集：read 恒装，write/exec 按档位；应用层追加与 subagent 占位
 	// 亦在 Registry 构造时在册（binder 启动期校验）。
 	allTools := []ai.Tool{tools.NewReadTool(workspace)}
 	var supervisor *tools.ProcessSupervisor
 	if opts.AllowExec {
 		supervisor = tools.NewProcessSupervisor(workspace, runner)
+		cleanup = append(cleanup, supervisor.Close)
 		allTools = append(allTools, tools.NewExecTool(supervisor), tools.NewProcessTool(supervisor))
 	}
 	if opts.AllowWrite {
@@ -101,6 +113,7 @@ func New(opts Options) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pi: assemble MCP extensions: %w", err)
 	}
+	cleanup = append(cleanup, func() error { return closeExtensionsAfterConstruction(extensions) })
 	extRuntime, err := extension.NewRuntime(registry, extensions)
 	if err != nil {
 		return nil, err
@@ -117,9 +130,9 @@ func New(opts Options) (*Agent, error) {
 		WithLoopProviderIdentity(opts.Platform.ID, opts.Platform.Model),
 		WithLoopDetection(opts.LoopDetection))
 
-	composer := harness.NewPromptComposer(opts.WorkDir)
-	builder := harness.NewContextBuilder(composer, opts.WorkDir)
-	agent := &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: opts.Notifiers}
+	composer := harness.NewPromptComposer(normalized.Root())
+	builder := harness.NewContextBuilder(composer, normalized.Root())
+	agent = &Agent{builder: builder, loop: loop, toolRuntime: toolRuntime, notifiers: opts.Notifiers}
 
 	// 钩子顺序即启动顺序：Workspace/Supervisor 的清理钩子（OnStop-only）
 	// 先注册，扩展注册+freeze 其次，subagent 绑定显式排最后。
@@ -154,7 +167,52 @@ func New(opts Options) (*Agent, error) {
 			Platform:      opts.Platform,
 		})
 	}
+	cleanup = nil
 	return agent, nil
+}
+
+type constructionCleanup []func() error
+
+func (cleanup constructionCleanup) close() error {
+	var joined error
+	for index := len(cleanup) - 1; index >= 0; index-- {
+		joined = errors.Join(joined, cleanup[index]())
+	}
+	return joined
+}
+
+func closeExtensionsAfterConstruction(extensions extension.Extensions) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var joined error
+	for index := len(extensions) - 1; index >= 0; index-- {
+		closer, ok := extensions[index].(extension.Closer)
+		if !ok {
+			continue
+		}
+		if err := closer.Close(ctx); err != nil {
+			joined = errors.Join(joined, fmt.Errorf("close extension %q: %w", extensions[index].Name(), err))
+		}
+	}
+	return joined
+}
+
+func normalizeWorkspaceOptions(opts Options) (*workspacepolicy.Normalized, bool, error) {
+	needsProcess := opts.AllowExec
+	for _, server := range opts.MCPServers {
+		if server.Transport == "stdio" {
+			needsProcess = true
+		}
+	}
+	policy := opts.WorkspacePolicy
+	if policy.WriteMode == "" {
+		if opts.AllowWrite || needsProcess {
+			return nil, false, errors.New("pi: workspace policy must be explicit when write or process execution is enabled")
+		}
+		policy.WriteMode = WorkspaceWriteRestricted
+	}
+	normalized, err := workspacepolicy.Normalize(opts.WorkDir, policy)
+	return normalized, needsProcess, err
 }
 
 // ToolDefinitions 返回 Agent 当前注册的工具定义（诊断用）。
@@ -346,8 +404,9 @@ type Options struct {
 	Compaction      harness.CompactionConfig
 	LoopDetection   loopdetect.Config
 	// 内置 Coding 工具档位：read 恒装；write/exec 按能力开关。
-	AllowWrite bool
-	AllowExec  bool
+	AllowWrite      bool
+	AllowExec       bool
+	WorkspacePolicy WorkspacePolicy
 }
 
 // WorkDir 是 Agent 的工作区路径(由组合根供数)。
