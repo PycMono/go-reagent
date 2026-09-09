@@ -3,13 +3,11 @@ package harness
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 
 	logsdk "github.com/PycMono/go-logger-sdk"
 	"github.com/PycMono/go-reagent/pi/ai"
-	pierrors "github.com/PycMono/go-reagent/pi/errors"
 	"github.com/PycMono/go-reagent/pi/harness/skills"
 )
 
@@ -53,23 +51,18 @@ func (f *ContextBuilder) Build(
 	request ContextRequest,
 	definitions ai.ToolDefinitions,
 ) (Context, error) {
-	snapshot, err := skills.Discover(f.workDir)
+	workspace, err := loadWorkspaceSnapshot(ctx, f.workDir)
 	if err != nil {
-		return Context{}, fmt.Errorf("%w: 发现 Agent Skills 失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return Context{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return Context{}, fmt.Errorf("Agent 运行已取消: %w", err)
-	}
+	snapshot := workspace.skills
 
 	logSkillDiagnostics(ctx, snapshot.Diagnostics())
 	if !snapshot.Empty() && !definitions.Has("read") {
 		return Context{}, errors.New("agent runtime: required tool read is not registered")
 	}
 
-	systemMessage, promptReport, err := f.composer.Build(snapshot)
-	if err != nil {
-		return Context{}, err
-	}
+	systemMessage, promptReport := composePrompt(workspace.agents, snapshot)
 
 	if promptReport.Truncated {
 		logsdk.Warn(ctx, "[Context] Agent Skill Prompt 已截断",
