@@ -45,7 +45,7 @@ func NewSeatbeltRunner(sandboxExecPath, workspaceRoot string) (*SeatbeltRunner, 
 	}, nil
 }
 
-func (r *SeatbeltRunner) Policy() Policy { return r.policy }
+func (r *SeatbeltRunner) Policy() Policy { return clonePolicy(r.policy) }
 
 func (r *SeatbeltRunner) BuildShell(commandStr string, spec CommandSpec) (*exec.Cmd, error) {
 	workDir, err := r.validate(spec)

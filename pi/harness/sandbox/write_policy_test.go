@@ -93,3 +93,19 @@ func TestRestrictedProcessRequiresTmpPrefix(t *testing.T) {
 		t.Fatalf("rejected policy created .tmp or returned unexpected error: %v", err)
 	}
 }
+
+func TestNativeRunnerPolicyReturnsImmutablePrefixes(t *testing.T) {
+	want := []string{".tmp", "scratch"}
+	for name, runner := range map[string]Runner{
+		"seatbelt":   &SeatbeltRunner{policy: Policy{WritablePrefixes: append([]string(nil), want...)}},
+		"bubblewrap": &BubblewrapRunner{policy: Policy{WritablePrefixes: append([]string(nil), want...)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			returned := runner.Policy()
+			returned.WritablePrefixes[0] = "changed"
+			if got := runner.Policy().WritablePrefixes; !reflect.DeepEqual(got, want) {
+				t.Fatalf("Policy() returned mutable prefixes: %v", got)
+			}
+		})
+	}
+}

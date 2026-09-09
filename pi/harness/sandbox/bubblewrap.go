@@ -26,7 +26,7 @@ func NewBubblewrapRunner(bwrapPath, workspaceRoot string) (*BubblewrapRunner, er
 	}, nil
 }
 
-func (r *BubblewrapRunner) Policy() Policy { return r.policy }
+func (r *BubblewrapRunner) Policy() Policy { return clonePolicy(r.policy) }
 
 // bwrapWrapperEnv 是 bwrap 自身（PID 1）的环境，即 /proc/1/environ 的内容——
 // 必须最小化（§5.1 实证：wrapper 环境含密钥时 payload 可经此读到）。
