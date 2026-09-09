@@ -22,6 +22,9 @@ func (config *Config) normalizeAndValidate(options loadOptions) error {
 	if err := config.Agent.normalizeAndValidate(options); err != nil {
 		return err
 	}
+	if err := config.Identity.normalizeAndValidate(); err != nil {
+		return err
+	}
 	if err := config.MCP.normalizeAndValidate(); err != nil {
 		return err
 	}

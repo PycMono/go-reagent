@@ -7,6 +7,10 @@
     "write_timeout": 0,
     "secure_cookies": false
   },
+  "identity": {
+    "mode": "anonymous",
+    "tenant_id": "default"
+  },
   "agent": {
     "workspace_dir": "./workspaces/chat",
     "workspace_policy": {

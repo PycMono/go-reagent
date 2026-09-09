@@ -17,6 +17,7 @@ type Config struct {
 	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
 	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`
+	Identity        IdentityConfig      `json:"identity" yaml:"identity" toml:"identity"`
 	Agent           AgentConfig         `json:"agent" yaml:"agent" toml:"agent"`
 	MCP             MCPConfig           `json:"mcp" yaml:"mcp" toml:"mcp"`
 	Notice          NoticeConfig        `json:"notice" yaml:"notice" toml:"notice"`
