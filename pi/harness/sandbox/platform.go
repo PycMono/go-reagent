@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 )
 
 const probeTimeout = 10 * time.Second
@@ -16,6 +19,62 @@ const probeTimeout = 10 * time.Second
 // 直接返回错误，不降级为 Host。
 func NewRunner(workspaceRoot string) (Runner, error) {
 	return newRunnerForOS(runtime.GOOS, workspaceRoot, exec.LookPath)
+}
+
+// NewRunnerWithPolicy selects a runner without weakening the normalized
+// workspace write policy. Process-disabled work never probes a backend.
+func NewRunnerWithPolicy(root string, n *workspacepolicy.Normalized, needsProcess bool) (Runner, error) {
+	return newRunnerForOSWithPolicy(runtime.GOOS, root, exec.LookPath, n, needsProcess)
+}
+
+func newRunnerForOSWithPolicy(goos, root string, lookup func(string) (string, error), n *workspacepolicy.Normalized, needsProcess bool) (Runner, error) {
+	if n == nil {
+		return nil, fmt.Errorf("%w: nil workspace policy", ErrWritePolicyUnsupported)
+	}
+	if !needsProcess {
+		return &disabledRunner{policy: policyFromNormalized("disabled", "deny", policyTmpDir(n), n)}, nil
+	}
+	if n.Mode() == workspacepolicy.Restricted {
+		if !hasTmpPrefix(n.Prefixes()) {
+			return nil, fmt.Errorf("%w: restricted process execution requires explicit .tmp writable prefix", ErrWritePolicyUnsupported)
+		}
+		// Native restricted process runners are introduced by Task 4.
+		return nil, fmt.Errorf("%w: restricted process execution on %s", ErrWritePolicyUnsupported, goos)
+	}
+
+	runner, err := newRunnerForOS(goos, root, lookup)
+	if err != nil {
+		return nil, err
+	}
+	applyPolicy(runner, n)
+	return runner, nil
+}
+
+func hasTmpPrefix(prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if prefix == ".tmp" {
+			return true
+		}
+	}
+	return false
+}
+
+func policyTmpDir(n *workspacepolicy.Normalized) string {
+	if n.Mode() == workspacepolicy.Restricted && hasTmpPrefix(n.Prefixes()) {
+		return filepath.Join(n.Root(), ".tmp")
+	}
+	return ""
+}
+
+func applyPolicy(runner Runner, n *workspacepolicy.Normalized) {
+	switch r := runner.(type) {
+	case *HostRunner:
+		r.policy = policyFromNormalized("host", "allow", "", n)
+	case *SeatbeltRunner:
+		r.policy = policyFromNormalized("seatbelt", "allow", r.tmpDir, n)
+	case *BubblewrapRunner:
+		r.policy = policyFromNormalized("bubblewrap", "allow", "/tmp", n)
+	}
 }
 
 func newRunnerForOS(goos, workspaceRoot string, lookPath func(string) (string, error)) (Runner, error) {

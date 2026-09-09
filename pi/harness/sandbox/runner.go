@@ -11,12 +11,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 )
 
 // Policy SandboxPolicy 是后端的生效策略，用于工具描述、CLI banner 与 Details。
 type Policy struct {
-	Backend string // host / seatbelt / bubble wrap
-	Network string // allow / deny
+	Backend          string // host / seatbelt / bubble wrap / disabled
+	Network          string // allow / deny
+	WriteMode        string
+	WritablePrefixes []string
+	TmpDir           string
 }
 
 // CommandSpec 描述一次命令执行的共享约束。
@@ -33,9 +38,26 @@ type CommandSpec struct {
 
 // Build 层错误（策略拒绝，调用方转结构化启动错误）。
 var (
-	ErrEnvContractRejected = errors.New("env_contract_rejected")
-	ErrWorkDirRejected     = errors.New("workdir_rejected")
+	ErrEnvContractRejected    = errors.New("env_contract_rejected")
+	ErrWorkDirRejected        = errors.New("workdir_rejected")
+	ErrWritePolicyUnsupported = errors.New("workspace_write_policy_unsupported")
+	ErrProcessDisabled        = errors.New("process_disabled")
 )
+
+func policyFromNormalized(backend, network, tmpDir string, n *workspacepolicy.Normalized) Policy {
+	return Policy{
+		Backend:          backend,
+		Network:          network,
+		WriteMode:        string(n.Mode()),
+		WritablePrefixes: n.Prefixes(),
+		TmpDir:           tmpDir,
+	}
+}
+
+func clonePolicy(policy Policy) Policy {
+	policy.WritablePrefixes = append([]string(nil), policy.WritablePrefixes...)
+	return policy
+}
 
 // ProcessPipeWaitDelay 有界关闭遗留管道：直接子进程退出后，setsid 残留进程
 // 若继承 stdout/stderr 管道，Wait() 会因等不到 EOF 永久阻塞。触发语义分两档：
