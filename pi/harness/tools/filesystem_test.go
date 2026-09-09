@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
@@ -179,6 +180,50 @@ func TestNewWorkspaceWithPolicyValidatesPolicyAndLegacyAllowsAllWrites(t *testin
 	}
 }
 
+func TestNewWorkspaceWithPolicyRejectsPrefixLinksCreatedAfterNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		link   string
+	}{
+		{name: "final prefix", prefix: "scratch", link: "scratch"},
+		{name: "prefix ancestor", prefix: "cache/work", link: "cache"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			readonly := filepath.Join(root, "readonly")
+			if err := os.Mkdir(readonly, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			bundle := filepath.Join(readonly, "bundle")
+			writeTestFile(t, bundle, []byte("original"))
+			n, err := workspacepolicy.Normalize(root, workspacepolicy.Policy{
+				WriteMode: workspacepolicy.Restricted, WritablePrefixes: []string{tc.prefix},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := directoryNames(t, readonly)
+			if err := os.Symlink("readonly", filepath.Join(root, tc.link)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+
+			w, err := NewWorkspaceWithPolicy(Root(root), n)
+			if w != nil {
+				_ = w.Close()
+			}
+			if err == nil {
+				t.Fatal("NewWorkspaceWithPolicy accepted link introduced after normalization")
+			}
+			assertFileContents(t, bundle, "original")
+			after := directoryNames(t, readonly)
+			if !slices.Equal(after, before) {
+				t.Fatalf("readonly directory changed: before=%v after=%v", before, after)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRejectsNonRelativePathsForEveryFileOperation(t *testing.T) {
 	workspace := newWorkspaceForTest(t, t.TempDir())
 	for _, path := range []string{"/tmp/x", "../x", `C:\\x`, `\\\\server\\share`} {
@@ -317,4 +362,17 @@ func assertFileContents(t *testing.T, path, want string) {
 	if string(got) != want {
 		t.Fatalf("%s = %q, want %q", path, got, want)
 	}
+}
+
+func directoryNames(t *testing.T, path string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Name()
+	}
+	return names
 }

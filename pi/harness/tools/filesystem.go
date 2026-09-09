@@ -63,11 +63,7 @@ func NewWorkspaceWithPolicy(workDir Root, policy *workspacepolicy.Normalized) (*
 
 	workspace.writeRoots = make(map[string]*os.Root, len(policy.Prefixes()))
 	for _, prefix := range policy.Prefixes() {
-		if err := workspace.root.MkdirAll(prefix, 0o755); err != nil {
-			_ = workspace.closeRoots()
-			return nil, fmt.Errorf("创建可写目录 %q 失败: %w", prefix, err)
-		}
-		root, err := workspace.root.OpenRoot(prefix)
+		root, err := openTrustedPrefix(workspace.root, prefix)
 		if err != nil {
 			_ = workspace.closeRoots()
 			return nil, fmt.Errorf("打开可写目录 %q 失败: %w", prefix, err)
@@ -76,6 +72,63 @@ func NewWorkspaceWithPolicy(workDir Root, policy *workspacepolicy.Normalized) (*
 		workspace.writeOrder = append(workspace.writeOrder, prefix)
 	}
 	return workspace, nil
+}
+
+func openTrustedPrefix(workspaceRoot *os.Root, prefix string) (*os.Root, error) {
+	parent := workspaceRoot
+	var opened []*os.Root
+	closeOpened := func() {
+		for i := len(opened) - 1; i >= 0; i-- {
+			_ = opened[i].Close()
+		}
+	}
+
+	for _, component := range strings.Split(prefix, "/") {
+		before, err := parent.Lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := parent.Mkdir(component, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+				closeOpened()
+				return nil, err
+			}
+			before, err = parent.Lstat(component)
+		}
+		if err != nil {
+			closeOpened()
+			return nil, err
+		}
+		if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+			closeOpened()
+			return nil, fmt.Errorf("component %q is not a trusted directory: %w", component, fs.ErrPermission)
+		}
+
+		child, err := parent.OpenRoot(component)
+		if err != nil {
+			closeOpened()
+			return nil, err
+		}
+		after, afterErr := parent.Lstat(component)
+		bound, boundErr := child.Stat(".")
+		if afterErr != nil || boundErr != nil || after.Mode()&os.ModeSymlink != 0 ||
+			!after.IsDir() || !os.SameFile(before, after) || !os.SameFile(after, bound) {
+			_ = child.Close()
+			closeOpened()
+			if afterErr != nil {
+				return nil, afterErr
+			}
+			if boundErr != nil {
+				return nil, boundErr
+			}
+			return nil, fmt.Errorf("component %q changed while opening: %w", component, fs.ErrPermission)
+		}
+		opened = append(opened, child)
+		parent = child
+	}
+
+	result := opened[len(opened)-1]
+	for i := len(opened) - 2; i >= 0; i-- {
+		_ = opened[i].Close()
+	}
+	return result, nil
 }
 
 func openWorkspace(workDir Root) (*Workspace, error) {
