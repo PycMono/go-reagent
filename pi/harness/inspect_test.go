@@ -83,7 +83,7 @@ func TestInspectWorkspaceAndContextRejectInvalidAgents(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "over 256 KiB", setup: writeAgentsFixture([]byte(strings.Repeat("a", 256*1024+1)))},
+		{name: "over 1 MiB", setup: writeAgentsFixture([]byte(strings.Repeat("a", 1024*1024+1)))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -99,6 +99,33 @@ func TestInspectWorkspaceAndContextRejectInvalidAgents(t *testing.T) {
 				t.Fatalf("Build() error = %v, want ErrWorkspaceInvalid", buildErr)
 			}
 		})
+	}
+}
+
+func TestInspectWorkspaceAndContextAcceptOneMiBAgents(t *testing.T) {
+	root := t.TempDir()
+	agents := []byte(strings.Repeat("a", 1024*1024))
+	writeAgentsFixture(agents)(t, root)
+
+	report, err := InspectWorkspace(context.Background(), root)
+	if err != nil {
+		t.Fatalf("InspectWorkspace() error = %v", err)
+	}
+	wantDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(agents))
+	if report.AgentInstructionsDigest != wantDigest {
+		t.Fatalf("digest = %q, want %q", report.AgentInstructionsDigest, wantDigest)
+	}
+	builder := NewContextBuilder(NewPromptComposer(root), root)
+	built, err := builder.Build(context.Background(), ContextRequest{Input: contextTestUserMessage("hello")}, nil)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	text, err := built.Messages[0].Content.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, string(agents)) {
+		t.Fatal("system prompt does not contain the complete 1 MiB AGENTS.md")
 	}
 }
 

@@ -25,7 +25,7 @@ const corePrompt = `# Agent Runtime 核心纪律
 6. 最终回答必须以当前上下文、Skill 指令和真实工具结果为依据。
 `
 
-const maxAgentsFileBytes = 256 * 1024
+const maxAgentsFileBytes = 1024 * 1024
 
 // PromptComposer builds one System Prompt from the current workspace state.
 type PromptComposer struct {
@@ -102,7 +102,7 @@ func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is not a regular file", name)
 	}
 	if info.Size() > maxAgentsFileBytes {
-		return nil, fmt.Errorf("%s exceeds 256 KiB", name)
+		return nil, fmt.Errorf("%s exceeds 1 MiB", name)
 	}
 	file, err := root.Open(name)
 	if err != nil {
@@ -114,7 +114,7 @@ func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 		return nil, err
 	}
 	if len(content) > maxAgentsFileBytes {
-		return nil, fmt.Errorf("%s exceeds 256 KiB", name)
+		return nil, fmt.Errorf("%s exceeds 1 MiB", name)
 	}
 	return content, nil
 }
