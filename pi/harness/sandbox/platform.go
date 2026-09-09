@@ -38,16 +38,31 @@ func newRunnerForOSWithPolicy(goos, root string, lookup func(string) (string, er
 		if !hasTmpPrefix(n.Prefixes()) {
 			return nil, fmt.Errorf("%w: restricted process execution requires explicit .tmp writable prefix", ErrWritePolicyUnsupported)
 		}
-		// Native restricted process runners are introduced by Task 4.
-		return nil, fmt.Errorf("%w: restricted process execution on %s", ErrWritePolicyUnsupported, goos)
-	}
 
-	runner, err := newRunnerForOS(goos, root, lookup)
-	if err != nil {
-		return nil, err
 	}
-	applyPolicy(runner, n)
-	return runner, nil
+	switch goos {
+	case "darwin":
+		path, err := lookup("/usr/bin/sandbox-exec")
+		if err != nil {
+			return nil, err
+		}
+		return NewSeatbeltRunnerWithPolicy(path, root, n)
+	case "linux":
+		path, err := lookup("bwrap")
+		if err != nil {
+			return nil, err
+		}
+		return NewBubblewrapRunnerWithPolicy(path, root, n)
+	case "windows":
+		if n.Mode() == workspacepolicy.Restricted {
+			return nil, fmt.Errorf("%w: restricted Windows processes", ErrWritePolicyUnsupported)
+		}
+		r := NewHostRunner()
+		applyPolicy(r, n)
+		return r, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported OS %s", ErrWritePolicyUnsupported, goos)
+	}
 }
 
 func hasTmpPrefix(prefixes []string) bool {
@@ -122,7 +137,7 @@ func ProbeBubblewrap(ctx context.Context, runner *BubblewrapRunner) error {
 	defer cancel()
 	cmd, err := runner.BuildShell("exit 0", CommandSpec{
 		WorkDir:    runner.workspaceRoot,
-		PayloadEnv: Env(runner.workspaceRoot, "/tmp"),
+		PayloadEnv: Env(runner.workspaceRoot, runner.Policy().TmpDir),
 	})
 	if err != nil {
 		return err
@@ -148,7 +163,7 @@ func ProbeSeatbelt(ctx context.Context, runner *SeatbeltRunner) error {
 	defer cancel()
 	cmd, err := runner.BuildShell("exit 0", CommandSpec{
 		WorkDir:    runner.workspaceRoot,
-		PayloadEnv: Env(runner.workspaceRoot, runner.tmpDir),
+		PayloadEnv: Env(runner.workspaceRoot, runner.Policy().TmpDir),
 	})
 	if err != nil {
 		return err
