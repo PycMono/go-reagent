@@ -9,6 +9,10 @@
   },
   "agent": {
     "workspace_dir": "./workspaces/chat",
+    "workspace_policy": {
+      "write_mode": "restricted",
+      "writable_prefixes": [".tmp", "scratch"]
+    },
     "enable_context_prune": false,
     "limits": {
       "max_turns": 20,
