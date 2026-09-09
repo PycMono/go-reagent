@@ -126,7 +126,7 @@ pi.Agent 固定 WorkDir、模型和工具，聊天历史由上层传入。因此
 | tool_policy_json、runtime_config_json | 精确工具/MCP 实现引用、参数、沙箱和运行限制 |
 | spec_digest | 文件摘要 + 规范化运行配置的联合摘要 |
 | validation_json | 本次发布校验结果、校验器版本、摘要、时间、脚本 smoke 结果 |
-| source_training_session_id | 来源训练会话；初始创建为 NULL |
+| source_training_session_id | 来源训练会话；初始创建和快捷模型配置发布为 NULL |
 | published_by、published_at、change_summary | 发布人、时间及简短变更说明 |
 
 字段在创建后不可改写；激活状态只由 agents.active_version_id 表达。没有单独的 Bundle、
@@ -213,6 +213,7 @@ agent_messages 和已有 invocation 存储；checkpoint 历史通过 Git 引用�
 <data-dir>/tenants/<tenant-id>/agents/<agent-id>/
 ├── bundle.git/                           # 权威 Git 仓库
 ├── versions/<version-id>/                 # 已发布行为文件，纯文件快照，只读
+├── state/publications/<version-id>.json   # 平台持久发布准备记录，不属于 Bundle
 ├── training/<training-session-id>/
 │   ├── candidate/                        # 独立 worktree，作者只修改这里
 │   │   └── .tmp/                         # 平台临时区，不进入版本
@@ -574,6 +575,7 @@ PATCH  /api/v1/agents/:agentID
 GET    /api/v1/agents/:agentID/versions
 POST   /api/v1/agents/:agentID/versions/:versionID/activate
 GET    /api/v1/agent-templates
+GET    /api/v1/agent-model-options
 ```
 
 普通用户只查询本租户可用 Agent；管理操作和模板查询要求管理员。GET /agents 返回
@@ -582,6 +584,8 @@ GET /agents/:agentID/versions 接受 `cursor`、`limit`（默认 20，上限 100
 返回 items、next_cursor，按 version 降序使用键集分页。cursor 为绑定 tenant/agent
 及上一页末尾 version 的服务端校验令牌；非法或跨归属游标拒绝，翻页仍独立鉴权。
 创建从 Template 初始化行为资产及展示字段，模型/工具选择只能引用服务端允许的配置。
+GET /agent-model-options 仅供管理员查询服务端允许的模型选项及能力，返回不含密钥、
+宿主路径或完整 Provider 配置的展示投影；用于创建员工和快捷换模型，不新增模型表。
 
 PATCH 允许 name、description、presentation、status，拒绝未知字段和空名称，至少修改
 一个字段。status 仅 enabled/archived，不改变 AGENTS.md 或版本配置。归档拒绝任何非
@@ -657,6 +661,11 @@ Profile 的身份规则和被引用 Skills 在 bootstrap 时组成各自独立�
 expected_row_version 请求返回 409 和当前版本，客户端查询版本历史确认结果，不承诺
 通用 request_id 重放。文件准备失败或数据库未提交按目标 version ID 清理未引用产物；
 数据库已提交而响应丢失时保留版本，可由版本历史查证。不新增表或通用事件/幂等平台。
+初始创建和快捷模型发布没有训练操作槽，写 Git 前须在平台独占的
+state/publications/<version-id>.json 原子持久化目标 ID、基线/CAS、Git 引用和摘要等
+恢复所需数据；不记录 Secret 正文。记录先落盘再准备文件，数据库提交后标记完成；
+重启按目标版本行和 Agent 指针对账，只清理本操作未被引用的产物。该目录不得由
+生产、训练或校验进程访问；训练发布继续使用已有 operation_json，不复制恢复记录。
 Provider/SecretRef 维护说明应提醒先检查历史版本引用，再删除配置条目；说明写入
 配置文档或 Go 字段注释，config.example.json 保持合法 JSON。
 
