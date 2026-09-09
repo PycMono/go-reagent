@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -24,6 +25,8 @@ const corePrompt = `# Agent Runtime 核心纪律
 6. 最终回答必须以当前上下文、Skill 指令和真实工具结果为依据。
 `
 
+const maxAgentsFileBytes = 1024 * 1024
+
 // PromptComposer builds one System Prompt from the current workspace state.
 type PromptComposer struct {
 	workDir string
@@ -42,7 +45,11 @@ func (c *PromptComposer) Build(snapshot *skills.Snapshot) (ai.Message, skills.Pr
 	if err != nil {
 		return ai.Message{}, skills.PromptReport{}, err
 	}
+	message, report := composePrompt(agentsInstructions, snapshot)
+	return message, report, nil
+}
 
+func composePrompt(agents []byte, snapshot *skills.Snapshot) (ai.Message, skills.PromptReport) {
 	var builder strings.Builder
 	builder.WriteString(corePrompt)
 	skillPrompt, report := snapshot.RenderPrompt()
@@ -51,13 +58,13 @@ func (c *PromptComposer) Build(snapshot *skills.Snapshot) (ai.Message, skills.Pr
 		builder.WriteString(skillPrompt)
 	}
 	builder.WriteString("\n# Agent 定义（来自 AGENTS.md）\n\n")
-	builder.Write(agentsInstructions)
+	builder.Write(agents)
 	builder.WriteString("\n")
 
 	return ai.Message{
 		Role:    ai.RoleSystem,
 		Content: []ai.ContentBlock{ai.TextBlock(builder.String())},
-	}, report, nil
+	}, report
 }
 
 func (c *PromptComposer) loadAgentsInstructions() ([]byte, error) {
@@ -94,5 +101,20 @@ func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", name)
 	}
-	return root.ReadFile(name)
+	if info.Size() > maxAgentsFileBytes {
+		return nil, fmt.Errorf("%s exceeds 1 MiB", name)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, maxAgentsFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > maxAgentsFileBytes {
+		return nil, fmt.Errorf("%s exceeds 1 MiB", name)
+	}
+	return content, nil
 }

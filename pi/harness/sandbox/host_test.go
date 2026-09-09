@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 )
 
 func TestHostPayloadEnvRejectsPathOverride(t *testing.T) {
@@ -58,6 +60,36 @@ func TestHostRunnerBuildShellSetsWorkingDirectory(t *testing.T) {
 	}
 	if child.Dir != workDir {
 		t.Fatalf("child.Dir = %q, want %q", child.Dir, workDir)
+	}
+}
+
+func TestAllPolicyHostKeepsLegacyShellAndEnvironment(t *testing.T) {
+	root := t.TempDir()
+	n, err := workspacepolicy.Normalize(root, workspacepolicy.Policy{WriteMode: workspacepolicy.All})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := newRunnerForOSWithPolicy("windows", root, func(string) (string, error) {
+		t.Fatal("windows host must not look up a backend")
+		return "", nil
+	}, n, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"A=1"}
+	cmd, err := runner.BuildShell("echo ok", CommandSpec{WorkDir: root, PayloadEnv: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantShell, wantArgs := ShellInvocation("echo ok")
+	if cmd.Path != wantShell || !slices.Equal(cmd.Args[1:], wantArgs) {
+		t.Fatalf("command = %q %#v, want %q %#v", cmd.Path, cmd.Args[1:], wantShell, wantArgs)
+	}
+	if cmd.Dir != root || !slices.Equal(cmd.Env, env) {
+		t.Fatalf("Dir/Env = %q %v, want %q %v", cmd.Dir, cmd.Env, root, env)
+	}
+	if policy := runner.Policy(); policy.Backend != "host" || policy.Network != "allow" || policy.WriteMode != "all" {
+		t.Fatalf("Policy() = %+v", policy)
 	}
 }
 

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ type SeatbeltRunner struct {
 	dArgs           []string // 固定只有 WORKSPACE_ROOT 参数
 	workspaceRoot   string   // EvalSymlinks 后的真实路径
 	tmpDir          string   // <workspaceRoot>/.tmp（§5.4，Workspace 启动时创建）
+	normalized      *workspacepolicy.Normalized
 	policy          Policy
 }
 
@@ -41,11 +43,11 @@ func NewSeatbeltRunner(sandboxExecPath, workspaceRoot string) (*SeatbeltRunner, 
 		dArgs:           []string{"-D", "WORKSPACE_ROOT=" + symlinks},
 		workspaceRoot:   symlinks,
 		tmpDir:          tmpDir,
-		policy:          Policy{Backend: "seatbelt", Network: "allow"},
+		policy:          Policy{Backend: "seatbelt", Network: "allow", TmpDir: tmpDir},
 	}, nil
 }
 
-func (r *SeatbeltRunner) Policy() Policy { return r.policy }
+func (r *SeatbeltRunner) Policy() Policy { return clonePolicy(r.policy) }
 
 func (r *SeatbeltRunner) BuildShell(commandStr string, spec CommandSpec) (*exec.Cmd, error) {
 	workDir, err := r.validate(spec)
@@ -85,6 +87,11 @@ func (r *SeatbeltRunner) BuildArgv(inner []string, spec CommandSpec) (*exec.Cmd,
 
 // validate 契约收口同 bwrap；TMPDIR 按 §5.4 指向 workspaceRoot/.tmp。
 func (r *SeatbeltRunner) validate(spec CommandSpec) (string, error) {
+	if r.normalized != nil {
+		if err := prepareWritableDirectories(r.normalized); err != nil {
+			return "", err
+		}
+	}
 	workDir, err := ResolveWorkDir(spec.WorkDir, r.workspaceRoot)
 	if err != nil {
 		return "", err
@@ -118,4 +125,23 @@ func seatbeltProfile() string {
 (allow file-read* (subpath "/private/etc/ssl"))
 (allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))
 (allow network-outbound)`
+}
+
+func NewSeatbeltRunnerWithPolicy(binary, root string, n *workspacepolicy.Normalized) (*SeatbeltRunner, error) {
+	if err := validateNativePolicy(root, n); err != nil {
+		return nil, err
+	}
+	r := &SeatbeltRunner{sandboxExecPath: binary, workspaceRoot: n.Root(), tmpDir: filepath.Join(n.Root(), ".tmp"), profile: seatbeltProfile(), dArgs: []string{"-D", "WORKSPACE_ROOT=" + n.Root()}, normalized: n}
+	r.policy = policyFromNormalized("seatbelt", "allow", r.tmpDir, n)
+	if n.Mode() == workspacepolicy.Restricted {
+		rules := []string{}
+		for i, p := range n.Prefixes() {
+			key := fmt.Sprintf("WRITE_ROOT_%d", i)
+			r.dArgs = append(r.dArgs, "-D", key+"="+filepath.Join(n.Root(), p))
+			rules = append(rules, fmt.Sprintf(`(allow file-write* (subpath (param "%s")))
+(deny file-write-unlink (literal (param "%s")))`, key, key))
+		}
+		r.profile = strings.Replace(r.profile, `(allow file-write* (subpath (param "WORKSPACE_ROOT")))`, strings.Join(rules, "\n"), 1)
+	}
+	return r, nil
 }

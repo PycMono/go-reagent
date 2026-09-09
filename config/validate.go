@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/PycMono/go-reagent/pi"
 )
 
 func (config *Config) normalizeAndValidate(options loadOptions) error {
@@ -18,6 +20,9 @@ func (config *Config) normalizeAndValidate(options loadOptions) error {
 		return err
 	}
 	if err := config.Agent.normalizeAndValidate(options); err != nil {
+		return err
+	}
+	if err := config.Identity.normalizeAndValidate(); err != nil {
 		return err
 	}
 	if err := config.MCP.normalizeAndValidate(); err != nil {
@@ -388,6 +393,11 @@ func (config *AgentConfig) normalizeAndValidate(options loadOptions) error {
 	}
 	// 把解析后的绝对路径写回配置，下游装配层不再做任何解析与校验。
 	config.WorkspaceDir = resolved
+	if config.WorkspacePolicy != nil {
+		if err := pi.ValidateWorkspacePolicy(resolved, config.WorkspacePolicy.PI()); err != nil {
+			return fmt.Errorf("agent.workspace_policy: %w", err)
+		}
+	}
 	// Limits 的默认值回填在 pi 层（governor.New）：未配置字段使用
 	// governor.DefaultLimits。这里只做 Load 期 fail-fast 的固有校验；
 	// loop_detection 的防御性归一化也在 pi 层（loopdetect.normalize）。

@@ -7,8 +7,16 @@
     "write_timeout": 0,
     "secure_cookies": false
   },
+  "identity": {
+    "mode": "anonymous",
+    "tenant_id": "default"
+  },
   "agent": {
     "workspace_dir": "./workspaces/chat",
+    "workspace_policy": {
+      "write_mode": "restricted",
+      "writable_prefixes": [".tmp", "scratch"]
+    },
     "enable_context_prune": false,
     "limits": {
       "max_turns": 20,

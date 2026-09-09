@@ -21,14 +21,18 @@ func (config *Config) PIRuntimeOptions(workDir string) (pi.Options, error) {
 	if err != nil {
 		return pi.Options{}, err
 	}
-	return pi.Options{
+	opts := pi.Options{
 		WorkDir:       workDir,
 		Platform:      platform,
 		Compaction:    NewCompactionConfig(config, platform),
 		LoopDetection: NewLoopDetectionConfig(config),
 		ExtraHandlers: handlers,
 		MCPServers:    config.MCP.ServerOptions(),
-	}, nil
+	}
+	if config.Agent.WorkspacePolicy != nil {
+		opts.WorkspacePolicy = config.Agent.WorkspacePolicy.PI()
+	}
+	return opts, nil
 }
 
 // ServerOptions 返回全部 enabled server 的装配选项，未启用的跳过；

@@ -2,10 +2,41 @@ package sandbox
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestPayloadTmpDirUsesDeclaredPolicy(t *testing.T) {
+	root := t.TempDir()
+	for _, backend := range []string{"seatbelt", "bubblewrap"} {
+		want := filepath.Join(root, ".tmp")
+		got, err := PayloadTmpDir(Policy{Backend: backend, WriteMode: "restricted", TmpDir: want}, root)
+		if err != nil || got != want {
+			t.Fatalf("%s: PayloadTmpDir() = %q, %v; want %q", backend, got, err, want)
+		}
+		if _, err := PayloadTmpDir(Policy{Backend: backend, WriteMode: "restricted"}, root); err == nil {
+			t.Fatalf("%s accepted missing restricted TmpDir", backend)
+		}
+	}
+}
+
+func TestPayloadTmpDirLegacyAllFallback(t *testing.T) {
+	root := t.TempDir()
+	for _, tt := range []struct{ backend, want string }{
+		{backend: "seatbelt", want: filepath.Join(root, ".tmp")},
+		{backend: "bubblewrap", want: "/tmp"},
+	} {
+		got, err := PayloadTmpDir(Policy{Backend: tt.backend, WriteMode: "all"}, root)
+		if err != nil || got != tt.want {
+			t.Fatalf("%s: PayloadTmpDir() = %q, %v; want %q", tt.backend, got, err, tt.want)
+		}
+	}
+	if _, err := PayloadTmpDir(Policy{Backend: "unknown", WriteMode: "all"}, root); err == nil {
+		t.Fatal("unknown backend accepted")
+	}
+}
 
 func TestBuildSandboxPayloadEnvRejectsContractOverride(t *testing.T) {
 	for _, key := range []string{"PATH", "HOME", "TMPDIR"} {

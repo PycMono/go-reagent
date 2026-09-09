@@ -343,11 +343,19 @@ func preflightWorkspace(workDir string) error {
 // MCP 随配置模式默认挂载（无启用项时为空扩展），-subagent 只负责
 // 追加子代理；配置中的循环护栏与 handlers 策略不得静默忽略。
 func buildAgent(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) (*pi.Agent, error) {
+	options, err := cliAgentOptions(runtime, cfg, flags)
+	if err != nil {
+		return nil, err
+	}
+	return pi.New(options)
+}
+
+func cliAgentOptions(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) (pi.Options, error) {
 	options, err := pi.Options{}, error(nil)
 	if cfg != nil {
 		options, err = cfg.PIRuntimeOptions(runtime.workDir)
 		if err != nil {
-			return nil, err
+			return pi.Options{}, err
 		}
 		options.BuiltinSubagent = flags.subagent
 	} else {
@@ -359,7 +367,10 @@ func buildAgent(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) (*pi
 	}
 	options.AllowWrite = flags.allowWrite || flags.yolo
 	options.AllowExec = flags.allowExec || flags.yolo
-	return pi.New(options)
+	if options.WorkspacePolicy.WriteMode == "" {
+		options.WorkspacePolicy.WriteMode = pi.WorkspaceWriteAll
+	}
+	return options, nil
 }
 
 func printBanner(w io.Writer, runtime *runtimeConfig, cfg *config.Config, flags cliFlags) {
