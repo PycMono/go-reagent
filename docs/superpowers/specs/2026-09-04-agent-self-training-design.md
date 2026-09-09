@@ -128,6 +128,27 @@ pi.Agent 固定 WorkDir、模型和工具，聊天历史由上层传入。因此
 字段在创建后不可改写；激活状态只由 agents.active_version_id 表达。没有单独的 Bundle、
 ModelRevision、Release 或验证记录表。同一文件树可以被多个完整版本引用。
 
+摘要协议第一版固定为 `digest_version=1`，校验、发布、激活和恢复共用同一实现：
+
+- `bundle_digest` 为 `sha256:<小写十六进制>`，输入为 RFC 8785 JCS 规范化后的
+  `{digest_version:1, entries:[...]}` UTF-8 字节。entries 枚举完整 Git tree 的叶子项，
+  按仓库相对路径的 UTF-8 字节序排序；每项固定包含字符串 `path`、六位八进制字符串
+  `mode`（100644/100755/120000）、非负整数字节数 `size` 和不带前缀的 64 位小写
+  十六进制字符串 `content_sha256`。普通文件对原始内容字节计算摘要；允许的相对符号
+  链接对链接目标原始字节计算摘要，不跟随链接。路径必须是合法 UTF-8，使用 `/`，不做 Unicode 或
+  换行归一化。目录由路径隐含，mtime、owner、commit 作者/时间、tag 不参与摘要。
+  Git tree OID 仅用于定位，不直接充当 bundle_digest；§5.3 临时区不进入树或清单，
+  其余未跟踪/脏文件不得静默忽略。危险类型按 §7.3 拒绝，不能靠摘要合法化。
+- `spec_digest` 同样为 `sha256:<小写十六进制>`，输入为 JCS 规范化后的
+  `{digest_version:1, bundle_digest, model_config, tool_policy, runtime_config}`。
+  三份配置按版本化 schema 校验，拒绝未知字段、重复键及不符合 JCS 的数值；先解析
+  服务端允许的引用并补齐有效默认值，再保存并计算摘要。对象键及数字按 JCS 处理，
+  数组保序；可选字段缺省统一省略，除 schema 明确允许外拒绝 null。之后从已保存的
+  有效快照计算，不用新的宿主默认值重填。SecretRef 参与摘要，Secret 正文不参与。
+- validation_json 同时保存 `digest_version`、`bundle_digest`、`spec_digest`；算法或
+  配置 schema 的语义变化须升级 digest_version。旧版本摘要按其记录的协议验证，
+  不改写历史摘要；不支持的协议拒绝激活并报告原因。
+
 基础模型来自服务端已有 Provider 配置；管理员可在创建或训练会话配置中选择允许的
 模型，平台校验可用性和能力，再把有效配置完整复制到版本行。配置文件后续修改不能
 悄然改变已发布版本。密钥只存引用，不保存正文。
@@ -157,6 +178,11 @@ validation_json 使用有界结构保存检查项、诊断、摘要和 smoke 结
 候选路径由服务端根据三个归属 ID 派生，不在业务表保存机器绝对路径。
 operation_json 是单操作槽，不追加无限数组：历史消息、工具输出和模型计量分别复用
 agent_messages 和已有 invocation 存储；checkpoint 历史通过 Git 引用查询。
+
+训练期限由 `agent_training.session_ttl_seconds` 配置，默认 86400（24 小时），必须为
+正整数；创建事务使用数据库 UTC 时间设置 `expires_at=created_at+TTL`，固定期限，
+聊天、校验、查询均不续期，后续配置变更不改已有 expires_at。Phase 1C 将该默认值
+写入 config.example.json。过期准入和运行中操作的停止规则见 §8.4。
 
 ### 4.4 复用与延后
 
@@ -212,6 +238,10 @@ assets/
 skills，必要时附脚本。第一版采用固定入口和目录，不引入 agent.yaml 清单协议；兼容性
 由平台版本和发布校验记录判断。大知识库、密钥和平台生成配置不进入 Bundle。
 
+第一版每个 versions/<version-id>/ 都全量物化，包括仅模型/工具配置变化的版本；Git
+文件树可以复用，磁盘快照仍独立。这里有意以磁盘占用换取物化、权限和回收的简单性，
+不使用跨版本可写硬链接，也不在第一版引入文件去重存储。
+
 ### 5.2 加载路径
 
 1. 页面列举 Agent 时仅按租户查数据库，不扫描所有目录或启动全部实例。
@@ -230,8 +260,27 @@ validation:tenantID:agentID:operationID:specDigest
 ```
 
 不跨会话共用 WorkDir 或 MCP 子进程。训练操作结束即回收作者实例及写入进程，校验
-实例结束即关闭。最多 32 个热实例，空闲 15 分钟回收，活跃执行不淘汰；无空闲容量时
-有界等待后返回可重试的繁忙错误。不同 Agent 可以同时训练。
+实例结束即关闭。Runtime Manager 对创建中、空闲缓存及执行中的实例统一计数，并在
+同一准入锁内预占容量；活跃执行不淘汰。Phase 1B 在 config.example.json 写明以下
+`agent_runtime` 配置默认值，Phase 1C 的训练和校验接入同一配额：
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| max_instances | 32 | 全进程实例上限 |
+| max_instances_per_tenant | 8 | 单租户实例上限 |
+| validation_reserved_instances | 2 | 全局仅供校验的预留槽位 |
+| validation_reserved_instances_per_tenant | 1 | 每租户额度中仅供校验的预留槽位 |
+| idle_ttl_seconds | 900 | 空闲实例回收期限 |
+| acquire_timeout_seconds | 5 | 获取容量的最长等待时间 |
+
+总量及租户上限同时适用；非校验实例分别不得超过上限减预留值，空闲缓存也不能占用
+预留槽。校验可使用普通空余槽及预留槽；等待按满足配额条件的同类请求 FIFO 唤醒，
+不让单租户的超额请求阻塞其他租户，也不抢占执行中任务。
+容量紧张先回收可释放的空闲实例，再有界等待，超时返回可重试的繁忙错误。上限、
+期限必须为正整数，租户上限不得大于全局上限，预留值必须大于零且小于相应上限，
+每租户预留值不得大于全局预留值。
+该策略限制单租户占用并为校验留出容量，不承诺任意负载下无等待。不同 Agent 可以
+同时训练。发布触发的重校验同样使用 validation 配额。
 
 缓存目录不是持久会话记忆，重启或版本切换后可清理；重要产物必须由平台另行持久保存。
 目录回收前确认没有进程使用。版本、训练 HEAD 和消息记录始终可从数据库及 Git 恢复。
@@ -313,7 +362,8 @@ publish、模型配置编辑、评测或训练其他 Agent 的工具。
 ```text
 active → validating → ready → published
 validating → active                 校验失败或中断
-ready → active                      继续修改前失效旧报告
+ready → active                      继续修改前失效旧报告，或发布重检发现候选/引用异常
+ready → validating                  发布时证据过期或校验器/校验策略变化
 active / validating / ready → cancelled / stale / expired
 ```
 
@@ -321,7 +371,8 @@ active / validating / ready → cancelled / stale / expired
 | --- | --- |
 | active | validating：停止作者进程并固定候选，开始校验 |
 | validating | ready：校验成功；active：失败或中断 |
-| ready | active：继续编辑、恢复 checkpoint 或更改候选配置，先清空旧验证 |
+| ready | active：继续编辑、恢复 checkpoint、更改候选配置，或发布重检发现候选/引用异常，先清空旧验证 |
+| ready | validating：候选未变，但证据过期或校验器/校验策略变化，重新校验 |
 | ready | published：管理员发布事务成功 |
 | 任一非终态 | cancelled、stale、expired：停止本次操作后关闭并释放活跃训练指针 |
 | 终态 | 无出边；需要继续时创建新训练会话 |
@@ -334,6 +385,7 @@ active / validating / ready → cancelled / stale / expired
 创建 TrainingSession 及 type=training 的已有 Conversation，设置活跃指针，从基础版本
 创建 candidate worktree 和持久 `refs/training/<trainingID>/head`。文件物化失败时将本次
 会话取消并释放指针；重启可根据记录重新物化，不创建第二个匿名候选。
+创建前若既有训练已到期，先按 §8.4 完成停止及终态清理；未完成清理时拒绝新建。
 
 每轮执行：
 
@@ -341,7 +393,10 @@ active / validating / ready → cancelled / stale / expired
 2. 将 operation_json 持久化为本次运行中状态，再启动绑定 candidate 的目标 Agent。
 3. 复用现有消息和 invocation 存储保存输入、回复、工具输出及计量。
 4. 关闭作者工具调度，停止 exec/MCP/Subagent 子进程，然后计算实际文件变化。
-5. 对可入库资产执行基本路径/类型检查；有变化则生成 Git checkpoint，并更新 candidate_head。
+5. 执行 §7.3 的入库前检查子集：路径/UTF-8 路径编码、文件类型和链接边界、平台
+   保留项、Secret/原生可执行文件拒绝规则，以及单文件/总量/路径数限制；排除项仅按
+   §5.3 处理。通过且有变化则生成 Git checkpoint，并更新 candidate_head。此时不要求
+   AGENTS/Skill 语义检查、模型/工具可用性或脚本 smoke 成功，允许保存待修复草稿。
 6. 记录操作结果摘要并清除旧 validation_json，向页面返回回复和 diff 摘要。
 
 模型能修改的文件不等于可发布文件；完整发布校验仍在下一步执行。模型不能操作 Git
@@ -380,8 +435,24 @@ candidate_config_json 的联合 spec_digest，在隔离只读副本中运行，�
 - 校验模型/工具/SecretRef 可用性，记录具体配置和版本；Secret 内容不得出现在日志或报告。
 - 文件及配置都没变化时拒绝发布；纯模型配置变化可复用 Git 文件树，但仍生成新完整版本。
 
-结果写入训练表 validation_json，包含 head、spec_digest、validator_version、结果、
-诊断、smoke 摘要和时间；校验完成时 CAS 比较当前候选仍相同，成功进入 ready。
+解释器及依赖允许清单由宿主 `agent_training.approved_interpreters` 配置，默认 `[]`；
+初始版本创建和训练校验共用，Phase 1B 在 config.example.json 明示。每项固定扩展名、解释器绝对路径、版本/内容
+摘要和预装依赖清单；候选文件及管理员候选配置不能扩张该清单。无脚本时无需配置，
+包含脚本却无匹配项时校验失败，不通过 PATH 自动寻找解释器。smoke 的每脚本超时由
+`agent_training.smoke_timeout_seconds` 配置，默认 30，必须为正整数。
+上述 smoke 配置同在 Phase 1B 写入 config.example.json，Phase 1C 复用。
+
+结果写入训练表 validation_json，包含 head、digest_version、bundle_digest、spec_digest、
+validator_version、validation_policy_digest、结果、诊断、smoke 摘要、validated_at 和
+valid_until。validator_version 固定校验器实现修订；validation_policy_digest 使用 §4.2
+同版 JCS/SHA-256 摘要协议，覆盖有效检查限制、解释器/依赖清单、smoke 环境及沙箱
+策略、超时和证据 TTL；运行环境引用须可核验，变化视为策略变化。
+`agent_training.validation_ttl_seconds` 默认 1800（30 分钟），必须为正整数，在
+Phase 1B 写入 config.example.json，Phase 1C 复用。valid_until 为数据库 UTC 校验完成
+时间加该 TTL，训练校验再与训练 expires_at 取较早值；初始版本创建使用相同摘要和
+证据规则，但不受训练期限约束。
+校验完成时 CAS 比较当前候选仍相同且训练未到期，
+成功进入 ready。此期限只控制发布前证据复用，不使已发布版本自动失效。
 继续编辑或更改候选配置必须先失效该报告。完整验证与展示字段编辑不混淆。
 
 ## 8. 发布、回滚、重试与恢复
@@ -393,11 +464,31 @@ candidate_config_json 的联合 spec_digest，在隔离只读副本中运行，�
 
 1. 获取本 Agent 的操作锁，校验管理员及 ready 状态；已 published 则返回 result_version_id。
 2. 重读当前 active_version_id；与 base_version_id 不同则 stale，拒绝静默合并。
-3. 重检真实树、配置和验证摘要，必要时重新执行校验，禁止引用旧候选的成功结果。
+3. 按下述规则重检真实树、配置、外部引用及验证证据，决定复用、重校验或拒绝发布。
 4. 服务端分配 version 和 version ID，准备 Git commit/tag 和只读 versions 物化目录。
 5. 一个数据库事务写入 agent_versions，CAS 切换 active_version_id，设置训练 published
    和 result_version_id，清空 active_training_session_id。
 6. 事务成功后返回结果；缓存失效、页面推送失败不撤销已发布版本。
+
+第 3 步及第 5 步的判定规则：
+
+- 每次发布均确认作者进程已停止、真实目录与 candidate_head 一致（排除项仅按 §5.3）、
+  candidate_partial=false，并按 §4.2 重算摘要，检查模型/工具/SecretRef 仍可用。
+  发现脏树、候选 HEAD/摘要与报告不符或引用不可用时，清空旧证据并回到 active，
+  返回具体诊断；须完成候选修复/checkpoint 和显式校验后再发布，不自动收编脏文件。
+- 仅当成功报告绑定的 head、digest_version、bundle_digest、spec_digest 均匹配，
+  validator_version 和 validation_policy_digest 与当前实现/策略一致，且数据库 UTC
+  当前时间严格早于 valid_until 和训练 expires_at 时，才可复用。缺少字段或候选不
+  匹配时清空证据、回 active 并要求显式校验；未知摘要协议拒绝发布并报告不兼容，
+  不自动转换摘要或绕过验证。
+- 候选和摘要协议匹配，仅证据过期或校验器/校验策略变化时，在同一持久发布操作槽内
+  将 ready 转 validating，按 §7.3 完整重校验；成功转 ready 后继续发布，失败回 active。
+  在转 validating 前先获取校验容量，获取失败则保留 ready、禁止本次发布并返回繁忙；
+  完成操作槽后允许重试。
+  训练会话本身到期则走 §8.4，不以重校验延长训练期限。
+- 第 5 步事务中再次检查候选 CAS、生产基线、报告绑定及上述两个期限，策略在本次
+  操作内固定；准备文件期间证据到期则拒绝本次发布，按操作记录清理未引用产物，
+  下次发布重新校验。基线变化转 stale，训练到期按 §8.4 处理。
 
 版本表对 source_training_session_id 建唯一约束；并发或重复 publish 只能产生一个版本。
 Git 和 DB 不是同一事务：操作记录在写 Git 前保存目标 version ID、tag 和摘要，失败可
@@ -453,6 +544,15 @@ SSE 仅用于当前连接展示，不新增事件表或 Last-Event-ID 完整回�
 DB 已有来源版本则补齐 Session 结果；DB 未提交则清理本次未引用产物后重新校验，不能
 直接假定成功。过期/取消在停止进程后释放活跃指针。
 
+过期采用惰性检查，不新增后台扫描任务：训练详情、写操作/发布准入、创建新训练、
+归档检查及启动恢复均检查数据库 UTC 时间是否 `>= expires_at`。已经到期的训练
+禁止新操作；有执行中操作时发停止信号，保持操作槽、非终态及活跃指针，确认全部
+子进程停止后才在事务内转 expired、清空验证并释放指针。不能确认停止时返回具体
+阻塞原因，继续拒绝新操作。每个运行操作还须绑定剩余训练期限作为 deadline，到期
+触发同一停止流程；完成事务再次检查期限，不能把跨过期限的结果写成 ready/published。
+无访问且无运行操作的过期会话可暂存原状态，下一次上述入口负责清理。终态不因
+expires_at 改写；已提交发布的重试/恢复始终先返回或对账既有发布结果。
+
 上线需有异机备份：同批数据库一致性快照 + bundle.git 对象及全部 refs/tags + 已持久
 附件；密钥由宿主系统单独保存。第一版以协调停写窗口取得备份，记录恢复清单，迁移前
 额外备份；频率和保留期由部署明确配置。恢复演练必须执行 git fsck、版本/HEAD 引用及
@@ -474,6 +574,9 @@ GET    /api/v1/agent-templates
 
 普通用户只查询本租户可用 Agent；管理操作和模板查询要求管理员。GET /agents 返回
 items、next_cursor 和计算出的 default_agent_id；条目包含展示配置及 selectable。
+GET /agents/:agentID/versions 接受 `cursor`、`limit`（默认 20，上限 100，必须为正整数），
+返回 items、next_cursor，按 version 降序使用键集分页。cursor 为绑定 tenant/agent
+及上一页末尾 version 的服务端校验令牌；非法或跨归属游标拒绝，翻页仍独立鉴权。
 创建从 Template 初始化行为资产及展示字段，模型/工具选择只能引用服务端允许的配置。
 
 PATCH 允许 name、description、presentation、status，拒绝未知字段和空名称，至少修改
@@ -534,7 +637,9 @@ follow_latest；训练表通过 conversation_id 关联它，不再反向增加 t
 2. 兼容代码支持旧 Profile 与新 Agent ID，bootstrap 为明确租户创建八个内置 Agent 及
    初始完整版本，复制被引用的共享 Skills；验证失败停止。对 bootstrap_key 幂等重试。
 3. 回填已有会话 tenant/agent/version，核对空值、未知 Profile、跨租户/Agent 引用和
-   Git 摘要。旧匿名单客户数据回填配置租户，多客户数据必须提供可信映射。
+   Git 摘要。已确认单客户的旧匿名数据回填配置租户；旧 schema 没有租户列不等于能
+   证明部署只服务过一个客户。若存量归属不明或历史上混用多个客户，必须提供经宿主
+   确认的逐会话租户映射；缺失或冲突则停止迁移，不按匿名 Cookie 猜测组织归属。
 4. 0008 在停写窗口将归属字段改 NOT NULL，补 FK/索引；先建
    uq_agent_conversations_tenant_owner(tenant_id,user_id,conversation_id)，再删旧
    uq_agent_conversations_owner(user_id,conversation_id)。
@@ -545,6 +650,15 @@ follow_latest；训练表通过 conversation_id 关联它，不再反向增加 t
 唯一约束：agents(tenant_id,id)、agents(tenant_id,bootstrap_key)、
 agent_versions(agent_id,version)、agent_versions(tenant_id,agent_id,id)、
 agent_versions(source_training_session_id)、agent_training_sessions(conversation_id)。
+0010 同时在 agent_training_sessions 增加生成列 active_slot：status 为
+active/validating/ready 时值为 1，终态时为 NULL；status 约束为 §7.1 的合法枚举，
+并建 UNIQUE(tenant_id,agent_id,active_slot)，利用 MySQL 允许多个 NULL 保留终态历史。
+这是“同 Agent 最多一条非终态训练”的数据库兜底；不在 agents 上增加包含 Session ID
+的冗余唯一键。训练表另建 UNIQUE(tenant_id,agent_id,id)，供 agents 的
+(tenant_id,id,active_training_session_id) 复合外键指向同租户、同 Agent 的训练行。
+生成列唯一键不保证指针与状态一致：创建/终态转换/恢复仍须在 Agent 锁及事务中同时
+维护状态、操作槽和指针，清空指针须 CAS 匹配该 Session ID；恢复发现不一致时拒绝
+新训练，确认进程停止后完成对账。过期时间本身不参与生成列计算，停止完成前不释放槽位。
 来源训练列在 0007 先 nullable，0010 再补 FK；初始版本来源 NULL，可重复。
 每个 Repository 以认证 TenantID 查询，关联 ID 必须属于同租户同 Agent；CAS 与应用
 一致性检查配合复合外键，禁止先按裸 ID 查询再补租户判断。
@@ -606,9 +720,17 @@ Phase 1A 计划仍待评审，不开始实现。自动评测、微调和分布�
 ### 11.3 业务与端到端验收
 
 - 同租户不同 Agent 可同时训练；同 Agent 第二个活跃训练被拒；跨租户/管理员引用被拒。
+- 0010 的生成列唯一键拒绝同 Agent 两条非终态记录，允许多条终态记录；跨租户/Agent
+  的活跃指针被复合外键拒绝，恢复不能绕过状态与指针一致性检查。
 - 两个聊天会话即使使用同一个版本也不能互读临时文件；版本目录没有运行产物。
 - 训练失败保存可恢复的 partial checkpoint；恢复旧 checkpoint 不丢失后续历史 refs。
 - 校验期间无写入进程；修改候选或配置使旧证据失效，发布检查实际 HEAD 和联合摘要。
+- 摘要固定测试向量覆盖键序、默认值、null、数组顺序、文件 mode/内容/链接目标及
+  未知字段拒绝；校验、发布和恢复得到同一摘要，旧协议不会被新默认值悄然重算。
+- 证据到期或校验策略变化触发重校验，脏树及绑定不符拒绝发布；训练到期停止进程后
+  才释放活跃槽位，运行中/发布准备中跨过期限也不能提交成功状态。
+- 单租户占满普通配额不占用其他租户额度或校验预留槽；空闲实例可回收、活跃实例不
+  被抢占，等待超时返回繁忙；版本分页在新增版本时不重复返回已翻过的版本。
 - 重复请求不重复执行，重复发布只产生一个版本；Git/DB 各故障点能对账或补偿。
 - 新会话用新版本，已有 follow_latest 会话下一轮迁移，加载失败保留旧版本；不依赖事件投递。
 - 回滚恢复文件、模型和工具配置；不可用历史引用拒绝激活。

@@ -74,9 +74,9 @@ func (d *Detector) AdmitToolBatch(calls ai.ToolCalls) Admission {
 // RecordToolBatchOutcome 在副作用完成后做事实记账，无返回值、不产生干预
 // 决定；所有干预都在下一次 AdmitToolBatch 准入时发生。
 //
-// 要求 len(calls) == len(results)、calls[i].ID == results[i].ToolCallID 且
-// 工具名一致；该不变量由 Loop 在调用前保证，Detector 对不匹配输入不修改
+// 要求 len(calls) == len(events)、events[i] 是结束事件且其中的 Call 与
+// calls[i] 一致；该不变量由 Loop 在调用前保证，Detector 对不匹配输入不修改
 // 状态、不产生任何效果（防御性兜底）。Disabled 时无任何副作用。
-func (d *Detector) RecordToolBatchOutcome(calls ai.ToolCalls, results []toolexec.Result) {
-	d.record(calls, results)
+func (d *Detector) RecordToolBatchOutcome(calls ai.ToolCalls, events []toolexec.Event) {
+	d.record(calls, events)
 }

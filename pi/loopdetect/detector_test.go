@@ -9,7 +9,7 @@ import (
 )
 
 // runTurn 模拟一次完整的准入-执行-记账生命周期。
-func runTurn(d *Detector, calls ai.ToolCalls, results []toolexec.Result) Admission {
+func runTurn(d *Detector, calls ai.ToolCalls, results []toolexec.Event) Admission {
 	admission := d.AdmitToolBatch(calls)
 	if admission.Decision == DecisionAllow || admission.Decision == DecisionWarn {
 		d.RecordToolBatchOutcome(calls, results)
@@ -17,8 +17,8 @@ func runTurn(d *Detector, calls ai.ToolCalls, results []toolexec.Result) Admissi
 	return admission
 }
 
-func sameResults(calls ai.ToolCalls, text string) []toolexec.Result {
-	results := make([]toolexec.Result, len(calls))
+func sameResults(calls ai.ToolCalls, text string) []toolexec.Event {
+	results := make([]toolexec.Event, len(calls))
 	for i, call := range calls {
 		results[i] = makeResult(call, text)
 	}
@@ -338,10 +338,10 @@ func TestRecordAlignmentViolationsAreNoop(t *testing.T) {
 
 	d.RecordToolBatchOutcome(calls, nil)
 	mismatched := sameResults(calls, "x")
-	mismatched[0].ToolCallID = "other"
+	mismatched[0].Call.ID = "other"
 	d.RecordToolBatchOutcome(calls, mismatched)
 	mismatched = sameResults(calls, "x")
-	mismatched[0].ToolName = "other"
+	mismatched[0].Call.Name = "other"
 	d.RecordToolBatchOutcome(calls, mismatched)
 
 	if len(d.stable) != 0 {
