@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/PycMono/go-context-sdk/bizctx"
 	"github.com/PycMono/go-reagent/application/identity"
+	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -51,6 +53,32 @@ func TestHostPrincipalIgnoresClaimsAndFailsClosed(t *testing.T) {
 	}
 	if _, err := HostPrincipal(nil); err == nil {
 		t.Fatal("host without adapter accepted")
+	}
+}
+
+func TestHostPrincipalPreservesExplicitForbidden(t *testing.T) {
+	middleware, err := HostPrincipal(testHostAuth(func(*http.Request) (identity.Principal, error) {
+		return identity.Principal{}, commonerrors.ErrForbidden
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.Use(middleware)
+	router.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+	var envelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Code != commonerrors.ErrForbidden.Code() {
+		t.Fatalf("code = %d, want %d", envelope.Code, commonerrors.ErrForbidden.Code())
 	}
 }
 
