@@ -1,2819 +1,628 @@
-# Agent 自训练、评测与微调设计
+# Agent 资产自训练与人工发布设计（简化版）
 
 ## 状态
 
-本文件是待审核的架构设计，不是实现计划。设计基于：
+2026-09-09 按已确认的第一版范围收敛：一个客户组织拥有多个不同用途的 Agent，管理员
+通过聊天修改目标 Agent 的行为文件，校验后人工发布。本文是设计，不代表已经实现。
+原完整平台方案保留在 Git 历史；本版替代其数据库、业务流程和阶段安排，不再要求实现
+自动评测、模型微调、独立模型注册或可靠事件投递平台。
 
-- go-reagent `master` 分支 `9eb5e37`；
-- Workify `dev` 分支 `e838db53`；
-- 已确认采用方案 A：管理员与目标 Agent 一对一聊天，由同一个逻辑 Agent 修改自己的候选资产；
-- 训练执行与生产执行按会话隔离，候选资产通过评测和管理员审批后才能发布；
-- 目标能力同时覆盖 Workspace 资产训练和模型 Fine-tuning，但分阶段实现。
+当前参考基线：go-reagent `master@9eb5e37` 的运行结构，以及 Workify 本地仓库的
+`packages/store-sqlite/src/schema.ts`、`packages/store-spec/src/types.ts` 和训练发布源码。
+Phase 1A 实现时仍须以实际 checkout 检查调用位置。
 
-2026-09-08 修订补齐状态转换、候选冻结、会话级运行目录、模型注册、评测集管理、
-迁移与恢复约束，以及现有聊天页面的兼容要求。本文仍为设计规格，不表示功能已实现。
+## 1. 范围与主要决策
 
-本文中的“Workify 路径”均相对于参考仓库
-`/Users/allen/projects/work/dustess/gitlab/workify`。
-
-## 1. 结论
-
-go-reagent 应采用 Workify 已验证的自训练身份模型：
-
-1. 训练者就是目标 Agent，不创建另一条 `TrainerAgent` 业务记录；
-2. 管理员训练会话为该 Agent 创建独立 Runner、独立候选 Workspace 和临时训练权限；
-3. Agent 在候选 Workspace 内修改 `AGENTS.md`、Skills、脚本和资料；
-4. 运行时拦截越权写入，发布时再次检查真实文件树和 Git diff；
-5. 训练 Agent 只负责产出候选内容，不负责最终判分和生产发布；
-6. 独立 Evaluation Runner 使用生产权限测试候选版本；
-7. 管理员审核 diff、评测报告和成本后发布；
-8. 发布单元是完整的 `AgentRelease`，同时固定 Bundle、模型版本、工具策略和评测报告；
-9. Fine-tuning 由应用层异步流水线完成，`pi` 只运行最终得到的模型 ID。
-
-角色边界固定为：
+第一版新增三张业务表：
 
 ```text
-目标 Agent       = Author：修改 Candidate
-Evaluation Runner = Judge：执行不可修改的测试集
-Release Service   = Gatekeeper：验证、发布、回滚
-管理员             = Approver：批准候选、样本和发布
-FineTune Backend   = Trainer：调用外部平台训练模型权重
+agents
+agent_versions
+agent_training_sessions
 ```
 
-不得把“Agent 自训练”实现成 Agent 直接修改正在服务的共享目录，也不得让 Agent
-同时修改候选、修改评测基准、给自己打分并切换生产版本。
+保留以下能力：
 
-## 2. 术语
+- 一个客户组织（Tenant）有多个用户及多个 Agent；管理员只能训练本租户 Agent。
+- 同一个逻辑 Agent 在独立训练目录中修改自己的 AGENTS.md、Skills、脚本和资料。
+- 一次训练会话包含多轮对话；文件变化由 Git checkpoint 保存，可查看 diff 和恢复。
+- 生产行为文件只读；训练候选与生产、其他 Agent、其他会话隔离。
+- 服务端校验真实候选内容，管理员明确确认后发布。
+- 一个不可变 AgentVersion 同时固定 Git 文件引用、模型配置和工具策略；回滚整体切换。
+- 保留当前聊天页面的助手选择、历史记录、图片输入、流式回复和会话管理。
 
-| 术语 | 定义 |
+第一版不实现自动判分、自主修正循环、数据集、Fine-tuning、多管理员共同编辑、跨节点
+训练接管、Agent 自行发布或创建其他 Agent。也不预建这些功能的空表、DTO 和 API。
+部署范围为单个服务进程 + MySQL + 持久化文件盘；这允许服务多个租户，但不承诺多节点
+写入协调。现有 Redis 等项目依赖继续按原有用途使用。
+
+安全边界不因表数减少而取消：管理员认证、租户校验、OS 沙箱、实际文件检查、不可变
+版本、发布原子切换及重复请求处理仍属于第一版要求。
+
+## 2. Workify 的参考方式
+
+Workify 的相关真实表及用法：
+
+| 表 | 用途 |
 | --- | --- |
-| Tenant | 一个客户组织的数据与权限隔离边界，拥有多个用户和多个不同用途的 Agent |
-| User | 客户组织中的实际操作者；具有管理员权限的用户可以创建和训练本租户 Agent |
-| Agent | 稳定业务身份，拥有名称、说明、状态和当前发布版本 |
-| Bundle | Agent 自有的行为资产集合：`AGENTS.md`、Skills、脚本、资料和清单 |
-| Bundle Version | Bundle 的不可变 Git commit/tag 和内容摘要 |
-| Model Revision | 基础模型或 Fine-tuning 产出的不可变模型引用 |
-| Agent Release | 可运行、可回滚的完整行为快照，固定 Bundle、模型、工具策略和验证证据 |
-| Training Session | 本租户管理员与一个目标 Agent 的一对一训练会话，可包含多轮对话和多个 checkpoint |
-| Candidate Workspace | 从基础 Release 检出的训练候选目录，只属于一个 Training Session |
-| Training Example | 管理员审核通过的输入、期望输出、负例或工具期望 |
-| Dataset Version | 由已审核 Training Examples 组成的不可变数据集 |
-| Evaluation Suite | 平台保存、训练 Agent 不可修改的测试用例集合 |
-| Evaluation Run | 一个 Candidate Release 在一个 Evaluation Suite 上的执行结果 |
-| FineTune Job | 外部模型平台上的异步微调任务 |
+| `agents` | 租户、Agent 身份、实时配置、能力、Bundle 路径及最新版本 |
+| `agent_versions` | Bundle Git commit/tag、发布者、来源会话 |
+| `sessions`、`session_members` | 会话及参与者，成员保存 Agent 版本、配置快照、独立 cwd 和权限覆盖 |
+| `messages`、`turns`、`runtime_events` | 聊天及执行过程 |
+| `model_providers`、`model_profiles` | 模型提供方和运行配置 |
+| `audit_logs`、`outbox` | 审计和异步投递 |
 
-业务归属固定为“客户组织（Tenant）→ 多个 Agent → 各自的 Release 和 TrainingSession”。
-例如，同一客户可以分别拥有客服、销售和写作 Agent；每个 Agent 独立维护行为资产、
-模型配置、工具策略、发布历史和训练历史，训练或发布其中一个不会改变其他 Agent。
-同一个模型可以供多个 Agent 使用，但它们仍是不同的业务身份。
+训练复用普通会话和成员，通过临时 `agent.train_self` 能力修改成员 cwd，完成训练后
+生成 Git 版本并登记 agent_versions。运行实例按 member.id 创建。证据在
+`packages/server/src/session-member-provisioning.ts`、`agent-runtime/manager.ts` 和
+`routes/agent-training.ts`。Workify 的版本只固定 Bundle，模型配置是实时状态。
 
-客户组织与登录用户不是同一概念：一个客户可以有多个管理员，训练者由
-`TrainingSession.AdminUserID` 标识，发布者由 `AgentRelease.PublishedBy` 标识，具体操作
-记录实际操作者审计。租户和用户身份都由宿主系统可信认证提供，不从文件夹名称推断权限。
+Workify 使用两层检查：工具调用时检查路径和权限，发布时再次检查真实 Git diff。
+Gate A 不解析 bash 写入，因此不能作为唯一安全边界。对应文件为
+`packages/agent/src/runtime-adapters/gate-a.ts` 与 `packages/server/src/bundle-commit.ts`。
+其 Bundle gitignore 中的附件由 `.workify/` 条目覆盖，并非独立条目。
 
-## 3. 当前 go-reagent 的约束
+本版借鉴会话独立目录、Git 文件历史和人工发布，不复制 Workify 全部业务表。
+go-reagent 没有 SessionMember 模型，因此保留一张独立训练会话表，复用现有聊天存储；
+为保证整体回滚，把模型和工具快照直接放入 agent_versions，而不再拆 Bundle/Model/Release。
 
-### 3.1 单一 Runner 与固定 Workspace
-
-`cmd/server/app.go` 当前在服务启动时调用一次 `pi.New`，全站共享一个
-`*pi.Agent`。`pi.Options` 在构造时固定 `WorkDir`、Provider、工具、MCP、沙箱和
-中间件。该模型适合当前单 Workspace Web Chat，但不能直接表达多个动态 Agent、
-多个 Release 和多个候选训练目录。
-
-### 3.2 `pi.Agent` 的可复用边界
-
-`pi.Agent.Run` 本身同步、无状态、并发安全；History、Context 和消息持久化由上层
-业务管理。它适合作为“一个运行规格”的执行实例：
+## 3. 身份、归属和现有代码边界
 
 ```text
-一个 pi.Agent
-= 一个 WorkDir
-+ 一个模型配置
-+ 一套 Tool/MCP 注册表
-+ 一套沙箱与中间件策略
+客户组织 Tenant
+└── 多个 Agent
+    ├── 各自的 AgentVersion 历史
+    └── 各自的 TrainingSession 历史
+        └── 一个管理员 + 多轮训练聊天 + Git checkpoint
 ```
 
-因此第一阶段不把 WorkDir 改成每次 Run 动态参数，而是在应用层按“生产会话 + Release”、
-Training Session 或“Evaluation Run + Case + Attempt”创建并管理多个 `pi.Agent`。
-不同生产会话不能仅因使用同一 Release 就共用固定 WorkDir 的运行实例，详见 §8.1、§10.4。
+Tenant 与 User 不同：Tenant 表示客户组织，User 表示操作人。可信宿主认证提供
+`Principal{TenantID, UserID, Role}`，不接受请求正文或任意 Header 自报管理员/租户。
+没有客户身份系统的明确单客户部署可以固定 TenantID 为 `default`；同一部署服务多个
+客户时必须使用不同租户身份。未配置可信管理员认证则不注册管理页面和管理写 API。
 
-### 3.3 Profile 不是动态 Agent
+当前 visitor.go 只提供匿名 Cookie 用户；它不能自动成为客户组织登录或管理员身份。
+现有普通聊天记录按用户隔离，迁移后同时按 tenant_id + user_id 隔离；训练历史仅本会话
+管理员可访问。ID、工作目录名和 Git ref 均不能代替服务端归属校验。
 
-当前 `Agent Profile` 是随代码发布的只读 Catalog：会话只保存 `profile_code`，
-运行时把 Profile AGENTS 和 Skill Catalog 作为 ContextBlock 注入同一个 Runner。
-它没有独立 Workspace、模型、工具权限、版本或发布生命周期。
+当前 server 在启动时构造一次 pi.Agent，Profile 只是只读目录及上下文注入。
+pi.Agent 固定 WorkDir、模型和工具，聊天历史由上层传入。因此应用层应按会话/版本
+创建运行实例；不把业务 ID、数据库或 Git 放进 pi.RunRequest。
 
-引入训练系统后：
+## 4. 数据模型：三张表各自负责什么
 
-- 现有 Profile 改名为 `AgentTemplate`，只负责创建 Agent 的初始默认值；
-- 生产会话绑定 `agent_id` 和具体 `agent_release_id`；
-- `profile_code` 只用于迁移现有会话和标记创建来源，不再是运行时身份。
+### 4.1 agents：稳定身份和当前指针
 
-### 3.4 当前执行沙箱允许 Workspace 写入
-
-浏览器服务当前打开 `AllowWrite`、`AllowExec` 和内置 Subagent。`exec` 的 Seatbelt/
-Bubblewrap 策略允许写整个 Workspace。即使移除 `write/edit/apply_patch` 工具，shell
-仍可以修改 Bundle。
-
-生产 Agent 要运行 Skill 脚本但不能修改自己的发布资产，因此 `pi` 必须把“允许执行
-命令”和“允许修改 Bundle”拆开，不能继续用 `AllowExec` 隐含整个 Workspace 可写。
-
-### 3.5 当前没有管理员身份边界
-
-`infrastructure/middleware/visitor.go` 当前只给浏览器创建匿名 `TypeUser` Session，随后
-只向 `bizctx` 写入 UserID。仓库没有管理员登录、Role Context 或 Tenant Resolver。依赖的
-`go-gin-sdk/session` 虽然定义了 `TypeAdmin`，但“类型存在”不等于服务已经可靠认证了
-管理员。
-
-所以 Training API 上线前必须先有可信的 `Principal{TenantID, UserID, Role}`。本设计只
-定义消费管理员身份的端口，不在训练子系统里发明账号密码系统：
-
-- 普通 Chat 可以继续使用匿名 Visitor Principal；
-- Training/Release/Evaluation/Fine-tuning 路由必须经过 `RequireAdmin`；
-- Principal 必须由受信任的登录系统或 Admin Session 适配器创建，不能由请求 Header
-  直接声称角色；
-- 没有配置 Admin Auth Resolver 时，服务不注册管理页面和写路由并在启动日志明确提示；
-- 只有明确的单客户部署才可以把 TenantID 固定为 `default`；同一部署服务多个客户时，
-  必须从可信身份上下文解析各自的租户 ID，不能把不同客户统一归入 `default`。
-  TenantID 始终进入 Principal、数据库查询和文件路径。
-
-## 4. Workify 参考实现的真实模型
-
-### 4.1 同一个逻辑 Agent，按 SessionMember 创建运行实例
-
-Workify 的 `AgentDefinition` 保存稳定 `agentId`、Bundle 路径、最新版本、实时配置和
-Capabilities。每个会话中的 Agent 是一条 `SessionMember`：
-
-- `SessionMember.agentId` 指向同一个逻辑 Agent；
-- `SessionMember.agentVersion` 固定该成员当前采用的 Bundle 版本；
-- `SessionMember.configSnapshot` 固定本会话成员的有效模型、能力和资源；
-- `SessionMember.cwdPath` 是本会话成员独有的运行目录；
-- Runtime Manager 按 `member.id` 创建运行进程，不按 `agentId` 全局复用一个进程。
-
-证据位置：
-
-- `packages/store-spec/src/types.ts`：`AgentDefinition`、`AgentVersion`、
-  `SessionMember`、`SessionMemberResourceOverrides`；
-- `packages/server/src/session-member-provisioning.ts`：
-  `prepareAgentSessionMember`；
-- `packages/server/src/agent-runtime/manager.ts`：
-  `ensureMemberRuntime`、`spawnMemberRuntime`。
-
-所以 Workify 的自训练不是“一个共享生产进程原地改自己”，而是：同一个 Agent 身份
-在管理员训练会话里运行一个独立成员实例，该实例修改自己的会话 cwd。
-
-### 4.2 训练能力是会话有效能力
-
-Workify 把 Bundle 作者权限拆成：
-
-- `agent.train_self`：修改并发布自己的 Bundle；
-- `agent.build_agents`：创建、修改和发布其他 Agent。
-
-二者互不隐含。官方推荐把 `agent.train_self` 排除在 Agent 默认能力之外，由管理员
-只在训练 SessionMember 上通过 `resourceOverrides.capabilities` 临时开启。普通用户
-只能缩小本会话能力，管理员可以在租户能力目录上限内扩大能力。
-
-这带来三个重要性质：
-
-1. 普通生产会话看不到训练 Skill 和训练工具；
-2. 训练能力不会因为 Agent 默认配置而散落到所有会话；
-3. SessionMember reload 后仍保留明确的会话覆盖。
-
-证据位置：
-
-- `packages/builtin-resources/skills/workify-guide/1.0.0/topics/concepts.md`；
-- `packages/server/src/member-resource-override-edit.ts`；
-- `packages/server/src/member-resource-overrides.ts`；
-- `packages/server/src/slash-commands/training-skill.ts`。
-
-### 4.3 训练入口是普通会话加 `/skill:train`
-
-Workify 已删除旧的全局 training mode。管理员可以在普通会话中发送明确的长期行为
-修改要求，或显式调用 `/skill:train <instruction>`。持有 `agent.train_self` 时，平台
-强制挂载内置 `train` Skill；该 Skill 的 `requiredRole: admin` 会在 Slash Command
-分发边界校验。
-
-`train` Skill 负责教 Agent：
-
-- 什么属于永久行为修改；
-- 哪类需求写入哪个 Bundle 位置；
-- 如何处理 Skills、脚本、Extensions、Hooks 和配置；
-- 如何验证实际工具轨迹；
-- 默认不自行发布，等待管理员点击 Complete training；
-- 只有管理员明确要求自动发布时才允许 self-publish。
-
-证据位置：
-
-- `packages/builtin-resources/skills/train/1.0.0/SKILL.md`；
-- `packages/server/src/slash-commands/catalog.ts`；
-- `packages/server/src/slash-commands/dispatch.ts`。
-
-### 4.4 平台提示词提供资产分流规则
-
-Workify 不把全部训练协议长期塞进 System Prompt。System Prompt 只保留行为治理和
-Bundle 作者分类，详细训练流程按需从 `train` Skill 加载。
-
-资产分流规则是：
-
-| 需求形态 | 写入位置 |
+| 字段 | 作用 |
 | --- | --- |
-| 简单身份、语气、约定、单条规则 | `AGENTS.md` |
-| 多段但不是完整流程的专题规则 | `docs/<topic>.md`，由 `AGENTS.md` 简短引用 |
-| 多步骤、按条件触发、需要脚本的流程 | `.pi/skills/<id>/` |
-| 多任务复用的确定性操作 | `.pi/extensions/<id>/` 注册 Tool |
-| 每个 Turn 前必须执行的确定性行为 | `.pi/extensions/<id>/` 生命周期 Hook |
+| id、tenant_id | 稳定身份和所属客户 |
+| name、description、status | 展示信息；status 为 enabled 或 archived |
+| presentation_json | 图标、欢迎语、推荐问题和排序 |
+| template_code、bootstrap_key | 创建来源；只有内置迁移种子设置 bootstrap_key |
+| active_version_id | 当前生产版本，创建未完成时允许为空 |
+| active_training_session_id | 当前活跃训练会话；同一 Agent 只允许一个 |
+| row_version | CAS 并发版本，与业务发布版本号区分 |
+| created_by、created_at、updated_at | 创建与更新时间 |
 
-其原则是优先选择更轻的载体：规则优先于 Skill，Skill 优先于 Extension；不要把单行
-规则包装成 Skill，也不要把简单 shell 命令包装成新工具。
+同租户可以从同一模板创建多个 Agent；只对 `(tenant_id, bootstrap_key)` 建唯一键，
+普通创建使用 NULL，不对 template_code 建唯一键。展示信息从模板复制，之后独立编辑，
+不直接注入系统提示词；真正行为规则保存在 AGENTS.md。
 
-证据位置：`packages/agent/src/runtime-adapters/system-append.ts` 中
-`BUNDLE_AUTHORING_RULES`。
+第一版不做租户持久化默认助手设置，不增加设置表。列表按 presentation.order、id 排序，
+服务端将第一个可用 Agent 作为 default_agent_id 返回；无可用项则为 null。这个字段是
+列表响应的计算结果。归档后自然排除，不存在需要同步清理的数据库默认指针。
 
-go-reagent 第一期只采用前三类：`AGENTS.md`、专题文档和带脚本的 Skill。当前 SDK
-没有 Workify 的 Bundle Pi Extension/Hook 加载器，不在第一阶段复制该子系统。
+### 4.2 agent_versions：完整、不可变的运行版本
 
-### 4.5 每个 SessionMember 有独立候选 cwd
-
-Workify 从 Agent 的已发布 Git tag 物化 SessionMember cwd：
-
-```text
-Agent Bundle Git repository
-  └── immutable version tag
-        ├── SessionMember A cwd
-        ├── SessionMember B cwd
-        └── Admin training SessionMember cwd
-```
-
-训练 Agent 修改的是训练 SessionMember cwd。发布前，生产 Bundle 和其他会话的 cwd
-不变。训练 cwd 同时包含运行时生成目录，但 `.gitignore` 排除 Workspace 挂载、
-`.workify/` 和其他非 Bundle 状态；附件由 `.workify/` 条目覆盖，并非独立 ignore 条目，
-避免发布时误带入会话数据。
-
-证据位置：
-
-- `packages/server/src/session-member-provisioning.ts`：cwd 路径和
-  `materializeBundleWorktree`；
-- `packages/server/src/routes/agent-training.ts`：训练 cwd 提交与发布；
-- `packages/server/src/bundle-fs.ts`：Bundle Gitignore 和仓库操作。
-
-### 4.6 `service` Profile 不能直接训练 Bundle
-
-Workify 的 `service` Runtime Profile 强制采用最严格的文件 confinement：无论用户
-是否为管理员，都只能写 `scratch/` 和 `/tmp`。`agent.train_self` 不能绕过该规则。
-
-因此训练一个默认 `service` Agent 时，训练 SessionMember 需要临时使用 `general`
-Profile，并开启 `agent.train_self`；发布后的生产会话仍按 Agent 的 `service` 默认配置
-运行。这个差异不能只靠一个 `train_self=true` 表达。
-
-证据位置：
-
-- `packages/agent/src/runtime-adapters/gate-a.ts`：`checkConfinedWrite`；
-- `docs/security.md` 的 File-access confinement；
-- `packages/builtin-resources/skills/workify-guide/1.0.0/topics/best-practices.md`。
-
-go-reagent 不复制 `general/service` 命名，但必须区分 `chat`、`training`、`evaluation`
-三种 Runtime Purpose，并由服务端决定各自的权限策略。
-
-### 4.7 Gate A：运行时工具层拦截
-
-Workify 在 Pi SDK `beforeToolCall` 上包装 `read/write/edit`，检查：
-
-1. 路径是否逃逸 cwd；
-2. 是否触碰平台维护的 System/MCP 文件；
-3. 修改自身行为文件时，当前 acting user 是否为管理员；
-4. 当前 SessionMember 是否持有 `agent.train_self`；
-5. 修改其他 Agent Build 时是否持有 `agent.build_agents`；
-6. Memory、Workspace 和 fileAccess 策略是否允许；
-7. confined 模式的读写路径是否落在允许范围。
-
-acting user 身份由服务端从当前 Turn 的真实触发者派生，再随 `run_turn` 发送给 Runtime；
-Agent 不能通过消息正文自称管理员。
-
-Gate A 的局限是它不解析 bash 中的 `cat >`、`sed -i` 等写入。因此它改善模型的即时
-反馈，但不是最终安全边界。
-
-证据位置：
-
-- `packages/agent/src/runtime-adapters/gate-a.ts`；
-- `packages/agent/src/runtime-adapters/pi.ts`：`attachGateAHook`；
-- `docs/security.md` 的 Git Boundaries。
-
-### 4.8 Gate B：发布边界检查真实 diff
-
-Workify 在所有发布路径的汇聚点检查即将发布的真实 Git diff。无论 Agent 使用
-`write`、`edit` 还是 bash 修改文件，最终产物都必须通过 Gate B。
-
-Gate B 永久拒绝 Workify 自有文件。普通用户只能发布受限路径；管理员和持有对应
-Bundle 作者能力的 Agent 可发布行为资产。之后还会进行：
-
-- Bundle Skill/Prompt 扫描；
-- Slash Command 冲突检查；
-- Runtime Adapter 与资源兼容性检查；
-- Bundle TypeScript Extensions 类型检查；
-- 空变更拒绝；
-- SemVer 和 Git tag 唯一性检查。
-
-证据位置：
-
-- `packages/server/src/bundle-commit.ts`；
-- `packages/server/src/agent-version-snapshot.ts`；
-- `packages/server/src/bundle-typecheck.ts`；
-- `packages/server/src/publish-from-worktree.ts`。
-
-### 4.9 发布事务
-
-Workify 的 Complete training 路径：
-
-1. 校验目标是有 `agentId`、版本和 cwd 的 Agent SessionMember；
-2. 提交训练 cwd 的脏文件；
-3. 获取以目标 Agent 为粒度的分布式 publish lock；
-4. 在锁内读取最高版本并由服务端计算下一 SemVer；
-5. 确认版本行和 Git tag 均不存在；
-6. 比较最新发布版本与 Candidate ref；
-7. 执行 Gate B；
-8. squash merge Candidate 到 Bundle 主线；
-9. 拒绝无内容变更；
-10. 创建 Git commit/tag；
-11. 执行资源清单和 Extension 校验；
-12. 分布式模式先上传 Bundle，再创建可被运行时引用的 AgentVersion 记录；
-13. 更新 Agent latestVersion；
-14. 记录审计和事件；
-15. 重新物化发布者自己的 cwd；
-16. 标记其他 SessionMember 在下一 Turn 前 reload。
-
-Git、对象存储和数据库不是一个 ACID 事务。Workify 通过顺序和补偿降低不一致：只在
-Bundle 可用后创建版本行；版本行创建前失败时删除 tag、重置 Git，并追加补偿审计。
-
-证据位置：
-
-- `packages/server/src/routes/agent-training.ts`；
-- `packages/server/src/publish-from-worktree.ts`；
-- `packages/server/src/agent-version-next.ts`；
-- `packages/server/src/coordination/`。
-
-### 4.10 发布传播与上下文更新
-
-Workify 不在发布请求中同步重建所有会话，而是给目标 Agent 的所有 SessionMember
-写入无版本号的 reload pending 标记。成员下一次正常 Turn 前重新解析 Agent 当前最新
-状态并物化 cwd。连续多次发布会自然合并成一次 reload-to-latest。
-
-Reload 保留聊天记录和会话级覆盖。Bundle、Skills 或 Extensions 变化时，系统向 Agent
-写入包含具体变化的 reload notice；可选 `rebuildContextOnReload` 会丢弃 Provider 原生
-推理/工具上下文，再从可见聊天记录重建，以减少旧行为惯性。
-
-证据位置：
-
-- `packages/server/src/session-member-reload.ts`；
-- `packages/server/src/session-member-provisioning.ts`；
-- `docs/references/runtime-sessions.md`。
-
-### 4.11 Workify 的验证方式
-
-Workify `train` Skill 要求训练 Agent 创建测试会话，发送 human-proxy 消息并检查
-`toolTrace`：
-
-- `totalCalls: 0` 表示 Agent 根本没有执行预期工具；
-- `status: error` 表示工具确实执行但失败；
-- `status: ok` 仍需检查输出，不能把进程退出码 0 当作业务成功。
-
-这种方式适合交互验证，但 Workify 当前没有第一等的 Evaluation Suite、不可修改的
-评测门槛、Candidate 与基线对比、Dataset Version 或 FineTune Job。
-
-### 4.12 Workify 不应直接照搬的部分
-
-| Workify 当前设计 | go-reagent 的取舍 |
+| 字段 | 作用 |
 | --- | --- |
-| AgentVersion 只固定 Bundle | `AgentRelease` 同时固定 Bundle、模型和工具策略 |
-| Agent config/capabilities 是 live state | 所有影响行为的配置进入 Release 快照 |
-| 公共资源采用最高已发布版本 | Release 固定精确资源版本，保证可复现 |
-| 训练验证主要由 Skill 引导人工执行 | 增加不可由训练 Agent 修改的 Evaluation Suite |
-| Agent 可在明确要求时 self-publish | 第一阶段不向 Agent 暴露 publish，只允许提交 Candidate |
-| Gate A 不拦 bash 写入 | 保留 Gate B，并让生产 exec 在 OS 沙箱层只写 scratch/tmp |
-| `service` Profile 通过会话切到 `general` 才能训练 | 使用明确的 Runtime Purpose 和服务端权限策略 |
-| Bundle Extensions/Hook 是核心资产 | 第一期只支持 AGENTS、文档、Skills 和脚本 |
+| id、tenant_id、agent_id、version | 版本身份及 Agent 内单调递增整数版本号 |
+| bundle_commit、bundle_tag、bundle_digest | Git 文件树引用和服务端计算的内容摘要 |
+| model_config_json | Provider、具体模型 ID、推理参数、必要能力配置和 SecretRef |
+| tool_policy_json、runtime_config_json | 精确工具/MCP 实现引用、参数、沙箱和运行限制 |
+| spec_digest | 文件摘要 + 规范化运行配置的联合摘要 |
+| validation_json | 本次发布校验结果、校验器版本、摘要、时间、脚本 smoke 结果 |
+| source_training_session_id | 来源训练会话；初始创建为 NULL |
+| published_by、published_at、change_summary | 发布人、时间及简短变更说明 |
 
-### 4.13 Workify 源码调用链与文件分工
+字段在创建后不可改写；激活状态只由 agents.active_version_id 表达。没有单独的 Bundle、
+ModelRevision、Release 或验证记录表。同一文件树可以被多个完整版本引用。
 
-Workify 没有一个名为“自主训练引擎”的单体模块；能力由会话物化、Runtime、Skill、两层
-Gate、Git 发布和 reload 多个模块共同完成：
+基础模型来自服务端已有 Provider 配置；管理员可在创建或训练会话配置中选择允许的
+模型，平台校验可用性和能力，再把有效配置完整复制到版本行。配置文件后续修改不能
+悄然改变已发布版本。密钥只存引用，不保存正文。
 
-```text
-创建/加载 Agent SessionMember
-  → prepareAgentSessionMember
-  → materializeBundleWorktree
-  → AgentRuntimeManager.ensureMemberRuntime
-  → 独立 worker + cwd
+有固定模型版本 ID 时优先固定；平台只能固定所请求的模型引用和参数，不能保证外部
+Provider 永远不修改权重或接口，也不承诺模型输出逐字可复现。旧模型/工具/密钥引用
+不可用时拒绝重新激活并返回具体原因。
 
-管理员发送 /skill:train
-  → slash command dispatch
-  → force mount train Skill
-  → Pi runtime turn
-  → attachGateAHook/checkGateA
-  → write/edit/bash 修改 member cwd
+validation_json 使用有界结构保存检查项、诊断、摘要和 smoke 结果，不塞无限日志。
+没有自动评测时明确记录 `review_mode=manual`；不能把结构验证成功标成模型质量评测通过。
+训练页面的临时检查记录可被下一次检查替换，真正发布证据保存在版本行中不可变。
 
-管理员 Complete training
-  → completeAgentTraining
-  → commitBundleIfDirty
-  → withPublishLock(agentId)
-  → publishFromWorktree
-  → checkBundleCommitDiff (Gate B)
-  → buildAgentVersionResourceSnapshot
-  → commit/tag/AgentVersion/latestVersion
-  → mark reload pending
-```
+### 4.3 agent_training_sessions：一次训练的候选状态
 
-| Workify 文件 | 真实职责 | go-reagent 对应落位 |
-| --- | --- | --- |
-| `packages/store-spec/src/types.ts` | AgentDefinition/Version/SessionMember 数据契约 | `domain/entity/agent*` |
-| `packages/server/src/session-member-provisioning.ts` | 从版本物化每成员 cwd 和资源快照 | `agentruntime/resolver.go` + `agentbundle/worktree.go` |
-| `packages/server/src/agent-runtime/manager.ts` | 按 member 创建、复用、销毁 worker | `application/service/agentruntime/` |
-| `packages/server/src/slash-commands/training-skill.ts` | 根据 capability 强制提供 train Skill | `application/tool/agenttraining/register.go` |
-| `packages/builtin-resources/skills/train/1.0.0/SKILL.md` | 教 Agent 如何选择和修改 Bundle 资产 | 平台维护的 training policy/Skill |
-| `packages/agent/src/runtime-adapters/system-append.ts` | 注入 Bundle authoring 分类和治理提示 | Training Runtime ContextBlock |
-| `packages/agent/src/runtime-adapters/gate-a.ts` | 工具调用前检查身份、能力和路径 | Training Tool middleware + WorkspacePolicy |
-| `packages/agent/src/runtime-adapters/pi.ts` | 把 Gate A hook 接入 Pi 生命周期 | RuntimeSpec 的 ExtraHandlers |
-| `packages/server/src/routes/agent-training.ts` | Complete training 用例编排 | `agenttraining` + `agentrelease` Service |
-| `packages/server/src/bundle-commit.ts` | 发布前检查真实 Git diff | CandidateValidator/Gate B |
-| `packages/server/src/publish-from-worktree.ts` | lock、SemVer、commit/tag、补偿 | `agentrelease/publish.go` + `agentbundle/publish.go` |
-| `packages/server/src/agent-version-snapshot.ts` | 固定发布时资源快照 | AgentRelease/RuntimeConfigSnapshot |
-| `packages/server/src/session-member-reload.ts` | 发布后标记并懒 reload | Conversation pending_release_id |
+| 字段 | 作用 |
+| --- | --- |
+| id、tenant_id、agent_id、admin_user_id | 训练身份、归属及创建管理员 |
+| conversation_id、base_version_id | 关联已有聊天会话，固定创建时的生产基线 |
+| candidate_head、candidate_config_json | 当前 Git HEAD 和拟发布的完整配置副本 |
+| candidate_partial | 当前候选是否仍含未完成的失败 Turn 改动 |
+| status、row_version、expires_at | 训练状态、CAS 和明确过期时间 |
+| validation_json | 最近校验结果，必须绑定当前 candidate_head 与 spec_digest |
+| operation_json | 单个当前操作：ID、类型、请求摘要、状态、结果摘要、时间及恢复信息 |
+| result_version_id | 发布成功后的版本 ID，用于重试返回既有结果 |
+| created_at、updated_at | 时间信息 |
 
-最关键的源码事实是：`completeAgentTraining` 不是让正在运行的 worker 覆盖生产目录；它把
-该 member cwd 作为候选交给服务端发布流程。go-reagent 方案 A 保留这条主线，同时把
-Workify 分散在 live Agent config 中的行为配置进一步收敛到不可变 AgentRelease。
+候选路径由服务端根据三个归属 ID 派生，不在业务表保存机器绝对路径。
+operation_json 是单操作槽，不追加无限数组：历史消息、工具输出和模型计量分别复用
+agent_messages 和已有 invocation 存储；checkpoint 历史通过 Git 引用查询。
 
-## 5. 目标和非目标
+### 4.4 复用与延后
 
-### 5.1 目标
+| 内容 | 第一版落点 |
+| --- | --- |
+| 普通/训练聊天 | 现有 agent_conversations、agent_messages |
+| 模型执行与 Token/成本 | 现有 model invocation 存储 |
+| checkpoint | Git commit + 持久 refs，训练表保存当前 HEAD |
+| 最近校验 / 发布证据 | 训练表 validation_json / 版本表 validation_json |
+| 发布重试 | 唯一来源训练会话 + result_version_id |
+| 前端重连 | 查询当前操作、消息和候选快照，不保证逐事件完整回放 |
+| 自动评测、训练数据、微调 | 不在本版创建表或注册接口 |
+| 独立事件日志、幂等键平台、Outbox | 不在本版建设；具体重试与发布传播见 §8 |
 
-- 管理员选择一个既有 Agent，创建一对一训练会话；
-- 训练会话中的 AI 使用该 Agent 的身份和当前 Release，而不是通用 Trainer 身份；
-- Agent 能通过聊天创建或修改 `AGENTS.md`、Skills、脚本和资料；
-- 每轮修改有 Git diff、checkpoint、RunID 和操作者审计；
-- Candidate 与生产 Release 完全隔离；
-- 发布前执行结构校验、安全校验和自动评测；
-- 自动修正循环有明确次数、Token 和成本上限；
-- 管理员能查看 diff、评测结果、成本、失败原因并决定发布或放弃；
-- 生产 Release 不可变并支持完整回滚；
-- 审核通过的纠正可进入 Fine-tuning 数据集；
-- Fine-tuning 模型必须通过相同 Evaluation Suite 才能组成新 Release；
-- 多 Agent、多 Release 运行不改变 `pi.Runner` 的无状态消息契约。
+现有模型调用流水并非任意 SSE 事件日志，不能宣称复用它就能按游标重放所有事件。
 
-### 5.2 非目标
+## 5. 文件布局与运行加载
 
-- 第一阶段不支持 Agent 构建其他 Agent；
-- 第一阶段不支持 Agent 自主切换生产版本；
-- 第一阶段不支持多人共同编辑同一个 Candidate；
-- 第一阶段不支持 Bundle 内自定义 Go Tool、Pi Extension 或生命周期 Hook；
-- 第一阶段不允许 Skill 脚本运行时安装依赖；
-- 不把训练数据库、Git、评测或 Fine-tuning API 放进 `pi`；
-- 不把普通用户对话自动当作训练样本；
-- 不允许 Agent 修改 Evaluation Suite 或发布阈值；
-- 不承诺不同模型 Provider 之间迁移原生推理上下文。
+### 5.1 目录
 
-## 6. 总体架构
+`<data-dir>` 是可配置的持久化数据根目录。按客户 → Agent → 版本/训练组织：
 
 ```text
-Admin Web
-  │
-  ├── Training API ───────────────┐
-  │                               │
-  │                         Training Service
-  │                               │
-  │                    ┌──────────┴──────────┐
-  │                    │                     │
-  │             Candidate Git           Training Runner
-  │                    │                     │
-  │                    └──── checkpoint ─────┘
-  │                               │
-  │                         Bundle Validator
-  │                               │
-  │                         Evaluation Service
-  │                               │
-  │                   isolated Evaluation Runner
-  │                               │
-  │                         Candidate Release
-  │                               │
-  └── Admin approval ─────── Release Service
-                                  │
-                         Active AgentRelease
-                                  │
-                           Runtime Manager
-                                  │
-                              pi.Runner
-
-Approved Training Examples
-  └── Dataset Version
-        └── FineTune Backend
-              └── Model Revision
-                    └── Evaluation Service
-                          └── Candidate Release
+<data-dir>/tenants/<tenant-id>/agents/<agent-id>/
+├── bundle.git/                           # 权威 Git 仓库
+├── versions/<version-id>/                 # 已发布行为文件，纯文件快照，只读
+├── training/<training-session-id>/
+│   ├── candidate/                        # 独立 worktree，作者只修改这里
+│   │   └── .tmp/                         # 平台临时区，不进入版本
+│   └── state/                            # 平台临时报告，不供作者根外访问
+└── runtime-cache/
+    ├── chat/<conversation-id>/<version-id>/
+    │   ├── AGENTS.md                      # 版本文件只读副本，其余文件同样物化
+    │   ├── skills/
+    │   ├── scratch/                       # 本会话临时产物
+    │   └── .tmp/
+    └── validation/<operation-id>/         # 校验/脚本 smoke 独立只读副本和临时区
 ```
 
-## 7. 领域模型
-
-### 7.1 Agent
-
-```go
-type Agent struct {
-    ID                      string
-    TenantID                string
-    Name                    string
-    Description             string
-    Presentation            AgentPresentation
-    Status                  AgentStatus
-    TemplateCode            string
-    BootstrapKey            *string
-    RequiredEvaluationSuiteID *string // Phase 2，不可变 Suite 版本行 ID
-    ActiveReleaseID         string
-    ActiveTrainingSessionID string
-    Version                 uint64
-    CreatedBy               string
-    CreatedAt               time.Time
-    UpdatedAt               time.Time
-}
-```
-
-约束：
-
-- `ID` 是稳定身份，发布和回滚不改变；
-- 一个 Tenant 可以拥有多个不同用途的 Agent；每个 Agent 只属于一个 Tenant；
-- `ActiveReleaseID` 是生产流量唯一权威指针；
-- `ActiveTrainingSessionID` 非空时拒绝该 Agent 的第二个活跃训练会话；同一租户的不同
-  Agent 可以同时训练，该限制不是租户级锁；
-- 删除 Agent 前必须先停用生产会话和训练会话；第一阶段只支持 archive。
-
-`AgentPresentation` 存数据库，包含 `Icon`、`Welcome`、`Starters[{Title, Prompt}]`、`Order`。
-创建时从 Template 复制，之后可由本租户管理员独立修改；只用于卡片、欢迎页和推荐问题，
-不注入系统行为提示词、不属于 Bundle，修改不触发行为版本发布。Name/Description 同样
-只作为目录展示元数据；真正的身份规则在 Bundle AGENTS.md 中。推荐问题只有用户点击
-并发送后才成为输入。图标使用平台允许的标识、纯文本转义展示，禁止注入 HTML。
-
-租户默认助手单独保存为 `agent_tenant_settings.default_agent_id`，允许为空，设置时校验
-同租户且 Agent 有可用 ActiveRelease。停用默认 Agent 时清空设置；列表接口可按 Order、ID
-稳定选择第一个可用项作为 UI 默认值，无可用项返回 null。普通聊天历史仍按 UserID 隔离。
-BootstrapKey 只标识内置种子（如 `builtin:writing`），TemplateCode 仅记录创建来源；同一
-租户可以从同一模板创建多个不同 Agent，不对 `(tenant_id, template_code)` 施加唯一约束。
-
-### 7.2 BundleVersion
-
-```go
-type BundleVersion struct {
-    ID                      string
-    TenantID                string
-    AgentID                 string
-    Version                 string
-    GitCommit               string
-    GitTag                  string
-    ContentDigest           string
-    Manifest                BundleManifest
-    SourceTrainingSessionID string
-    CreatedBy               string
-    CreatedAt               time.Time
-}
-```
-
-`BundleVersion` 创建后不可更新或删除。Git tag 使用
-`agent/<agentID>/bundle/v<semver>`；版本号在 Agent publish lock 内由服务端计算，模型
-和浏览器不能自行猜测。
-
-### 7.3 ModelRevision
-
-```go
-type ModelRevision struct {
-    ID               string
-    TenantID         string
-    ProviderID       string
-    ModelID          string
-    Kind             ModelRevisionKind // base | fine_tuned
-    BaseRevisionID   *string
-    DatasetVersionID *string
-    FineTuneJobID    *string
-    Status           ModelRevisionStatus
-    CreatedAt        time.Time
-}
-```
-
-基础模型也必须注册成 ModelRevision，避免 Release 对配置文件中的浮动模型名产生隐式
-依赖。
-
-Phase 1B 增加管理员模型注册 API（§16.5），bootstrap 也复用同一 Model Registry Service：
-
-- 认证租户范围内验证 Provider 已配置、SecretRef 可解析，执行有超时的模型可用性与能力
-  探针；失败不创建可用于 Release 的 ready revision，不接受客户端自报成功；
-- base 注册只接受平台允许的 Provider 和固定模型 ID，拒绝 `latest` 等浮动别名。若 Provider
-  无法提供不可变模型引用，不宣称可复现并拒绝进入本设计的正式 Release；
-- 按 `(tenant_id, provider_id, model_id, kind)` 唯一约束返回既有记录，引用内容不可原地
-  替换；停用只改变可用状态，保留历史引用，激活历史 Release 时重新检查可用性；
-- HTTP 仅接受 base 注册；fine_tuned 由 Phase 3 成功 Job 的受信任后台流程注册，不能
-  通过客户端设置 kind 或外部任务状态绕过评测；
-- 注册成功不会切换生产模型。创建 Agent 可选择已注册模型；已有 Agent 经 TrainingSession
-  选择 CandidateModelRevisionID，重新验证并按阶段评测、审批后形成新 Release。
-
-基础模型注册是 Phase 1B 能力，不推迟到 Fine-tuning 阶段；模型引用在本租户多个 Agent
-之间可共享，候选配置和发布指针仍各自独立。
-
-### 7.4 AgentRelease
-
-```go
-type AgentRelease struct {
-    ID                 string
-    TenantID           string
-    AgentID            string
-    Version            string
-    BundleVersionID    string
-    ModelRevisionID    string
-    RuntimeConfig      RuntimeConfigSnapshot
-    ToolPolicy         ToolPolicySnapshot
-    ToolPolicyDigest   string
-    ValidationRunID    string
-    EvaluationRunID    *string
-    ValidationMode     ReleaseValidationMode // manual_only | evaluated
-    PublishedBy        string
-    PublishedAt        time.Time
-}
-```
-
-Release 必须固定：
-
-- BundleVersion；
-- ModelRevision；
-- 精确 Skill/MCP/Tool 引用；
-- 运行限制、Thinking、Compaction、Loop Detection 等行为配置；
-- 权限策略摘要；
-- 与发布 Candidate digest 完全一致的成功 CandidateValidationRun；
-- Phase 2 后通过发布门槛的 EvaluationRun。Phase 1 的人工例外使用
-  `ValidationMode=manual_only` 且 `EvaluationRunID=nil`，不能伪装成已评测发布。
-
-`AgentRelease` 的上述内容创建后不可修改。是否承载流量只由
-`Agent.ActiveReleaseID` 表达；历史 Release 不写入 `retired` 状态，因此可以直接回滚
-激活，也不会因为状态字段变化破坏快照不可变性。评测前使用的是临时 `ReleaseSpec`，
-只有管理员发布时才创建正式 `AgentRelease`。
-
-API Key、Token 和密码不进入快照；快照只保存服务端 SecretRef。
-
-### 7.5 TrainingSession
-
-```go
-type TrainingSession struct {
-    ID                   string
-    TenantID             string
-    AgentID              string
-    AdminUserID          string
-    ConversationID       string
-    BaseReleaseID        string
-    CandidateModelRevisionID string
-    CandidateWorkspaceID string
-    CandidateBranch      string
-    CandidateHead        string
-    Status               TrainingStatus
-    AutoRepairAttempts   int
-    LastValidationRunID  *string
-    LastEvaluationRunID  *string
-    ActiveRunID          *string
-    ActiveOperationID    *string
-    OperationKind        *string // author | restore | configure | validate | evaluate | publish
-    OperationLeaseExpiresAt *time.Time
-    OperationFence       uint64
-    ExpiresAt            time.Time
-    Version              uint64
-    CreatedAt            time.Time
-    UpdatedAt            time.Time
-}
-```
-
-`CandidateWorkspaceID` 是存储适配器的逻辑定位符，不在业务表持久化某台机器的绝对
-路径；第一阶段本地适配器根据已校验的 TenantID、AgentID 和 TrainingSession ID，把它
-解析到 `tenants/<tenant-id>/agents/<agent-id>/training/<training-session-id>/candidate/`。
-一个 TrainingSession 只能训练一个 Agent，其 TenantID 必须与目标 Agent 相同；
-AdminUserID 标识创建这次训练的管理员，不作为文件目录层级。
-
-CandidateModelRevisionID 初始化为 BaseRelease.ModelRevisionID，只能由管理员 API 在
-active 且持配置修改操作 lease 时修改；ready 先转 active，校验/评测期间拒绝。
-选择同租户 ready 模型后失效旧报告，禁止修改 agent.yaml 来切换模型。纯模型变更允许
-复用既有 BundleVersion，但必须为新的 ReleaseSpec 重新验证、评测和审批；“非空变更”
-以 Bundle 与运行配置联合判断。候选不包含任意客户端传入的 ToolPolicy。
-
-状态机：
-
-```text
-active → validating → ready → published             Phase 1
-                    → evaluating → ready → published Phase 2
-                                 → repairing → active → validating
-```
-
-完整转换表是 `allowedTransition` 的权威定义，状态图仅展示主路径：
-
-| 起点 | 允许终点 | 条件 / 作用 |
-| --- | --- | --- |
-| `active` | `validating` | 冻结写入并获得验证操作 lease |
-| `validating` | `active` | 验证失败、被中断，或只验证成功后继续编辑 |
-| `validating` | `ready` | Phase 1 submit 成功，仍需人工确认未自动评测后才能发布 |
-| `validating` | `evaluating` | Phase 2 submit/evaluate，固定本次成功验证的快照 |
-| `evaluating` | `active` | 失败且不修正、预算耗尽、被中断或管理员结束自动循环 |
-| `evaluating` | `repairing` | 失败且允许自动修正，重新取得作者操作 lease |
-| `evaluating` | `ready` | 达到评测门槛 |
-| `repairing` | `active` | checkpoint 成功，或失败/无进展/预算耗尽；后续验证必须从 active 进入 |
-| `ready` | `active` | 开始新的作者 Turn、restore 或显式重验证；先失效旧证据再开放写入 |
-| `ready` | `published` | Release Service 完成发布事务 |
-| 任一非终态 | `cancelled`、`stale`、`expired` | 停止当前操作并确认无写入进程后关闭会话 |
-| `published`、`cancelled`、`stale`、`expired` | 无 | 终态无出边；重建须创建新 TrainingSession |
-
-任何候选内容或拟发布模型/工具配置变更都会使已有验证、评测证据失效。修正路径固定为
-`repairing → active → validating → evaluating`，不允许直接 `repairing → evaluating`。
-自动修正的剩余预算、修正次数由持久化循环状态保存，不因中间回到 active 而重置。
-`active_training_session_id` 在 `active|validating|evaluating|repairing|ready`
-期间始终被占用；`cancelled|stale|expired|published` 才释放。
-
-### 7.6 CandidateValidationRun、EvaluationSuite 与 EvaluationRun
-
-每次 Gate B dry-run 生成不可变的 `CandidateValidationRun`，固定可选 TrainingSessionID、
-来源（training/migration/revalidation）、CandidateHead、Candidate content digest、
-ModelRevisionID、ReleaseSpec digest、ToolPolicy digest、Validator 版本、状态、诊断、
-脚本 smoke 结果、耗时和创建时间。所有
-Release 都必须引用同一 Candidate digest 的成功 ValidationRun；Phase 1 也不能只相信
-页面上一次性的“校验通过”提示。
-
-EvaluationCase 支持：
-
-- 输入消息和可选历史；
-- 固定 Context fixture；
-- Tool fake 或受控真实 Tool；
-- 必须调用/禁止调用的 Tool；
-- 参数 JSON Schema 或字段断言；
-- 精确文本、正则、结构化 Schema、关键事实断言；
-- 禁止内容和安全规则；
-- 可选独立 Judge Model 评分；
-- hard/soft 严重级别。
-
-EvaluationRun 固定 Candidate digest、ModelRevision、ToolPolicy digest、Suite version、
-每个 Case 结果、总成本和耗时。Candidate digest 变化后旧报告不能用于发布。
-
-Phase 2 通过管理员 API 管理 Evaluation Suite，采用“完整导入一个不可变版本”的方式，
-不提供会原地修改历史 Case 的 CRUD：
-
-- Suite 按 TenantID + AgentID 归属；逻辑 SuiteKey 下可以有多个版本，每次导入由服务端
-  计算版本号和内容摘要。一条 `agent_evaluation_suites` 记录代表一个不可变版本；
-- 请求含完整 Cases、hard/soft 阈值、Judge 配置及 fixture 引用，校验 Case ID 唯一、
-  Schema/断言语法、工具替身、Judge 可用性、配额和 fixture 摘要；不接受任意服务端路径；
-- `agent_evaluation_cases.suite_id` 指向具体版本行；用例、阈值和配置修改必须导入新版本，
-  被 Run 引用的版本不可删除。Agent 无 Suite 管理工具，也不挂载隐藏期望；
-- 管理员将一个版本绑定为 `Agent.RequiredEvaluationSuiteID`；Phase 2 无绑定时 submit
-  返回“未配置评测集”，不能进入 ready。评测只使用服务端绑定的版本，不让 Author 挑选
-  简单用例或传入较低门槛；
-- EvaluationRun 固定该版本 ID 和摘要。绑定更新后保留旧报告用于审计，但旧报告不能批准
-  新发布；发布锁内重检当前绑定，变化时要求针对新 Suite 重跑评测。绑定更新与发布共用
-  Agent 锁和 CAS，不能在最终检查后悄然换门槛。绑定变更在同一事务内使 ready 候选回到
-  active 并清除旧评测引用；进行中的 Run 保留原版本完成报告，但写入 ready 前重检绑定，
-  不一致则回 active 并提示重新评测。
-
-首套生产 Suite 由管理员导入并绑定；数据库 migration 只建 schema，不塞业务测试集。
-测试 Fake/fixture 仅用于开发验收，不能当作默认生产门槛。
-
-### 7.7 TrainingExample、DatasetVersion 与 FineTuneJob
-
-TrainingExample 只来自管理员明确审核：
-
-```go
-type TrainingExample struct {
-    ID                    string
-    TenantID              string
-    AgentID               string
-    Input                 []TrainingMessage
-    ExpectedOutput        TrainingMessage
-    RejectedOutput        *TrainingMessage
-    ExpectedToolCalls     []ExpectedToolCall
-    Tags                  []string
-    SourceConversationID  string
-    SourceRunID           string
-    ApprovedBy            string
-    ApprovedAt            time.Time
-}
-```
-
-`TrainingMessage` 是 Fine-tuning 领域自己的规范消息结构，只包含 role、content blocks 和
-规范 Tool call/result，不 import `pi/ai` 或任何 Provider SDK。应用层在运行评测时转换为
-`pi.Message`，FineTune adapter 在提交外部任务时转换成 Provider 格式。
-
-DatasetVersion 保存规范化后的样本 ID 集合、目标 Provider 格式、内容摘要、脱敏报告和
-创建人。FineTuneJob 保存外部任务 ID、Provider、基础模型、超参数、状态、错误和 Usage。
-
-## 8. 文件系统和 Git 布局
-
-第一阶段使用本地文件系统和每 Agent 一个 Bundle Git repository。`<data-dir>` 是服务端
-配置的数据根目录占位符，例如本地开发的 `./data` 或线上持久卷的挂载目录；它不是固定
-目录名，也不是代码仓库中的模板目录。目录按“租户 → Agent → 发布版本 / 训练会话”组织：
-
-```text
-<data-dir>/
-└── tenants/
-    └── <tenant-id>/                         # 一个客户组织
-        └── agents/
-            └── <agent-id>/                  # 该客户的一个 Agent，可有多个并列目录
-                ├── bundle.git/             # 此 Agent 的权威 bare repository
-                ├── releases/
-                │   └── <bundle-version-id>/ # 已发布 Bundle，不可变运行物化目录
-                ├── training/
-                │   └── <training-session-id>/ # 此 Agent 的一次训练会话
-                │       ├── candidate/      # 从 BaseRelease tag 检出的独立 worktree
-                │       │   └── .tmp/       # 平台创建的训练进程临时目录，不属于 Bundle
-                │       ├── scratch/        # 临时工作文件，不进入 Bundle
-                │       └── state/          # 运行状态、临时报告，不进入 Bundle
-                └── runtime-cache/          # 停止对应 Runtime 后可删除、可重建
-                    ├── chat/<conversation-id>/<release-id>/
-                    │   ├── AGENTS.md       # 已发布 Bundle 的只读副本
-                    │   ├── skills/         # 其余 Bundle 文件同样复制到此根目录
-                    │   ├── scratch/        # 本会话临时产物
-                    │   └── .tmp/           # 本会话进程临时文件
-                    └── evaluation/<run-id>/<case-id>/<attempt-id>/
-                        ├── AGENTS.md       # Candidate 快照的只读副本
-                        ├── scratch/        # 本次 Case Attempt 独占
-                        └── .tmp/
-```
-
-例如，客户 `customer-a` 可以同时拥有 `support-agent` 和 `sales-agent`，对应
-`tenants/customer-a/agents/support-agent/` 和 `tenants/customer-a/agents/sales-agent/`；
-它们各自拥有独立的 `bundle.git/`、`releases/` 和 `training/`。
-
-每个 `training/<training-session-id>/` 表示一次完整训练会话，不是一轮消息。
-`candidate/` 内保存当前候选行为文件，多轮修改的历史由 Git checkpoint 保存。
-发布会创建新的不可变 Bundle 版本和 AgentRelease，并更新该 Agent 的 ActiveReleaseID；
-不会把可写的 candidate 目录直接作为生产目录，也不会覆盖旧版本。
-
-数据库保存 TenantID、AgentID、TrainingSession ID、AdminUserID、版本引用和状态；
-文件系统保存 Bundle 内容与执行所需的目录。目录层级便于定位和清理，但不能代替数据库
-归属校验与权限检查。`releases/` 的目录键是 BundleVersionID，完整 AgentRelease 在
-数据库中另外固定模型、工具策略和验证证据。
-
-训练会话的 `scratch/`、`state/` 固定放在 `candidate/` 外，与其同级，仅供平台服务暂存
-数据，不向 Training Runner 开放根外访问；它们不属于 Candidate Git worktree。
-checkpoint commit 和持久 ref 保存在 `bundle.git/`，
-checkpoint 元数据保存在数据库，不能依赖临时 `state/` 目录恢复训练历史。
-线上第一阶段必须把持久数据放在持久卷上；对象存储和多节点物化属于后续规模化阶段。
-
-### 8.1 运行目录与只读边界
-
-`releases/<bundle-version-id>/` 是纯 Bundle 物化目录，始终不可变，不创建 scratch/tmp。
-Chat WorkDir 固定为本 Agent 的 `runtime-cache/chat/<conversation-id>/<release-id>/`：
-
-1. 服务端校验 Release 的 Bundle digest，把完整 Bundle 复制到该 WorkDir 根目录；
-2. 使用普通文件复制或写时复制，禁止使用连接权威文件的硬链接或越界符号链接；
-3. 创建 `scratch/` 和 `.tmp/`，其余文件和目录在 OS 沙箱内只读，根目录也不可写；
-4. `WritablePrefixes=["scratch", ".tmp"]`，TMPDIR 指向 WorkDir 内 `.tmp/`；沙箱还须
-   隔离系统临时目录，不能通过宿主共享 `/tmp` 读取其他会话数据；
-5. Tool、exec、MCP 和 Subagent 继承相同读写边界，不得读取其他会话的工作目录。
-
-Evaluation 与脚本 smoke 使用同样的物化方式，但按 Run/Case/Attempt 创建全新目录。
-smoke 使用 `runtime-cache/validation/<validation-run-id>/`。Training WorkDir 仍为
-`training/<training-session-id>/candidate/`；平台预建其 `.tmp/` 并设置 TMPDIR，与现有
-沙箱的根内临时目录约定一致。其他脚本中间文件必须在 checkpoint 前清理；脚本 smoke
-在隔离验证目录执行。
-平台解析 checkpoint、日志和报告时不依赖 Agent 访问同级的 `state/`。
-
-临时目录不属于可持久依赖的会话记忆：Runtime 淘汰、进程重启或版本切换后可清空。
-需要长期保存的用户产物由应用层提升到独立附件存储，不能只返回缓存中的本地路径。
-工作目录的读取与清理都要校验租户、Agent、会话归属；删除须等待对应执行和子进程结束。
-发布只保存 Bundle 内容，不把运行目录中的 scratch/tmp 重新打包；Bundle 顶层永久保留
-`scratch/`、`.tmp/`、`state/`，这些路径不能进入 Bundle commit，避免与平台目录冲突。
-Candidate 中仅允许平台创建的根级 `.tmp/` 作为非 Bundle 临时区；物化器保存路径身份并
-拒绝该目录被替换为链接或特殊文件。checkpoint/快照枚举仅排除已确认的根级 `.tmp/`
-和平台 Git 管理入口，不信任 Agent 修改的 .gitignore，不排除其他未跟踪或被忽略文件。
-暂存采用服务端文件清单，禁止直接 `git add -A`；发现暂存区/commit 含 `.tmp/` 即拒绝。
-临时目录独立计入运行磁盘配额，freeze 后可清空，不得用其持久化行为资产。
-
-### 8.2 Bundle 清单
-
-Bundle 结构：
+Bundle 内容固定为：
 
 ```text
 AGENTS.md
-skills/
-  <skill-id>/
-    SKILL.md
-    scripts/
-    references/
-    assets/
+skills/<skill-id>/SKILL.md
+skills/<skill-id>/scripts/
+skills/<skill-id>/references/
+skills/<skill-id>/assets/
 documents/
 assets/
-agent.yaml
 ```
 
-`agent.yaml` 只声明非秘密的 Bundle 元数据：格式版本、入口 AGENTS、Skill roots、脚本
-运行要求和兼容的最小 Runtime 版本。模型、权限和密钥不写入该文件。
+简单身份和单条规则放 AGENTS.md；专题规则放 documents 并简短引用；多步骤流程放
+skills，必要时附脚本。第一版采用固定入口和目录，不引入 agent.yaml 清单协议；兼容性
+由平台版本和发布校验记录判断。大知识库、密钥和平台生成配置不进入 Bundle。
 
-第一阶段完整示例（`min_runtime_version` 仅示例，bootstrap 写部署实际兼容的版本）：
+### 5.2 加载路径
 
-```yaml
-format_version: 1
-entry_agents: AGENTS.md
-skill_roots:
-  - skills
-script_requirements:
-  - language: sh
-    min_version: "5.0.0"
-  - language: python
-    min_version: "3.11.0"
-min_runtime_version: "0.1.0"
+1. 页面列举 Agent 时仅按租户查数据库，不扫描所有目录或启动全部实例。
+2. 新聊天提交 agent_id，服务端核验租户及 enabled 状态，绑定 active_version_id。
+3. 消息执行前加载该会话及 AgentVersion，将版本文件复制到会话 WorkDir，再装配快照
+   中的模型、工具和权限；只读文件不能使用连接权威文件的可写硬链接或越界符号链接。
+4. WorkDir 根和行为文件只读，仅 scratch/.tmp 可写，系统临时目录不得暴露其他会话数据。
+5. 当前会话历史单独传入 pi.RunRequest；不会因为多个会话选了同一个 Agent 就共享历史。
+
+应用层 Runtime Manager 按以下键按需创建、复用同会话实例：
+
+```text
+chat:tenantID:agentID:conversationID:versionID:specDigest
+training:tenantID:agentID:trainingID:operationID:specDigest
+validation:tenantID:agentID:operationID:specDigest
 ```
 
-| 字段 | 严格校验规则 |
-| --- | --- |
-| `format_version` | 必填整数，第一阶段只接受 1 |
-| `entry_agents` | 必填，第一阶段固定为 `AGENTS.md`，必须为根内普通 UTF-8 文件 |
-| `skill_roots` | 必填字符串数组，第一阶段固定为 `[skills]`，与真实 Skill 发现路径一致 |
-| `script_requirements` | 必填数组；无脚本时为 `[]`；条目只允许 `language`、`min_version` |
-| `language` | 仅 `sh`、`python`，不得重复；`sh` 使用平台批准的 Bash 运行器 |
-| `min_version` | 必填三段版本号，与部署镜像中批准的解释器版本比较，不触发安装 |
-| `min_runtime_version` | 必填三段版本号，由平台 Runtime 版本判断兼容性 |
+不跨会话共用 WorkDir 或 MCP 子进程。训练操作结束即回收作者实例及写入进程，校验
+实例结束即关闭。最多 32 个热实例，空闲 15 分钟回收，活跃执行不淘汰；无空闲容量时
+有界等待后返回可重试的繁忙错误。不同 Agent 可以同时训练。
 
-解析使用 YAML `KnownFields(true)`，同时拒绝重复键、多文档、类型错误和字段缺失。
-所有层级的未知键均拒绝；清单只能声明要求，不能增加模型、Tool/MCP 权限或安装依赖。
-`skills/` 即使为空也作为逻辑 Skill root，由物化器创建空目录；Git 不保存空目录。
+缓存目录不是持久会话记忆，重启或版本切换后可清理；重要产物必须由平台另行持久保存。
+目录回收前确认没有进程使用。版本、训练 HEAD 和消息记录始终可从数据库及 Git 恢复。
 
-永久拒绝：
+### 5.3 平台临时目录与 Git 边界
 
-- 绝对路径和越界符号链接；
-- socket、device、FIFO 等非普通文件；
-- Git submodule；
-- 嵌套 `.git`；
-- `.runtime/`、`.system/`、Secret 文件和平台生成配置；
-- 单文件超过 1 MiB；
-- Bundle 总解压大小超过 32 MiB；
-- 单个 `SKILL.md` 超过现有 256 KiB 限制；
-- 路径数量超过 2,000。
+candidate 根级 .tmp 由平台创建，写入临时文件允许，但目录本身不得替换为链接/特殊
+文件。checkpoint 枚举只排除已确认的根级 .tmp 和平台 Git 管理入口，不依赖模型可改写
+的 .gitignore，不忽略其他未跟踪文件。服务端按检查后的清单暂存，禁止直接 git add -A。
+.tmp、scratch、state 不能出现在 Bundle commit 中，平台根级保留目录的符号链接也拒绝。
+发布前重新校验临时目录身份和完整树。Agent 不可访问 bundle.git 或修改 worktree 的
+Git 管理入口；平台负责 Git 操作，训练沙箱必须保护这些管理文件不被 shell 改写。
 
-大知识库不进入 Bundle，后续通过独立 Knowledge Base 引用。
+## 6. SDK 和运行权限
 
-### 8.3 备份与恢复
-
-Phase 1 上线前必须具备异机备份和恢复演练，持久卷不等于备份。备份至少包含数据库
-一致性快照、所有 `bundle.git` 的对象及 refs/tags（含 `refs/training/*`）、所引用附件，
-以及不含 Secret 正文的恢复清单。Secret 由宿主密钥系统单独备份和恢复。
-
-第一阶段采用协调备份窗口：暂停训练写入、checkpoint、发布及其他业务写入，排空活跃
-操作并禁止 Git GC，再备份数据库及仓库，记录备份批次和所有引用摘要后恢复写入。
-备份失败不能标为可恢复批次。最低每日一次完整协调备份并在数据库迁移前额外备份；
-上线记录明确 RPO 不超过 24 小时，RTO 以恢复演练实测值验收。更严格的在线增量方案
-另行设计，不以 Phase 4 作为当前不备份的理由。
-
-恢复到隔离环境后运行 `git fsck`，逐条核对数据库的 Bundle commit/tag/digest、CandidateHead
-和 checkpoint refs，再重建 releases、candidate 及 runtime-cache。缺失的引用必须报告并
-阻止对应 Agent 激活，不能静默回退模板。未 checkpoint 的改动不在恢复保证内；运行中
-验证/评测标记 interrupted，Outbox 和外部 FineTune Job 按幂等规则恢复，验收后再开放流量。
-
-## 9. Runtime Purpose 与权限模型
-
-### 9.1 三种运行目的
-
-| Purpose | Workspace | 写权限 | Tool 集 | 会话历史 |
-| --- | --- | --- | --- | --- |
-| `chat` | 会话 + Release 独立 WorkDir，内含只读 Bundle 副本 | 本 WorkDir 的 `scratch/`、`.tmp/` | Release 生产 ToolPolicy | 用户会话历史 |
-| `training` | Candidate | 仅可写状态且持有独占操作 lease 时可写，平台路径除外 | 生产工具的安全替身 + 作者工具 | 管理员训练历史 |
-| `evaluation` | Run + Case + Attempt 独立 WorkDir，内含只读 Candidate 副本 | 本 WorkDir 的 `scratch/`、`.tmp/` | 生产 ToolPolicy 的只读实现或测试替身 | 每个 Case 独立 |
-
-Runtime Purpose 由应用层选择，不由客户端或模型通过 `pi.RunRequest` 传入。
-
-### 9.2 `train_self` 的业务语义
-
-go-reagent 第一阶段不把 `train_self` 做成 Agent 的永久默认能力字段。它由
-Training Service 根据以下事实派生：
-
-- 请求已经通过管理员认证；
-- TrainingSession 属于该管理员；
-- TrainingSession 的目标 Agent 与 Candidate 相同；
-- 会话状态为 `active|repairing`；`ready` 必须先转回 active 并清除旧证据；
-- 当前作者 Run 持有服务端签发且未过期的 Candidate 独占操作 lease，OperationKind 为
-  `author`，且 OperationFence 与运行实例一致。
-
-普通 Chat API 永远不能请求或获得 `train_self`。这比在通用会话上开放任意 Capability
-覆盖更符合当前“管理员一对一训练”的单一产品目标。
-
-`validating|evaluating|ready` 均冻结 Candidate。所有写入入口共用操作 lease：作者 Turn、
-restore、checkpoint、验证快照和发布不得并发触碰工作树。restore 由平台在 active 状态下
-使用 `restore` lease 执行，不向模型派生 train_self；ready 的 restore 先失效证据。
-
-冻结不是只移除 write Tool：服务端先关闭作者工具调度，等待当前调用结束，停止并回收
-exec/process、MCP、Subagent 等所有可能持有写权限的进程；无法确认停止时不得开始验证、
-评测或发布。随后保存 checkpoint，释放作者 lease，以新的 fence 获取验证操作 lease，
-只对冻结快照执行检查。验证/评测期间拒绝新作者 Run 和 restore，返回状态冲突。
-
-模型调用 `validate_candidate`、`submit_candidate` 或 Phase 2 的评测 Tool 时，只记录
-本轮结束后的操作请求并返回 queued，不在仍可继续写文件的作者 Turn 中同步校验。
-Runner 停止并完成 checkpoint 后由服务编排器执行请求，结果经 SSE 推送；Agent 不能把
-queued 当作验证通过。多个同类请求合并，submit/evaluate 包含验证；失败或 partial Run
-取消排队请求，必须由后续成功 Run 修复。HTTP 直接触发检查同样先取得独占操作 lease。
-
-### 9.3 工具矩阵
-
-| Tool | Chat | Training | Evaluation |
-| --- | ---: | ---: | ---: |
-| `read` | 是 | 是 | 是 |
-| `write/edit/apply_patch` | 否 | 是 | 否 |
-| `exec/process` | 按 Release | 是 | 按 Release |
-| 生产业务 Tool | 按 Release | 只读实现或安全替身 | 只读实现或安全替身 |
-| `inspect_candidate` | 否 | 是 | 否 |
-| `validate_candidate` | 否 | 是 | 否 |
-| `run_candidate_evaluation`（Phase 2） | 否 | 是 | 否 |
-| `submit_candidate` | 否 | 是 | 否 |
-| `publish_release` | 否 | 否 | 否 |
-| 修改 Evaluation Suite | 否 | 否 | 否 |
-| 提交 FineTune Job | 否 | 否 | 否 |
-
-Agent 调用 `submit_candidate` 只排队请求服务端校验/评测，服务端在通过后把状态变成 `ready`；
-发布只能由管理员 HTTP API 进入 Release Service。
-
-应用层 Tool Catalog 必须给内置 Tool 和 MCP Tool 声明 `read_only`、`reversible_write` 或
-`external_side_effect`。Training/Evaluation 默认只能使用只读实现；写操作和邮件、支付、
-工单提交等外部副作用必须使用 Fake、dry-run 或专用测试租户。不能为了验证候选行为而
-修改真实生产数据。未声明 Effect 的 Tool 在 Training/Evaluation 中默认拒绝，而不是
-按只读处理。
-
-## 10. `pi` SDK 边界
-
-### 10.1 保持不变
-
-以下公共契约保持不变：
-
-```go
-type Runner interface {
-    Run(context.Context, RunRequest, EventListener) (RunResult, error)
-}
-```
-
-`pi` 不增加 AgentID、ReleaseID、TrainingSessionID、数据库、Git、评测和 Fine-tuning
-概念。业务标识继续只存在于上层 Span、Repository 和 Runtime Manager。
-
-### 10.2 新增 Workspace 写策略
-
-`pi.Options` 增加通用文件策略，而不是增加 TrainingMode：
+### 6.1 Phase 1A：通用文件写策略
 
 ```go
 type WorkspaceWriteMode string
-
 const (
     WorkspaceWriteRestricted WorkspaceWriteMode = "restricted"
-    WorkspaceWriteAll        WorkspaceWriteMode = "all"
+    WorkspaceWriteAll WorkspaceWriteMode = "all"
 )
-
 type WorkspacePolicy struct {
-    WriteMode        WorkspaceWriteMode
+    WriteMode WorkspaceWriteMode
     WritablePrefixes []string
 }
-
-type Options struct {
-    WorkDir          string
-    WorkspacePolicy  WorkspacePolicy
-    AllowWrite       bool
-    AllowExec        bool
-    // existing fields...
-}
 ```
 
-语义：
+pi.Options 接收 WorkspacePolicy，仍保留 WorkDir、AllowWrite、AllowExec。内部
+规范化对象由底层公共包持有，避免 tools/sandbox 反向 import pi 形成循环。
 
-- `WorkspaceWriteRestricted`：文件修改工具仍由 `AllowWrite` 决定是否注册；一旦注册，
-  文件工具与 exec 都只能写 `WritablePrefixes`。Chat/Evaluation 设置
-  `AllowWrite=false`，exec 只写 §8.1 的独立 WorkDir 内 `.tmp/`、`scratch/`；
-- `WorkspaceWriteAll`：文件修改工具按 `AllowWrite` 注册；exec 可写 WorkDir，但仍受路径
-  边界和平台沙箱限制；
-- `WritablePrefixes` 只允许规范化后的 WorkDir 相对目录；不能配置绝对路径、`..` 或
-  符号链接逃逸；
-- `AllowWrite` 或 `AllowExec` 为 true 时，`WriteMode` 不能为空，避免旧调用方无意获得
-  全 Workspace 写权限；
-- Host sandbox 无法执行限制写保证时，
-  `AllowExec=true + WorkspaceWriteRestricted` 必须启动失败，不能静默降级为宿主可写。
+- AllowWrite 控制 write/edit/apply_patch 注册，不决定 shell 可以修改哪些路径。
+- restricted 的文件变更和 exec 只能写声明的相对目录；禁止绝对路径、父级分量及链接
+  逃逸。可写子根使用受保护的 os.Root，拒绝写穿到同 Workspace 的只读文件。
+- all + AllowWrite=true 保持 Coding 行为；业务训练还须在后续阶段保护平台 Git 管理路径。
+- 启用 AllowWrite、AllowExec 或 stdio MCP 时模式必须显式给定；无进程只读使用可采用
+  空可写集，不能为了探针而在权威目录创建 .tmp。
+- chat 和校验设置 AllowWrite=false，exec 只写各自 WorkDir 的 scratch/.tmp。
+- Seatbelt/Bubblewrap 必须在 OS 层实施同一规则；Host 无法保证 restricted 进程执行时
+  fail closed，不能降级；MCP、Subagent 继承同一限制。
+- 生产进程需要 .tmp 时它必须列入可写前缀，不能静默扩大配置。
 
-Seatbelt 和 Bubblewrap 必须在 OS 层实现相同策略，不能只依赖 Tool middleware。
-
-`pi.New` 的关键装配变化如下，策略只规范化一次并传给所有可产生子进程或写句柄的组件：
-
-```go
-func New(opts Options) (*Agent, error) {
-    policy, err := NormalizeWorkspacePolicy(opts.WorkDir, opts.WorkspacePolicy)
-    if err != nil {
-        return nil, fmt.Errorf("pi: workspace policy: %w", err)
-    }
-    runner, err := sandbox.NewRunner(opts.WorkDir, policy.SandboxPolicy())
-    if err != nil {
-        return nil, fmt.Errorf("pi: select sandbox runner: %w", err)
-    }
-    workspace, err := tools.NewWorkspace(tools.Root(opts.WorkDir), policy.FilePolicy())
-    if err != nil {
-        return nil, err
-    }
-    extensions, err := mcp.New(opts.MCPServers, tools.Root(opts.WorkDir), runner, policy.MCPPolicy())
-    // 后续 Registry/Provider/Loop/Agent 装配保持现有顺序。
-}
-```
-
-这里不是要求暴露三个新的公共 Policy 类型；`SandboxPolicy/FilePolicy/MCPPolicy` 可以是
-`pi` 内部适配结果。公共 SDK 只承诺 `WorkspacePolicy`，避免调用方分别配置后产生漂移。
-
-### 10.3 Workspace 检查接口
-
-`pi/harness` 暴露只读检查能力，供发布服务复用现有 AGENTS/Skill 解析契约：
+### 6.2 Phase 1A：Workspace 检查
 
 ```go
 type WorkspaceReport struct {
     AgentInstructionsDigest string
-    Skills                  []skills.Summary
-    Diagnostics             []skills.Diagnostic
+    Skills []skills.Summary
+    Diagnostics []skills.Diagnostic
 }
-
 func InspectWorkspace(ctx context.Context, workDir string) (WorkspaceReport, error)
 ```
 
-它不做 Git、Release、权限或业务审批，只验证 Runtime 实际能否加载该 Workspace。
+复用 PromptComposer 的 AGENTS 读取校验及 skills.Discover，和真实 ContextBuilder
+共享加载结果；接口只读，不创建 Runner、临时目录或执行脚本。检查返回诊断，业务层
+决定发布是否可接受，不在 SDK 内实现训练状态机或 Git 验证器。
 
-### 10.4 应用层 Runtime Manager
+### 6.3 业务权限
 
-新增应用端口：
+| 执行目的 | 可写内容 | 工具 |
+| --- | --- | --- |
+| chat | 本会话 scratch/.tmp | 版本固定的生产工具 |
+| training | 当前候选行为文件与 .tmp | 文件作者工具、受控 exec 和无副作用业务工具 |
+| validation | 本次校验 scratch/.tmp | 校验器及无副作用 smoke |
 
-```go
-type RuntimeSpec struct {
-    Key             string
-    Purpose         RuntimePurpose
-    WorkDir         string
-    WorkspacePolicy pi.WorkspacePolicy
-    Platform        providers.Options
-    Tools           []ResolvedTool
-    MCPServers      []ResolvedMCPServer
-    ConfigDigest    string
-}
+train_self 不是 Agent 永久能力；只有经过认证的训练管理员，在 active 状态且持本次
+作者操作授权时派生。validating/ready/终态不启动可写作者实例。第一版不向模型提供
+publish、模型配置编辑、评测或训练其他 Agent 的工具。
 
-type RuntimeLease interface {
-    Runner() pi.Runner
-    Release()
-}
+训练与 smoke 默认不允许外部副作用。优先只开放文件工具与受控脚本；业务工具只有
+明确只读或已有安全替身时才加入，否则不注册。不建立新的完整 Effect Catalog 平台。
+训练默认禁网策略在 Phase 1C 业务执行边界实现；Phase 1A 不扩展网络策略接口。
 
-type RuntimeManager interface {
-    Acquire(context.Context, RuntimeSpec) (RuntimeLease, error)
-    Invalidate(context.Context, string) error
-    Close(context.Context) error
-}
+## 7. 训练、checkpoint 和校验
 
-type ChatRuntimeProvider interface {
-    AcquireChat(context.Context, ChatIdentity) (RuntimeLease, error)
-}
-```
-
-`ReleaseResolver` 实现 `ChatRuntimeProvider`：读取 Release、解析 Bundle/Model/ToolPolicy，
-构造 RuntimeSpec 后再调用 RuntimeManager。Conversation 只依赖 ChatRuntimeProvider，
-不能自行拼装 RuntimeSpec。
-
-缓存 Key：
-
-- Chat：`tenant:<tenantID>:agent:<agentID>:chat:<conversationID>:release:<releaseID>:<configDigest>`；
-- Evaluation：
-  `tenant:<tenantID>:agent:<agentID>:evaluation:<runID>:<caseID>:<attemptID>:<configDigest>`；
-- Training：`tenant:<tenantID>:agent:<agentID>:training:<trainingSessionID>:<operationFence>:<configDigest>`。
-
-所有 Key 由服务端从已校验归属的记录生成，ConfigDigest 覆盖快照、模型、工具、写策略
-和工作目录规格。ChatIdentity 包含 TenantID、UserID、ConversationID、AgentID、ReleaseID，
-Resolver 校验完整归属后才解析文件路径；列举租户 Agent 仅查数据库，不预启动 Runtime。
-同一会话同一 Release 可复用空闲实例，不同会话不复用实例或 MCP 子进程；只允许缓存共享
-不可变 Bundle 内容及解析结果。Evaluation Attempt 完成即关闭，不跨 Case 复用。
-Training 的 operationFence 变化必须重建实例，不能复用持有旧写权限或后台进程的实例。
-
-Runtime Manager 负责 `pi.New`、`Agent.Start`、引用计数、空闲 LRU、`Agent.Stop` 和并发
-单飞。第一阶段限制最大 32 个热 Runtime，空闲 15 分钟回收；活跃 Run 不回收。
-
-达到容量时先淘汰空闲实例；没有可淘汰实例则有界等待并返回可重试的繁忙错误，不突破
-上限或杀死活跃 Run。同一 Conversation 的执行及版本迁移串行；迁移先取得新目录和
-Runtime，再提交会话版本，失败则保留旧版本。旧实例退出后才能清理其目录。
-
-`ResolvedTool`/`ResolvedMCPServer` 是应用层结构，包含精确 revision、Effect 和针对当前
-Purpose 选择的生产/Fake/dry-run 实现。Runtime Manager 先校验 ToolPolicy 和 Effect，
-再提取 `ai.Tool`/`mcp.ServerOptions` 传给 `pi.New`；`pi` 不感知 RuntimePurpose 或业务
-副作用分类。
-
-## 11. 训练会话完整流程
-
-### 11.1 创建
-
-1. 管理员调用 `POST /agents/{id}/training-sessions`；
-2. 服务端读取 Agent 当前 ActiveRelease；
-3. 用 Agent 行锁/乐观版本设置 `active_training_session_id`；
-4. 创建 TrainingSession 和类型为 `training` 的 Conversation；
-5. 从 ActiveRelease.BundleVersion tag 创建 Candidate worktree；
-6. 在该 Agent 的 `training/<training-session-id>/` 下创建 `candidate/` 及其同级的
-   `scratch/`、`state/`；后二者位于 Git worktree 外，不纳入 Bundle。同时创建持久的
-   `refs/training/<trainingID>/head`，防止删除 worktree 后 checkpoint 被 Git GC；
-7. 组装 Training RuntimeSpec：相同 Agent 身份、相同基础模型、Candidate WorkDir、
-   写权限和训练工具；
-8. 向每轮 `pi.RunRequest.Context` 注入平台维护的 `agent-training-policy`；
-9. 返回 TrainingSession、Agent 信息、基础 Release 和欢迎语。
-
-`agent-training-policy` 明确：
-
-- 这是管理员授权的永久行为训练；
-- 修改只发生在 Candidate；
-- 如何在 AGENTS、专题文档和 Skill 之间分流；
-- 必须先检查现有内容再修改；
-- 必须运行与变更风险相称的验证；
-- 不能修改评测用例、发布规则、平台文件或密钥；
-- 不得宣称发布成功，除非收到 Release Service 的真实结果。
-
-### 11.2 每轮对话
-
-1. 校验管理员、TrainingSession 所有权和状态；ready 先转 active 并失效旧证据，再以 CAS
-   获取作者操作 lease 和新的 OperationFence；接管先执行 §19.3 的旧进程隔离；
-2. 获取 Training Runtime；
-3. 加载训练 Conversation History；
-4. 执行目标 Agent；
-5. 持久化消息、Tool 轨迹、Invocation 和成本；
-6. 关闭作者调度并停止所有写入子进程后计算 Candidate diff；
-7. 有变更时创建 checkpoint commit，commit message 包含 RunID，不包含消息正文；
-8. 更新 `CandidateHead`，使之前的 CandidateValidationRun 和 EvaluationRun 失效；
-9. SSE 返回回复、文件变更摘要和验证结果；
-10. 释放作者操作 lease；有排队验证/提交请求时按 §9.2 交给服务编排器。
-
-即使 Run 失败，只要产生文件变更也创建标记为 `partial` 的 checkpoint，避免重启后
-丢失中间产物；它不能成为发布 Candidate，必须由后续成功 Run 修复并重新校验。
-
-### 11.3 Candidate 内部回退
-
-管理员可以查看 checkpoint 列表并把 Candidate 重置到本 TrainingSession 的某个历史
-checkpoint。restore 仅在 active 且持有 restore 操作 lease 时执行；ready 先失效证据并
-转 active，validating/evaluating/repairing 拒绝外部 restore。恢复后使用
-MarkCandidateChanged 更新 HEAD 并清除报告。不能选择其他 Session 的 checkpoint 或任意 Git ref。
-
-### 11.4 关闭
-
-- `published`：保留 Candidate ref 和审计，工作目录可异步清理；
-- `cancelled`：删除工作目录，保留会话消息、checkpoint commit 引用和审计；
-- 操作 lease 过期：按 §19.3 先隔离旧进程再恢复；不能仅凭 TTL 到期就开放同一目录写入，
-  也不因此把 Session 标为 stale；
-- Session `ExpiresAt` 到期：状态变为 `expired`，释放 Agent 活跃训练指针，保留
-  Candidate ref 和审计供管理员只读查看或显式克隆成新 TrainingSession。
-
-## 12. Candidate 发布前验证
-
-### 12.1 Gate A
-
-训练文件工具在执行时：
-
-- 检查 active/repairing、author 操作 lease 和 fence，失效请求在写盘前拒绝；
-- 所有路径必须是 Candidate 相对路径；
-- 拒绝绝对路径、`..`、Volume path 和越界符号链接；
-- 拒绝平台保留目录；
-- 写入大小和文件总数受限；
-- Tool 错误结构化返回给 Agent，使其可以修正。
-
-`exec` 无法靠正则完整识别 shell 写入，因此 Gate A 不是发布授权依据。
-
-### 12.2 Gate B
-
-Gate B 由服务端对已冻结 Candidate 执行：validate 持 Candidate 操作 lease；publish
-同时持 Agent publish lock 和 Candidate publish 操作 lease。先按 §8.1 排除已确认的平台
-临时区与 Git 管理入口，再确认工作树与记录的 HEAD 一致（含其他未跟踪文件），有脏
-变更或 fence 漂移即拒绝，再枚举 Base Bundle 与冻结快照的
-真实树差异；不能只读取 Agent 自报的修改列表或忽略未跟踪文件。
-
-1. 枚举新增、修改、删除和类型变化；
-2. 按 §8.1 校验平台临时目录身份，排除该目录后校验全部 Bundle 路径和文件类型；
-3. 拒绝平台保留文件、Secret 模式、二进制可执行文件和越界链接；
-4. 校验 Bundle 配额；
-5. 调用 `harness.InspectWorkspace`；
-6. 要求非空、UTF-8、普通文件 `AGENTS.md`；
-7. 要求 Skill diagnostics 为空；
-8. 校验 Skill 名称唯一、位置稳定、脚本引用存在；
-9. 校验 `agent.yaml` KnownFields 和 Runtime 版本；
-10. 对脚本执行静态检查和可执行性探针；
-11. training 发布拒绝空资产和配置变更；migration/revalidation 允许无 Base diff，但仍
-    执行全部结构、安全和脚本检查；
-12. 生成 ContentDigest 和 ToolPolicyDigest；
-13. 持久化不可变 CandidateValidationRun。
-
-Gate B 失败不修改 Bundle 主线、Release 或生产会话。
-
-### 12.3 脚本策略
-
-第一阶段支持 Bundle 内 `.sh` 和 `.py` 文本脚本：
-
-- 必须位于 `skills/<id>/scripts/`；
-- 必须被对应 Skill 明确引用；
-- 不允许 setuid、原生二进制、动态库和嵌套包管理器；
-- 运行时环境变量使用最小白名单，密钥通过 Tool/MCP 获取，不直接注入脚本；
-- 默认无网络；需要外部访问时调用注册业务 Tool/MCP；
-- Python 仅使用部署镜像已批准依赖；第一阶段不接受 `pip install`；
-- 发布探针在与生产一致的沙箱中执行 `--help` 或 Skill 声明的 smoke command；
-- 执行输出和超时进入对应验证或评测报告，不进入 Bundle。
-
-脚本 smoke 属于 CandidateValidationRun；只有在 Evaluation Case 内触发的脚本输出才
-属于 EvaluationRun。
-
-## 13. 自动评测与自主修正
-
-### 13.1 评测隔离
-
-Evaluation Runner：
-
-- 从 CandidateHead 创建只读快照；
-- 使用 Candidate Release 拟采用的 ModelRevision；
-- 使用生产 ToolPolicy，而不是训练 ToolPolicy；
-- 每个 Case 使用全新 History；
-- 不加载管理员训练聊天；
-- 不能写 Candidate；
-- 不能读取其他 Case 的结果；
-- Evaluation Suite 位于数据库/平台资源目录，不挂载进 Candidate。
-
-如果业务 Tool 会写数据或产生外部副作用，Evaluation Runner 必须注入 Fake/dry-run 或
-专用测试租户实现；无法安全替换的 Tool 对应 Case 直接判为“环境不满足”，不能调用生产
-端点碰运气。
-
-### 13.2 判分
-
-判分顺序：
-
-1. 确定性结构检查；
-2. Tool trace 与参数断言；
-3. 禁止行为和安全规则；
-4. 文本/Schema/事实断言；
-5. 可选独立 Judge Model。
-
-Hard Case 必须全部通过。Soft Case 的阈值由 Evaluation Suite 固定；训练 Agent 无权
-查看隐藏期望的原文，只获得适合修正的失败摘要。
-
-### 13.3 自主修正循环
-
-管理员可以在一次训练指令中选择“自动验证并修正”。流程：
+### 7.1 简单状态机
 
 ```text
-Candidate change
-→ Gate B dry-run
-→ Evaluation Run
-→ 失败摘要
-→ 训练 Agent 内部修正 Turn
-→ 新 checkpoint
-→ active → validating（重新执行 Gate B dry-run）
-→ evaluating（新快照重新评测）
+active → validating → ready → published
+validating → active                 校验失败或中断
+ready → active                      继续修改前失效旧报告
+active / validating / ready → cancelled / stale / expired
 ```
 
-固定上限：
+| 起点 | 终点与条件 |
+| --- | --- |
+| active | validating：停止作者进程并固定候选，开始校验 |
+| validating | ready：校验成功；active：失败或中断 |
+| ready | active：继续编辑、恢复 checkpoint 或更改候选配置，先清空旧验证 |
+| ready | published：管理员发布事务成功 |
+| 任一非终态 | cancelled、stale、expired：停止本次操作后关闭并释放活跃训练指针 |
+| 终态 | 无出边；需要继续时创建新训练会话 |
 
-- 最多 3 次自动修正；
-- 每次修正使用独立 RunLimits；
-- 整个循环还有总 Token、成本和墙钟时间上限；
-- 连续两次 Candidate digest 不变则停止；
-- 连续两次失败集合不变则停止并交给管理员；
-- 触发安全失败时不自动放宽规则；
-- Judge Model 不能与 Author 共用训练聊天上下文。
+没有 evaluating/repairing，也没有自动修正循环。管理员根据校验反馈继续聊天修改即可。
 
-达到门槛后 TrainingSession 进入 `ready`，但不会自动发布。
+### 7.2 开始和每轮聊天
 
-## 14. Fine-tuning 流水线
+创建训练在 Agent 锁及数据库事务内检查管理员、enabled 状态、当前版本和活跃训练指针；
+创建 TrainingSession 及 type=training 的已有 Conversation，设置活跃指针，从基础版本
+创建 candidate worktree 和持久 `refs/training/<trainingID>/head`。文件物化失败时将本次
+会话取消并释放指针；重启可根据记录重新物化，不创建第二个匿名候选。
 
-### 14.1 样本来源
+每轮执行：
 
-以下内容不能自动进入训练集：
+1. 校验 tenant + agent + admin + conversation 归属、状态及操作 ID；ready 先转 active。
+2. 将 operation_json 持久化为本次运行中状态，再启动绑定 candidate 的目标 Agent。
+3. 复用现有消息和 invocation 存储保存输入、回复、工具输出及计量。
+4. 关闭作者工具调度，停止 exec/MCP/Subagent 子进程，然后计算实际文件变化。
+5. 对可入库资产执行基本路径/类型检查；有变化则生成 Git checkpoint，并更新 candidate_head。
+6. 记录操作结果摘要并清除旧 validation_json，向页面返回回复和 diff 摘要。
 
-- 普通用户所有聊天；
-- 管理员尚未确认的自由讨论；
-- Tool Result 中的 Secret、完整业务记录或附件原文；
-- Agent 自己生成并自行标记为正确的回答；
-- 评测隐藏用例。
+模型能修改的文件不等于可发布文件；完整发布校验仍在下一步执行。模型不能操作 Git
+仓库和平台文件；变更列表由平台枚举。失败 Turn 产生合法资产变更时保存 partial checkpoint，
+不能直接作为发布证据，candidate_partial=true 时拒绝校验进入 ready；下一次成功 Turn
+完成残留问题检查并清除标志后重新校验，恢复 checkpoint 则从对应元数据恢复此标志。
+Turn 产生不合法文件时保留工作目录和失败诊断，candidate_partial=true，拒绝提交危险
+文件；清理后才能继续 checkpoint，不把旧 HEAD 的成功验证拿来批准脏目录。
 
-管理员可从训练会话选择：
+checkpoint commit 元数据只记录 trainingID、runID、actorID、时间和 partial 标志，不放
+聊天正文或 Secret。每个 checkpoint 创建不可变 `refs/training/<trainingID>/checkpoints/<id>`，
+防止 HEAD 恢复到旧点后历史被 GC。列表通过本 Session 的 refs 获取，不另建 checkpoint 表。
+restore 只能选择本会话 checkpoint，必须在无正在执行操作的 active 状态进行；ready
+先失效证据。取消/过期可删除工作目录，但持久 refs 和聊天历史保留供审计。
 
-- 正确示范；
-- 对错误回答的最终修正；
-- preferred/rejected 回答对；
-- 期望 Tool 调用和参数；
-- 分类或结构化输出样本。
+### 7.3 冻结与发布校验
 
-创建 TrainingExample 前执行脱敏、角色合法性、Tool schema 和消息顺序校验。
+所有操作通过单进程的 Agent 级准入互斥与数据库 CAS 设置持久操作槽；写入、restore、
+配置修改、校验、发布互斥，操作未结束时新变更请求返回 409。互斥只在准入/完成事务
+期间持有，不跨整个作者 Turn；执行期间由操作槽阻止第二个写入方。生产普通聊天只
+在准入时检查 Agent 状态和版本，不因该 Agent 正在训练而阻塞，也不影响其他 Agent。
+取消可先发出停止信号，但只有子进程停止后才能清除操作槽和活跃训练指针。
 
-### 14.2 Dataset Version
+先禁止新作者工具调用，等待当前调用结束并终止所有可写子进程，保存 checkpoint，再
+进入 validating。无法确认旧进程停止则校验失败且不开放新写入。校验固定 HEAD 和
+candidate_config_json 的联合 spec_digest，在隔离只读副本中运行，不让作者边改边测。
 
-Dataset Service：
+服务端检查：
 
-1. 读取已审核 TrainingExample；
-2. 去重并拒绝训练/验证集合泄漏；
-3. 按标签做稳定分层切分；
-4. 转换成 Provider 无关规范格式；
-5. 生成数据摘要、统计和脱敏报告；
-6. 冻结 DatasetVersion；
-7. 在 FineTune adapter 边界转换成具体 Provider 格式。
+- 实际文件树与记录 HEAD 一致，排除 §5.3 确认的平台临时区后不得有遗漏的脏文件。
+- AGENTS.md 是非空普通 UTF-8 文本；Skills 调用 InspectWorkspace，诊断逐条反馈。
+- 拒绝越界/绝对链接、特殊文件、嵌套仓库、submodule、平台配置、Secret 和原生可执行文件。
+- 单文件最多 1 MiB，Bundle 最多 32 MiB/2,000 路径，SKILL.md 最多 256 KiB。
+- 脚本仅 skills/<id>/scripts 下被 Skill 引用的 .sh/.py 文本，使用已批准解释器和依赖；
+  不允许运行时安装。smoke 使用固定的受限环境、超时和无网络权限，不执行真实业务写入。
+- 校验模型/工具/SecretRef 可用性，记录具体配置和版本；Secret 内容不得出现在日志或报告。
+- 文件及配置都没变化时拒绝发布；纯模型配置变化可复用 Git 文件树，但仍生成新完整版本。
 
-### 14.3 FineTune Backend
+结果写入训练表 validation_json，包含 head、spec_digest、validator_version、结果、
+诊断、smoke 摘要和时间；校验完成时 CAS 比较当前候选仍相同，成功进入 ready。
+继续编辑或更改候选配置必须先失效该报告。完整验证与展示字段编辑不混淆。
 
-应用层端口：
+## 8. 发布、回滚、重试与恢复
 
-```go
-type FineTuneBackend interface {
-    Submit(context.Context, FineTuneSpec) (ExternalFineTuneJob, error)
-    Get(context.Context, string) (FineTuneStatus, error)
-    Cancel(context.Context, string) error
-}
-```
+### 8.1 人工发布
 
-基础设施实现负责接入支持 Fine-tuning 的云模型平台或私有训练服务。Webhook 与有界
-轮询都只更新 FineTuneJob；不会直接修改 Agent ActiveRelease。
+发布请求必须由管理员发起，并明确确认“本版本仅完成结构及脚本校验，未经自动质量
+评测”。Agent 不可自我声明发布成功。发布流程：
 
-### 14.4 微调模型发布
+1. 获取本 Agent 的操作锁，校验管理员及 ready 状态；已 published 则返回 result_version_id。
+2. 重读当前 active_version_id；与 base_version_id 不同则 stale，拒绝静默合并。
+3. 重检真实树、配置和验证摘要，必要时重新执行校验，禁止引用旧候选的成功结果。
+4. 服务端分配 version 和 version ID，准备 Git commit/tag 和只读 versions 物化目录。
+5. 一个数据库事务写入 agent_versions，CAS 切换 active_version_id，设置训练 published
+   和 result_version_id，清空 active_training_session_id。
+6. 事务成功后返回结果；缓存失效、页面推送失败不撤销已发布版本。
 
-外部任务成功后：
+版本表对 source_training_session_id 建唯一约束；并发或重复 publish 只能产生一个版本。
+Git 和 DB 不是同一事务：操作记录在写 Git 前保存目标 version ID、tag 和摘要，失败可
+按记录补偿本次新建且未引用的资源，不能删除历史版本或复用的 commit。
 
-1. 创建 `ModelRevision(kind=fine_tuned)`；
-2. 用目标 BundleVersion + 新 ModelRevision 构造待评测 `ReleaseSpec`；
-3. 在相同 Evaluation Suite 上运行；
-4. 与当前 ActiveRelease 做 Case、成本和延迟对比；
-5. Hard Case 全过且阈值达标后允许管理员发布；
-6. 发布只切换 Agent ActiveRelease；
-7. 失败模型保留审计但不能承载生产流量。
+Agent 初始创建使用同样的“文件就绪后写版本并切换指针”顺序。agents.id 为每次创建的
+服务端 ID；初始创建/恢复用已有行定位，bootstrap_key 保证内置种子幂等。未完成创建
+的 Agent 不可被聊天选择；管理页面可重试完成或归档，不伪装成已有生产版本。
 
-微调不能替代 AGENTS、Skills 或工具。适合放进权重的是稳定的大量示范模式；经常变化
-的业务规则、可执行流程和实时知识继续留在 Bundle/Tool/Knowledge Base。
+### 8.2 会话更新与回滚
 
-## 15. Release 发布、传播和回滚
+不建立 Outbox，也不批量写 pending version。每个 follow_latest=true 的普通会话在
+下一轮准入时直接读取 Agent.active_version_id，先物化新目录并取得新 Runtime，再 CAS
+更新会话的 agent_version_id。加载失败保留原版本并返回错误，下次可重试。
 
-### 15.1 发布
+已开始的 Turn 使用已固定版本跑完；follow_latest=false 的会话保持原版本。版本更新
+通过本轮 Context 简短告知，保留用户可见聊天历史。训练始终固定自己的 base/candidate。
+正确性依赖数据库指针，不依赖实时通知成功送达。
 
-`PublishCandidate` 在 Agent 分布式锁内执行：
+回滚通过管理员 activate 某个历史 AgentVersion 实现；先校验文件摘要、模型/工具及
+SecretRef 可用性，再切 active_version_id。文件、模型和工具配置一起切换，不修改历史
+行，也不承诺撤销工具曾产生的外部业务写入。活跃训练在下次操作发现基线变化后进入 stale。
 
-1. 再次校验管理员权限，在 Agent publish lock 内取得 Candidate publish 操作 lease；
-2. 校验 TrainingSession=`ready`；
-3. 校验 Candidate digest、ModelRevisionID、ToolPolicy 和 ReleaseSpec digest 与成功
-   CandidateValidationRun 完全一致；
-4. 按 `ValidationMode` 校验发布证据：
-   - `manual_only`：只允许 Phase 1，要求管理员在本次请求中明确确认“尚未自动评测”；
-   - `evaluated`：要求成功 EvaluationRun 的 Candidate、ModelRevision、ToolPolicy 和
-     Suite version 与待发布内容及 Agent 当前 RequiredEvaluationSuiteID 完全一致；
-5. 校验 BaseRelease 仍是 Agent ActiveRelease；
-6. 运行 Gate B 最终检查并生成新的 CandidateValidationRun；若 digest 或 Validator 结论
-   变化，回到 `active` 重新审核，否则 Release 引用这次最终报告；
-7. 服务端计算 Bundle SemVer 和 Release SemVer；
-8. 资产有变化时 squash merge checkpoint 到 Bundle repository；纯模型变更复用 BundleVersion；
-9. 新 Bundle 创建不可变 Git commit/tag；
-10. 物化或校验只读 Bundle 目录；
-11. 创建或复用 BundleVersion，创建新的 AgentRelease；
-12. 原子更新 `agents.active_release_id`；
-13. 清空 `active_training_session_id`；
-14. 给 `follow_latest=true` 的生产会话设置 `pending_release_id`；
-15. 写审计和发布事件；
-16. 标记待迁移会话的旧 Runtime 不再接受新 lease，但不杀死正在执行的 Run；
-    `follow_latest=false` 的会话仍可按其固定旧 Release 获取独立 Runtime。
+### 8.3 有界幂等与断线恢复
 
-Git 操作先完成，数据库指针最后提交。数据库提交前失败时删除未引用 tag/物化目录并
-记录补偿；数据库提交后只允许向前修复，不回滚已经对外可见的 ActiveRelease 指针。
+已有训练会话的写操作携带 request_id（训练 Run 直接使用 run_id）。训练表 operation_json 保存当前
+或最近完成操作的 ID、请求摘要和结果摘要；同 ID 同请求返回当前状态或已有结果，
+同 ID 不同内容返回 409。历史 Run ID 再次出现时查询该训练 Conversation 的既有消息/
+invocation，返回历史状态或明确不能重放的 409，绝不自动再执行。历史 restore/配置
+请求携带 expected_row_version，过期版本一律冲突，不因操作槽被覆盖而重复修改。
 
-### 15.2 会话懒迁移
+执行前持久化操作记录和用户输入，完成后持久化结果；中断且无法确认执行结果时标为
+interrupted，不猜测成功或自动重跑。用户重试执行须用新 ID，仍受候选状态检查。
+发布以 source_training_session_id/result_version_id 为永久去重依据，独立于操作槽。
+创建训练请求携带当前 Agent.row_version，并在事务中校验；重复的旧版本请求返回冲突
+及有权查看的活跃训练 ID，客户端查询既有会话，不重新创建。创建 Agent 的普通请求不
+承诺通用幂等 API，前端防重复提交；内置 bootstrap 则由 bootstrap_key 永久去重。
 
-生产 Conversation 增加：
+SSE 仅用于当前连接展示，不新增事件表或 Last-Event-ID 完整回放承诺。断线后前端重新
+获取训练会话（含当前/最近操作）、消息和 diff，正在运行则轮询状态；POST /runs 不因
+重连自动重发。查询和重连始终检查 tenant + admin + training + conversation 归属，
+不能仅凭 run_id 读取其他人的训练内容。未持久化的进度动画允许丢失，最终消息和操作
+结果不应丢失。
+
+### 8.4 重启、备份与单进程限制
+
+操作记录用于恢复，不用 TTL 过期冒充已停止进程。恢复前必须确认旧实例及其子进程组
+不再持有 Candidate 写权限，不能确认则拒绝恢复并报告；第一版不支持两个服务进程
+同时管理同一数据目录。部署必须先停旧写进程再启动接管实例。
+
+从持久 CandidateHead 重建 worktree；未 checkpoint 改动不在恢复保证内，可保留旧目录
+供诊断。中断的作者/校验回到 active 并清空验证，已 published 不回退。发布中断先对账：
+DB 已有来源版本则补齐 Session 结果；DB 未提交则清理本次未引用产物后重新校验，不能
+直接假定成功。过期/取消在停止进程后释放活跃指针。
+
+上线需有异机备份：同批数据库一致性快照 + bundle.git 对象及全部 refs/tags + 已持久
+附件；密钥由宿主系统单独保存。第一版以协调停写窗口取得备份，记录恢复清单，迁移前
+额外备份；频率和保留期由部署明确配置。恢复演练必须执行 git fsck、版本/HEAD 引用及
+摘要核对，再重建目录；缺失对象阻止对应 Agent 激活，不回退读取模板。临时缓存不必备份。
+
+## 9. API 与页面
+
+### 9.1 Agent 与版本
 
 ```text
-agent_id
-agent_release_id
-pending_release_id
-follow_latest
-```
-
-下一次 Run 取得会话锁后：
-
-- 有 pending release 时更新 `agent_release_id`；
-- 持久化内部 `agent.release.changed` 事件；
-- 向该次 Run 注入简短 ContextBlock，告知行为资产已更新，应以当前 Workspace 为准；
-- 可配置清除旧 Tool/Thinking 内部轨迹，但保留用户与最终 Assistant 文本历史。
-
-训练和评测会话始终固定 Base/Candidate，不参与生产懒迁移。
-
-### 15.3 回滚
-
-回滚不是修改旧 Release，而是管理员把 `active_release_id` 指向一个已验证的历史
-Release，并按同样方式设置会话 pending release。Bundle、模型和工具策略一起回滚。
-
-被回滚 Release 保持不可变；需要修复时从它创建新的 TrainingSession。
-
-切换指针前必须预检 Bundle digest、模型可用性、精确 Tool/MCP 实现版本、Runtime 兼容
-范围和所有 SecretRef 是否可解析；任何一项缺失都拒绝激活且不改变生产指针。这里的
-“完整回滚”指 Agent 行为配置整体回滚，不承诺撤销外部业务 Tool 已经产生的数据变更。
-
-## 16. HTTP API
-
-### 16.1 Agent 与 Release（Phase 1B 起）
-
-```text
-POST   /api/v1/agents
 GET    /api/v1/agents
 GET    /api/v1/agents/:agentID
+POST   /api/v1/agents
 PATCH  /api/v1/agents/:agentID
-GET    /api/v1/agents/:agentID/releases
-PATCH  /api/v1/agents/:agentID/presentation
-PUT    /api/v1/agents/default
+GET    /api/v1/agents/:agentID/versions
+POST   /api/v1/agents/:agentID/versions/:versionID/activate
 GET    /api/v1/agent-templates
-POST   /api/v1/agents/:agentID/releases/:releaseID/activate  # Phase 1C
 ```
 
-GET /agents 仅返回当前租户可见 Agent，含 `items`、`default_agent_id`、`next_cursor`。
-条目含 ID、Name、Description、Presentation、ActiveRelease 摘要和服务端派生的 selectable。
-只有 enabled 且拥有可用 Release 的 Agent 才可新建聊天。管理列表可查看归档条目，普通
-用户不可借此获得训练信息。创建、展示配置、默认值设置和模板列表需管理员权限；用于
-聊天的 Agent 查询只要求有效租户用户身份。`/agents/default` 静态路由优先于 `/:agentID`。
+普通用户只查询本租户可用 Agent；管理操作和模板查询要求管理员。GET /agents 返回
+items、next_cursor 和计算出的 default_agent_id；条目包含展示配置及 selectable。
+创建从 Template 初始化行为资产及展示字段，模型/工具选择只能引用服务端允许的配置。
 
-`PATCH /agents/:agentID` 仅允许本租户管理员修改 `name`、`description`、`status`，状态值
-固定为 `enabled|archived`；至少提供一个字段，拒绝未知字段，name 非空，名称/说明沿用
-创建接口的长度约束。更新不修改 AGENTS.md、模型或 ActiveRelease，不创建行为 Release。
-归档在 Agent 锁与 CAS 事务中检查 ActiveTrainingSessionID；任何非终态训练存在时返回
-409，必须先结束训练。成功归档时在同一事务内清除此 Agent 对应的 default_agent_id，
-拒绝后续新建聊天、作者训练和生产 Run；已经取得执行 lease 的生产 Turn 可以完成，
-聊天历史、Bundle 和发布版本全部保留。新建训练/生产执行准入与归档串行校验状态，避免
-检查通过后又产生新训练。重新 enable 保留既有版本，不自动设为默认助手；只有 Release
-可用时才 selectable。归档/启用分别记录 `agent.archived`、`agent.enabled` 审计。
+PATCH 允许 name、description、presentation、status，拒绝未知字段和空名称，至少修改
+一个字段。status 仅 enabled/archived，不改变 AGENTS.md 或版本配置。归档拒绝任何非
+终态训练；归档、新训练和生产 Run 准入串行检查状态。归档后不接受新执行，已准入的
+生产 Turn 可完成；历史可读。重新启用不会更换版本，可用版本不存在时仍不可聊天。
 
-### 16.2 Training Session（Phase 1C 起，另行标明 Phase 2）
+### 9.2 训练
 
 ```text
 POST   /api/v1/agents/:agentID/training-sessions
+GET    /api/v1/agents/:agentID/training-sessions
 GET    /api/v1/training-sessions/:trainingID
 POST   /api/v1/training-sessions/:trainingID/runs
-POST   /api/v1/training-sessions/:trainingID/cancel
 GET    /api/v1/training-sessions/:trainingID/diff
 GET    /api/v1/training-sessions/:trainingID/checkpoints
-POST   /api/v1/training-sessions/:trainingID/checkpoints/:checkpoint/restore
+POST   /api/v1/training-sessions/:trainingID/checkpoints/:checkpointID/restore
+PATCH  /api/v1/training-sessions/:trainingID/config
 POST   /api/v1/training-sessions/:trainingID/validate
-PATCH  /api/v1/training-sessions/:trainingID/model-revision
-POST   /api/v1/training-sessions/:trainingID/evaluations  # 仅 Phase 2
-POST   /api/v1/training-sessions/:trainingID/submit
 POST   /api/v1/training-sessions/:trainingID/publish
-GET    /api/v1/training-sessions/:trainingID/runs/:runID/events
+POST   /api/v1/training-sessions/:trainingID/cancel
 ```
 
-validate 只生成验证证据，完成后回到 active；submit 在 Phase 1 执行验证后进入 ready，
-在 Phase 2 执行验证和绑定 Suite 的评测后进入 ready；显式 evaluations 同样先验证。
-Phase 1 不注册 evaluations 路由、自动修正参数或评测事件生产者，前端也不显示相应操作。
+GET 训练详情返回 conversation_id、status、基线、候选摘要、最近验证及当前/最近操作。
+消息复用已有 Conversation 查询，必须增加 training 类型鉴权，不能走普通匿名 Chat
+路径读写训练会话。普通 Chat 的创建/运行/列表/删除均排除 training；训练消息只由
+Training Service 驱动。config 仅修改服务端允许的模型参数，不接受客户端权限扩张。
 
-Training Run 继续使用 SSE AgentEvent；额外事件：
+没有 submit/evaluate/fine-tune/model-registry/default-setting 等接口。验证和发布由
+管理员按钮触发，避免模型发起检查后继续写盘引入额外的排队和交接状态。
 
-```text
-candidate_changed
-candidate_checkpointed
-candidate_validation_started|completed
-evaluation_started|case_completed|completed
-auto_repair_started|completed|stopped
-candidate_ready
-release_published
-```
+### 9.3 保留聊天页面，新增管理员工作台
 
-SSE 重连只订阅持久化事件，不重新执行 Run。每次连接均重新认证并校验
-TenantID + AdminUserID + TrainingSessionID + RunID，以及该 Run 的 Conversation 归属。
-Last-Event-ID 只能作为本 Run 内的游标，不能成为授权凭据；每批回放和 live 推送前校验
-会话授权仍有效，权限失效关闭流。不存在或无权读取的跨归属对象统一返回 404。
-事件使用单调递增 Run 内序号，按序幂等回放；游标超出保留窗口返回明确过期错误，前端
-重新获取会话与 Run 快照，不能重发 POST /runs 来“恢复”。事件与训练记录按相同租户
-边界持久化，保留周期由部署配置，执行请求幂等与事件重连是两个独立机制。
+- 当前卡片继续选择助手，数据源改为本租户 Agent；创建和筛选参数由 profile_code 改为 agent_id。
+- 图标、欢迎语、推荐问题和排序从 Agent 展示字段读取，不随模板后续修改联动。
+- 分页需有加载更多/搜索；默认项不在首屏则查询详情。Conversation VO 包含 Agent 名称、
+  图标和状态，历史展示不依赖当前可选列表是否包含该 Agent。
+- 无 Agent、无可用版本是正常空状态，默认项为 null；请求失败才显示加载错误。
+  创建前 Agent 被停用时刷新选择器，不静默换 Agent 发送用户原消息。
+- 保留图片、消息流、历史搜索、重命名和普通会话删除；一个 Conversation 固定 Agent 身份。
+- 管理员新增 Agent 列表/创建/详情和训练入口，训练工作台包含聊天、文件 diff、checkpoint、
+  校验结果及“校验、继续训练、恢复、发布、取消”。没有评测分数和微调入口。
+- 管理入口仅在服务端启用且有权限时显示；后端独立鉴权。环境/客户信息由服务端提供。
 
-### 16.3 Fine-tuning（仅 Phase 3）
+## 10. 迁移与代码分工
 
-```text
-POST   /api/v1/agents/:agentID/training-examples
-GET    /api/v1/agents/:agentID/training-examples
-POST   /api/v1/agents/:agentID/datasets
-GET    /api/v1/datasets/:datasetID
-POST   /api/v1/datasets/:datasetID/fine-tune-jobs
-GET    /api/v1/fine-tune-jobs/:jobID
-POST   /api/v1/fine-tune-jobs/:jobID/cancel
-POST   /api/v1/fine-tune-jobs/:jobID/evaluate
-POST   /api/v1/fine-tune-jobs/:jobID/publish
-```
+### 10.1 数据迁移
 
-Fine-tune publish 只接受已成功评测且尚未发布的 Job，由 Release Service 重新校验
-ReleaseSpec 与 EvaluationRun 摘要后创建 AgentRelease；它和 Training publish 共用同一
-发布锁、版本分配、ActiveRelease CAS、Outbox 和回滚实现。
+第一版只新增三张表，不预留旧完整版的业务表或指向未来模块的外键。
+已有 agent_conversations 增加 tenant_id、conversation_type、agent_id、agent_version_id、
+follow_latest；训练表通过 conversation_id 关联它，不再反向增加 training_session_id。
+现有消息表仍引用 Conversation 内部主键，不复制消息到训练专用表。
 
-所有写接口从认证上下文派生管理员和租户，不接受客户端传入 owner/admin 身份。
+迁移顺序：
 
-### 16.4 管理员训练界面
+1. 0007 创建 agents/agent_versions，给 Conversation 增加 nullable 归属列，类型默认 chat。
+   agents.active_training_session_id 暂为 nullable，无目标表 FK。
+2. 兼容代码支持旧 Profile 与新 Agent ID，bootstrap 为明确租户创建八个内置 Agent 及
+   初始完整版本，复制被引用的共享 Skills；验证失败停止。对 bootstrap_key 幂等重试。
+3. 回填已有会话 tenant/agent/version，核对空值、未知 Profile、跨租户/Agent 引用和
+   Git 摘要。旧匿名单客户数据回填配置租户，多客户数据必须提供可信映射。
+4. 0008 在停写窗口将归属字段改 NOT NULL，补 FK/索引；先建
+   uq_agent_conversations_tenant_owner(tenant_id,user_id,conversation_id)，再删旧
+   uq_agent_conversations_owner(user_id,conversation_id)。
+5. 前端只发送 agent_id；兼容期旧 code 只映射本租户内置种子，单请求不能同时传两种身份。
+   确认旧客户端退役后 0009 删除 profile_code 及旧索引。
+6. Phase 1C 的 0010 只创建 agent_training_sessions，并补活跃训练指针 FK；不创建其他表。
 
-Agent 详情页增加“训练”页签。开始训练前展示当前 ActiveRelease、模型、Bundle 版本和
-“训练不会直接修改生产版本”的说明。训练工作台采用一个逻辑页面：
+唯一约束：agents(tenant_id,id)、agents(tenant_id,bootstrap_key)、
+agent_versions(agent_id,version)、agent_versions(tenant_id,agent_id,id)、
+agent_versions(source_training_session_id)、agent_training_sessions(conversation_id)。
+来源训练列在 0007 先 nullable，0010 再补 FK；初始版本来源 NULL，可重复。
+每个 Repository 以认证 TenantID 查询，关联 ID 必须属于同租户同 Agent；CAS 与应用
+一致性检查配合复合外键，禁止先按裸 ID 查询再补租户判断。
 
-- 左侧是一对一聊天和本轮 Tool/验证轨迹；
-- 右侧是按 checkpoint 分组的文件树、diff、Validation 和 Evaluation 报告；
-- 顶部固定显示 BaseRelease、CandidateHead、状态、累计 Token/成本和 Session 过期时间；
-- 底部操作只有“继续训练”“恢复 checkpoint”“验证/评测”“发布”“取消”；
-- 一次 Run 未结束时禁用重复发送，断线重连按 §16.2 校验归属并恢复 SSE，不重复执行；
-- Candidate 发生变化后立即清除旧的“可发布”标识；
-- `stale` 时只提供放弃或基于最新 Release 重建，不展示可绕过检查的发布入口；
-- Phase 1 发布对话框必须单独勾选“我确认此版本尚未经过自动评测”，不能预选；
-- Phase 2 发布对话框展示相对基线的通过率、hard failures、成本和延迟变化；
-- 发布成功后显示新 Release ID/版本；失败时保留 Candidate 和结构化错误，不能只弹通用
-  “发布失败”。
+0008 down 先检查旧 (user_id,conversation_id) 是否因跨租户重复而冲突，有冲突拒绝回滚，
+不删客户数据；无冲突则先恢复旧唯一索引，再删除新索引，最后撤销本次 FK/NOT NULL。
+MySQL DDL 不假定可事务回滚，迁移必须支持按实际 schema 断点继续。Git 资产不由 down
+脚本自动删除。
 
-管理员可以查看完整测试定义；发送给 Author Agent 的失败摘要必须由 Evaluation Service
-单独生成，不能把隐藏期望、Judge 提示词或完整测试 fixture 拼回训练聊天。
+### 10.2 文件职责
 
-### 16.5 基础模型注册（Phase 1B）
-
-```text
-POST   /api/v1/model-revisions
-GET    /api/v1/model-revisions
-GET    /api/v1/model-revisions/:revisionID
-```
-
-均要求本租户管理员身份。POST 只接收已配置 provider_id 和固定 model_id，执行 §7.3
-准入检查，成功返回不可变 ModelRevision；不接收 API Key、任意 Provider URL 或 kind。
-数据库唯一键处理重复请求，注册本身不创建 Release。Phase 1C 的候选模型接口只接收
-model_revision_id，服务端校验同租户、可用状态和当前候选工具所需的模型能力。
-
-### 16.6 评测集管理（仅 Phase 2）
-
-```text
-POST   /api/v1/agents/:agentID/evaluation-suites
-GET    /api/v1/agents/:agentID/evaluation-suites
-GET    /api/v1/agents/:agentID/evaluation-suites/:suiteVersionID
-PUT    /api/v1/agents/:agentID/evaluation-suite
-```
-
-全部经过 RequireAdmin 并校验租户和 Agent。POST 完整导入 suite_key、cases、阈值和
-fixture/Judge 配置，服务端在事务中生成版本和摘要并写 Cases；内容相同返回既有版本。
-PUT 只接收本 Agent 的 suite_version_id，绑定生产发布门槛；不修改历史版本。导入失败
-不留下半套 Cases，也不改变既有绑定。GET 详情含隐藏期望，仅管理员管理页面使用，
-不得复用到 Author Tool 响应或训练上下文。Phase 2 首次启用时先导入并绑定，再开放发布。
-
-### 16.7 现有聊天页面适配（Phase 1B）
-
-保留 Go template + 原生 JS 的聊天布局、消息渲染、图片输入、流式回复、历史搜索与会话
-管理。首页选择对象从固定 Profile 改为本租户 Agent；新建会话发送 agent_id，筛选同样
-改为 agent_id。Conversation 固定 Agent 身份，follow_latest 只更新其发布版本，不切换
-到另一个 Agent；版本更新提示不能写成“已更换助手”。
-
-`GET /agents` 的分页必须在选择器中提供加载更多或搜索；默认项即使不在首屏也通过
-同租户 Agent 详情补齐。会话 VO 直接返回关联 Agent 的名称、图标和状态，不能依赖
-当前可选列表反查，否则 Agent 归档或列表分页会导致历史只显示裸 ID。
-
-空状态分为：请求失败可重试；无 Agent 时普通用户提示联系管理员，管理员显示创建入口；
-有 Agent 但无可用 Release 时提示等待发布。后两者为正常响应，default_agent_id=null，
-禁用新建发送但保留历史阅读，不能误报“助手列表加载失败”。默认 Agent 在创建前被停用
-时服务端返回明确状态冲突，前端刷新列表，不静默换一个 Agent 发送原消息。
-
-图标、欢迎语、推荐问题、排序按 §7.1 从 Template 复制到 Agent 展示配置；聊天页面不再
-读取 Template 的实时配置。已归档 Agent 的历史仍可读，发送请求返回停用原因。
-管理员界面新增 `/admin/agents` 列表与创建入口、`/admin/agents/:agentID` 详情、详情中的
-训练入口，以及 `/admin/agents/:agentID/training/:trainingID` 工作台（Phase 1D）。普通
-聊天页仅在服务端声明管理页面已启用且当前用户有权限时显示管理入口，Phase 1B 不展示
-尚未注册的 Phase 1D 页面链接；后端仍独立鉴权，不把训练状态机塞进 chat.js。
-
-多客户页面上线前必须配置可信 Tenant/User Resolver；匿名 Cookie 仅能用于配置好的
-单客户访问，不能作为多客户租户选择依据。页面的 Local/本地工作区/Cookie 隔离等标签
-改为部署实际环境和当前组织信息，不让浏览器通过手填 tenant_id 声明组织身份。
-
-## 17. 代码与文件划分
-
-本节是开发落位约束，不是示意目录。文件名允许在实现计划中做小幅调整，但包职责、
-依赖方向和“一个文件只负责一个主要原因”的边界不得合并回巨型 Service。
-
-### 17.1 总体依赖方向
-
-```text
-HTTP Controller → Application Service → Domain Repository/Port
-                                      → Agent Runtime Manager → pi
-Infrastructure Adapter ───────────────→ Domain/Application Port
-
-pi 不 import application/domain/infrastructure
-domain 不 import application/infrastructure/pi
-application 可以 import domain 和 pi 的公共契约
-infrastructure 实现 domain/application 定义的端口
-```
-
-不能把 Agent、Training、Evaluation、Fine-tuning 全部写进现有
-`application/service/chat/service.go`，也不能让 `cmd/server/app.go` 继续承担 Runtime
-组装细节。现有 Chat 只负责面向普通用户的会话用例，训练是独立应用服务。
-
-### 17.2 Phase 1A：`pi` WorkspacePolicy
-
-| 文件 | 动作 | 单一职责 |
-| --- | --- | --- |
-| `pi/workspace_policy.go` | 新增 | 定义、规范化和校验 WorkspacePolicy |
-| `pi/workspace_policy_test.go` | 新增 | 覆盖空策略、前缀逃逸、重复前缀和兼容行为 |
-| `pi/agent.go` | 修改 | `Options` 接收策略，并把规范化结果传给 Workspace、sandbox 和 MCP |
-| `pi/harness/inspect.go` | 新增 | 实现 `InspectWorkspace`，复用真实 AGENTS/Skill 解析路径 |
-| `pi/harness/inspect_test.go` | 新增 | 保证检查结果与 ContextBuilder 的发现结果一致 |
-| `pi/harness/tools/filesystem.go` | 修改 | Workspace 在打开写句柄前统一执行可写前缀检查 |
-| `pi/harness/tools/filesystem_test.go` | 修改 | 覆盖 symlink、相对路径和 restricted prefix |
-| `pi/harness/sandbox/write_policy.go` | 新增 | 把公共 WorkspacePolicy 翻译成后端无关沙箱写规则 |
-| `pi/harness/sandbox/runner.go` | 修改 | Runner 构造显式接收写策略，不使用隐式全 Workspace 可写 |
-| `pi/harness/sandbox/platform.go` | 修改 | 给 Host/Seatbelt/Bubblewrap 选择器传递同一策略 |
-| `pi/harness/sandbox/seatbelt.go` | 修改 | 生成只读 Workspace 加可写子目录的 Seatbelt profile |
-| `pi/harness/sandbox/bubblewrap.go` | 修改 | 使用 ro-bind Workspace，再 bind 可写前缀 |
-| `pi/harness/sandbox/host.go` | 修改 | restricted + exec 无法保证时 fail closed |
-| `pi/harness/sandbox/*_test.go` | 修改 | 对三个后端执行相同策略契约测试 |
-| `pi/mcp/sandbox.go` | 修改 | stdio MCP 子进程继承当前 Runtime 的写边界 |
-| `config/config.go` | 修改 | 增加服务端 Workspace policy 配置结构 |
-| `config/validate.go` | 修改 | 启动时拒绝不安全或不可表达的配置 |
-| `config/server_options.go` | 修改 | 把业务配置翻译成 `pi.Options` |
-| `config.example.json` | 修改 | 显式展示生产 chat 的 restricted 策略 |
-| `cmd/server/app.go` | 修改 | 过渡期显式选择策略，不能依赖零值 |
-
-`edit.go`、`write.go`、`apply_patch.go` 不各自实现一份路径安全逻辑；三者都经过
-`Workspace`。`exec/process` 的写限制由 sandbox 实现，Tool middleware 只提供更友好的
-错误，不能替代 OS 边界。
-
-### 17.3 Phase 1B：动态 Agent、Release 和 Runtime
-
-新增领域与端口文件：
-
-| 文件 | 内容 |
+| 模块 | 第一版职责 |
 | --- | --- |
-| `application/identity/principal.go` | Principal、Role、Context helper 和 `RequireAdmin` |
-| `application/identity/resolver.go` | AdminIdentityResolver 端口和 unavailable 语义 |
-| `domain/entity/agent/agent.go` | Agent 聚合根和 active release/training CAS version |
-| `domain/entity/agent/template.go` | 原 Profile 的创建模板投影 |
-| `domain/entity/agent/presentation.go` | Agent 展示配置及字段校验 |
-| `domain/entity/agent/tenant_settings.go` | 本租户默认 Agent 设置 |
-| `domain/entity/agent/bundle_version.go` | 不可变 BundleVersion |
-| `domain/entity/agent/model_revision.go` | base/fine-tuned ModelRevision |
-| `domain/entity/agent/release.go` | 不可变 AgentRelease 和 ValidationMode |
-| `domain/entity/agent/validation_run.go` | CandidateValidationRun |
-| `domain/repository/agent/repository.go` | Agent 查询、创建和活跃指针 CAS |
-| `domain/repository/agent/release.go` | Bundle/Model/Release/Validation 查询和原子发布提交 |
-| `domain/repository/agenttemplate/catalog.go` | 只读模板 Catalog 端口 |
-| `application/service/agentcatalog/service.go` | 创建/查询 Agent，解析 Template 初始值 |
-| `application/service/agentcatalog/presentation.go` | 展示配置、默认助手和归档处理 |
-| `application/service/agentcatalog/update.go` | 名称/说明、归档与启用；活跃训练冲突及默认项事务清理 |
-| `application/service/agentmodel/{service.go,register.go}` | 基础模型准入、幂等注册和查询 |
-| `application/port/agentmodel/probe.go` | Provider 固定模型引用与能力探针端口 |
-| `infrastructure/driver/agentmodel/probe.go` | 调用已配置 Provider 的有界可用性检查 |
-| `domain/repository/agent/model_revision.go` | 模型注册、唯一查询和状态检查 |
-| `infrastructure/persistence/agent/model_revision.go` | ModelRevision MySQL 实现 |
-| `infrastructure/controller/http/agentmodel/controller.go` | Phase 1B 模型注册/查询管理 API |
-| `infrastructure/controller/http/agent/controller.go` | Phase 1B Agent 查询、创建、展示配置和默认值 API |
-| `common/dto/agent.go`、`common/vo/agent.go` | Phase 1B Agent 请求、展示配置及列表分页响应 |
-| `common/dto/agent_model.go`、`common/vo/agent_model.go` | 模型注册请求、响应 |
-| `application/service/agentcatalog/register.go` | Agent Catalog 的 fx 模块 |
-| `application/service/agentruntime/spec.go` | RuntimePurpose、RuntimeSpec、ResolvedTool/MCP |
-| `application/service/agentruntime/manager.go` | Acquire/Release/Invalidate/Close 生命周期 |
-| `application/service/agentruntime/cache.go` | 单飞、引用计数、LRU 和 idle eviction |
-| `application/service/agentruntime/resolver.go` | 从 AgentRelease 构造生产 RuntimeSpec |
-| `application/service/agentruntime/workspace.go` | 会话/Case 隔离目录的物化、摘要校验和安全回收 |
-| `application/port/agentruntime/workspace.go` | 不可变快照到独立 Runtime 目录的物化契约 |
-| `infrastructure/driver/agentruntime/workspace.go` | 普通文件/写时复制、保留目录和跨平台路径实现 |
-| `application/service/agentruntime/tool_catalog.go` | Tool revision、Effect 和安全替身选择 |
-| `application/service/agentruntime/register.go` | Runtime Manager 的 fx 模块和生命周期 |
-| `infrastructure/persistence/agent/repository.go` | Agent 聚合的 MySQL 实现 |
-| `infrastructure/persistence/agent/release.go` | 版本/Release/Validation 的 MySQL 实现 |
-| `infrastructure/persistence/agent/model.go` | 仅持久化映射需要的私有 row 类型；领域实体不塞 JSON 细节 |
-| `infrastructure/driver/agenttemplate/catalog.go` | 读取代码随附的 AgentTemplate Catalog |
-| `infrastructure/driver/adminauth/resolver.go` | 把受信任 Admin Session/上游身份映射为 Principal |
-| `infrastructure/driver/adminauth/register.go` | Admin Auth Resolver 的 fx 绑定；未配置时提供 disabled 状态 |
-| `infrastructure/middleware/admin.go` | `RequireAdmin` HTTP guard；失败直接 401/403，不进入 Controller |
-| `cmd/agent-bootstrap/main.go` | 一次性把内置 Profile 物化成初始 Bundle 和 Release |
-| `workspaces/agent-templates/catalog.yaml` | 由现有 profiles/catalog.yaml 重命名的模板目录 |
-| `workspaces/agent-templates/<code>/**` | 八个内置 Agent 的种子 AGENTS/Skills/references |
-| `migrations/0007_agent_runtime.up.sql` | Agent/Bundle/Model/Release/Validation 表及 Conversation nullable 列 |
-| `migrations/0007_agent_runtime.down.sql` | 仅回滚 schema；已发布 Bundle 由运维显式处理 |
-| `migrations/0008_agent_conversation_finalize.up.sql` | 回填核验后增加 NOT NULL/FK，并替换 owner 唯一索引 |
-| `migrations/0008_agent_conversation_finalize.down.sql` | 冲突预检后恢复旧唯一索引，再回到 nullable 结构 |
-| `migrations/0009_agent_profile_cleanup.up.sql` | 兼容窗口结束后删除 profile_code 和旧索引 |
-| `migrations/0009_agent_profile_cleanup.down.sql` | 只恢复 nullable profile_code，不伪造历史值 |
-
-需要修改的现有文件：
-
-| 文件 | 修改点 |
-| --- | --- |
-| `domain/entity/conversation/conversation.go` | 增加 type、agent/release/pending/follow_latest/training_session 字段 |
-| `domain/repository/conversation/*.go` | 查询条件和创建参数改为 Agent/Release，迁移期只读 ProfileCode |
-| `infrastructure/persistence/conversation/*.go` | 映射新列；所有 owner 查询保留 UserID/TenantID 条件 |
-| `conversation/store.go` | 业务 RunRequest 增加 TenantID；不把 ReleaseID 暴露给 HTTP 请求 |
-| `conversation/runner.go` | 加载 Conversation 后向 Runtime Manager 获取 lease，再调用 `pi.Runner` |
-| `conversation/register.go` | 由固定 `pi.Runner` 改为注入 Runtime Provider |
-| `application/service/chat/service.go` | 创建会话时服务端解析 Agent.ActiveRelease |
-| `application/service/chat/run_manager.go` | 删除 Profile Context 注入，记录 agent/release tracing 属性 |
-| `common/dto/chat.go` | CreateConversation 从 `profile_code` 迁移到 `agent_id` |
-| `common/vo/chat.go` | 返回 agent_id/release_id，兼容期保留 profile_code |
-| `frontend/static/js/pages/chat.js` | Agent 列表、分页、默认项、agent_id 创建/筛选和空状态 |
-| `frontend/templates/pages/chat.html` | 保留聊天布局，增加空状态和按角色显示的管理入口 |
-| `frontend/templates/components/conversation-sidebar.html` | Agent 筛选及真实租户/部署标签 |
-| `frontend/static/js/pages/chat_agents_test.mjs` | 默认项缺失、分页、归档历史、状态冲突与租户列表隔离 |
-| `infrastructure/controller/http/chat/controller.go` | 最终只接收 agent_id；兼容期按 §22 映射 profile_code，禁止指定 release_id |
-| `infrastructure/middleware/visitor.go` | 产出普通 Principal；不得把匿名 Session 提升为管理员 |
-| `infrastructure/persistence/register.go` | 绑定 Agent/Release Repository 实现 |
-| `infrastructure/controller/http/register.go` | 注册 Agent 查询 API；管理路由挂 RequireAdmin |
-| `cmd/server/app.go` | 删除全局 `*pi.Agent`/`newAgentRunner`，改挂 Runtime Manager 生命周期 |
-
-兼容版本保留 `domain/entity/agentprofile`、`domain/repository/agentprofile` 和旧
-`GET /agent-profiles` 投影；0009 清理后删除旧包。代码仓库中的
-`workspaces/agent-templates` 只用于创建新 Agent/执行 bootstrap。生产内容来源必须是
-`<data-dir>/tenants/<tenant-id>/agents/<agent-id>/releases/<bundle-version-id>/`，实际
-WorkDir 按 §8.1 物化到会话级 runtime-cache，不能回退读取模板目录。
-
-现有 `workspaces/chat/skills` 中被 Template 引用的共享 Skill 在 bootstrap 时复制进初始
-Bundle，使 Bundle 自包含；`workspaces/chat/AGENTS.md` 只保留平台级安全与回复纪律，不
-复制业务角色内容。后续修改模板不会反向改变已创建 Agent。
-
-身份认证本身是宿主系统责任。`adminauth/resolver.go` 没有配置可信实现时返回
-`ErrAdminAuthUnavailable`，而不是读取 `X-Role: admin` 之类可伪造 Header。当前仓库要
-独立提供管理员登录时，应另立认证设计，不混在 Training Service 内。Phase 1B 的生产
-验收必须指定部署实际使用的 Resolver；只有测试 Fake 而没有生产身份来源不能算完成。
-
-### 17.4 Phase 1C：Training、Candidate Git 和发布
-
-| 文件 | 内容 |
-| --- | --- |
-| `domain/entity/agenttraining/session.go` | TrainingSession 状态机和不变量 |
-| `domain/entity/agenttraining/checkpoint.go` | checkpoint/partial checkpoint 元数据 |
-| `domain/repository/agenttraining/repository.go` | Session、lease、checkpoint 和状态 CAS |
-| `application/service/agenttraining/service.go` | 依赖集合与公共鉴权/加载逻辑，不放具体用例 |
-| `application/service/agenttraining/create.go` | 创建 Session、Conversation 和 Candidate |
-| `application/service/agenttraining/run.go` | 获取 lease、执行目标 Agent、保存 Turn/checkpoint |
-| `application/service/agenttraining/checkpoint.go` | diff、列表和 restore |
-| `application/service/agenttraining/operation.go` | Candidate 操作 lease、fence、冻结与队列请求交接 |
-| `application/service/agenttraining/model.go` | 候选模型选择及验证证据失效 |
-| `application/service/agenttraining/events.go` | Run 事件持久化、归属校验和重连回放 |
-| `application/service/agenttraining/validate.go` | Gate B dry-run 和 ValidationRun |
-| `application/service/agenttraining/submit.go` | 提交 Candidate，按部署阶段推进到 ready/evaluating |
-| `application/service/agenttraining/cancel.go` | cancel/expire/stale 清理与保留规则 |
-| `application/service/agenttraining/recover.go` | 重启恢复、lease 接管和 worktree 重物化 |
-| `application/service/agenttraining/register.go` | Training Service fx 模块 |
-| `application/service/agentrelease/service.go` | 发布、激活、回滚的统一入口 |
-| `application/service/agentrelease/publish.go` | publish lock 内的 Gate B、Git、DB、补偿编排 |
-| `application/service/agentrelease/activate.go` | 历史 Release 预检和 ActiveRelease CAS |
-| `application/service/agentrelease/register.go` | Release Service fx 模块 |
-| `application/tool/agenttraining/inspect.go` | `inspect_candidate` Tool |
-| `application/tool/agenttraining/validate.go` | `validate_candidate` Tool |
-| `application/tool/agenttraining/submit.go` | `submit_candidate` Tool；无 publish Tool |
-| `application/tool/agenttraining/register.go` | 只向 training Runtime 注册作者 Tool |
-| `application/port/agentbundle/store.go` | BundleStore、CandidateWorkspace、PublishedBundle 契约 |
-| `application/port/agentlock/lock.go` | Agent 粒度分布式锁契约 |
-| `infrastructure/driver/agentbundle/git_store.go` | bare repo、ref、tag 和物化目录 |
-| `infrastructure/driver/agentbundle/worktree.go` | Candidate 创建、恢复和安全删除 |
-| `infrastructure/driver/agentbundle/diff.go` | 真实树差异、digest 和配额统计 |
-| `infrastructure/driver/agentbundle/publish.go` | squash commit/tag 与失败补偿 |
-| `infrastructure/driver/agentbundle/register.go` | BundleStore 的 fx 绑定 |
-| `infrastructure/driver/agentlock/redis.go` | 带 owner token/TTL 的 Redis publish lock |
-| `infrastructure/driver/agentlock/register.go` | Agent Lock 的 fx 绑定 |
-| `infrastructure/persistence/agenttraining/repository.go` | Training/Checkpoint MySQL 实现 |
-| `infrastructure/persistence/agenttraining/events.go` | RunEvent 持久化、按归属和游标查询 |
-| `infrastructure/controller/http/agent/controller.go` | 扩展 Phase 1B Controller，增加 Release 激活/回滚 API |
-| `infrastructure/controller/http/agenttraining/controller.go` | Training REST/SSE API；只做绑定和响应 |
-| `common/dto/agent.go` | 扩展已有 Agent DTO，增加 Release 激活请求 |
-| `common/dto/agent_training.go` | 创建、Run、restore、publish 请求 DTO |
-| `common/vo/agent.go` | 扩展已有 Agent VO，增加 Release 管理响应 |
-| `common/vo/agent_training.go` | Session、diff、checkpoint、Validation、SSE VO |
-| `migrations/0010_agent_training.up.sql` | Training、Checkpoint、idempotency、Outbox 表 |
-| `migrations/0010_agent_training.down.sql` | 对应 schema 回滚 |
-
-Gate B 的 Bundle 语义校验放在应用层 `agenttraining/validate.go`，Git 文件枚举与安全打开
-放在 `agentbundle` adapter，AGENTS/Skill 解析继续复用 `pi/harness.InspectWorkspace`。
-这样 Git 不依赖 `pi`，`pi` 也不依赖发布业务。
-
-### 17.5 Phase 1D：管理员训练工作台
-
-当前前端是 Go template + 原生 JS，不引入新的 SPA 框架。新增：
-
-```text
-frontend/templates/pages/admin-agents.html
-frontend/templates/pages/admin-agent-detail.html
-frontend/templates/pages/admin-agent-training.html
-frontend/templates/components/training-header.html
-frontend/templates/components/training-chat.html
-frontend/templates/components/training-diff.html
-frontend/templates/components/training-validation.html
-frontend/static/css/pages/admin-agents.css
-frontend/static/css/pages/admin-agent-training.css
-frontend/static/js/pages/admin-agents.js
-frontend/static/js/pages/admin-agent-detail.js
-frontend/static/js/pages/admin-agent-training.js
-frontend/static/js/pages/training-stream.js
-frontend/static/js/pages/training-diff.js
-frontend/static/js/pages/training-state.js
-frontend/static/js/pages/training_stream_test.mjs
-frontend/static/js/pages/training_diff_test.mjs
-frontend/static/js/pages/training_state_test.mjs
-frontend/static/js/pages/admin_agents_test.mjs
-```
-
-修改 `frontend/assets.go`、`frontend/templates/partials/scripts.html` 和
-`infrastructure/controller/http/page/controller.go` 注册 §16.7 的列表、详情和训练页面。
-Agent 列表负责创建/选择目标 Agent，详情负责展示配置、ActiveRelease、历史版本和训练入口，
-不复制训练状态逻辑。普通 Chat 的
-`chat.js` 不掺入训练状态机，最多复用无业务状态的消息渲染函数。
-
-### 17.6 Phase 2 与 Phase 3 文件
-
-Phase 2 新增：
-
-```text
-domain/entity/evaluation/{suite.go,case.go,run.go,result.go}
-domain/repository/evaluation/repository.go
-application/service/agentevaluation/{service.go,suite.go,binding.go,runner.go,scorer.go,repair.go,register.go}
-application/port/evaluation/tool_fake.go
-application/tool/agenttraining/evaluate.go
-infrastructure/persistence/evaluation/repository.go
-infrastructure/driver/evaluation/{fake_tools.go,judge.go}
-infrastructure/controller/http/evaluation/controller.go
-common/dto/evaluation.go
-common/vo/evaluation.go
-migrations/0011_agent_evaluation.up.sql
-migrations/0011_agent_evaluation.down.sql
-```
-
-Phase 3 新增：
-
-```text
-domain/entity/finetuning/{example.go,dataset.go,job.go}
-domain/repository/finetuning/repository.go
-application/service/finetuning/{service.go,example.go,dataset.go,job.go,publish.go,register.go}
-application/port/finetuning/backend.go
-infrastructure/persistence/finetuning/repository.go
-infrastructure/driver/finetuning/backend.go
-infrastructure/controller/http/finetuning/controller.go
-common/dto/finetuning.go
-common/vo/finetuning.go
-migrations/0012_agent_finetuning.up.sql
-migrations/0012_agent_finetuning.down.sql
-```
-
-`backend.go` 只实现 Phase 3 评审时选定的第一个真实 Provider，不预先创建空的多 Provider
-文件。不同 Provider 的 JSON 转换只存在于 adapter，领域内统一使用规范消息格式。
-
-### 17.7 核心代码骨架
-
-以下代码是待审核的接口骨架，不是已实现代码；实现计划需要为每个接口先写失败测试。
-
-管理员身份只从 Context 获取：
-
-```go
-package identity
-
-type Role string
-
-const (
-    RoleUser  Role = "user"
-    RoleAdmin Role = "admin"
-)
-
-type Principal struct {
-    TenantID string
-    UserID   string
-    Role     Role
-}
-
-func FromContext(context.Context) (Principal, bool)
-func RequireAdmin(context.Context) (Principal, error)
-```
-
-Runtime Manager 只接收服务端解析完成的规格：
-
-```go
-package agentruntime
-
-type RuntimePurpose string
-
-const (
-    PurposeChat       RuntimePurpose = "chat"
-    PurposeTraining   RuntimePurpose = "training"
-    PurposeEvaluation RuntimePurpose = "evaluation"
-)
-
-type ToolEffect string
-
-const (
-    ToolReadOnly           ToolEffect = "read_only"
-    ToolReversibleWrite    ToolEffect = "reversible_write"
-    ToolExternalSideEffect ToolEffect = "external_side_effect"
-)
-
-type RuntimeLease interface {
-    Runner() pi.Runner
-    Release()
-}
-
-type RuntimeManager interface {
-    Acquire(context.Context, RuntimeSpec) (RuntimeLease, error)
-    Invalidate(context.Context, string) error
-    Close(context.Context) error
-}
-```
-
-Repository 不暴露无租户查询，也不让 Controller 直接操作 GORM：
-
-```go
-package agent
-
-type Repository interface {
-    Create(context.Context, *entity.Agent) error
-    Find(context.Context, tenantID, agentID string) (*entity.Agent, bool, error)
-    ReserveTraining(
-        context.Context, tenantID, agentID, trainingID string, expectedVersion uint64,
-    ) error
-    ReleaseTraining(
-        context.Context, tenantID, agentID, trainingID string, expectedVersion uint64,
-    ) error
-}
-
-type ReleaseRepository interface {
-    FindRelease(context.Context, tenantID, releaseID string) (*entity.AgentRelease, bool, error)
-    CommitPublish(context.Context, CommitPublishCommand) error
-    Activate(context.Context, ActivateCommand) error
-}
-```
-
-`CommitPublish` 是一个 Repository 原子操作：插入新 BundleVersion（或验证复用引用）和 AgentRelease、CAS 更新
-Agent、清空 active training、写 Outbox。Application Service 不分别调用四个 Repo 后
-假装它们处于一个事务。
-
-状态转换集中在领域实体，不允许 Controller/Repository 任意赋字符串：
-
-```go
-package agenttraining
-
-// 终态无出边；条件检查（证据、lease、阶段）由领域方法和服务共同执行。
-func allowedTransition(from, to Status) bool {
-    switch from {
-    case StatusActive, StatusValidating, StatusEvaluating, StatusRepairing, StatusReady:
-        if to == StatusCancelled || to == StatusStale || to == StatusExpired {
-            return true
-        }
-    default:
-        return false
-    }
-    switch from {
-    case StatusActive:
-        return to == StatusValidating
-    case StatusValidating:
-        return to == StatusActive || to == StatusReady || to == StatusEvaluating
-    case StatusEvaluating:
-        return to == StatusActive || to == StatusRepairing || to == StatusReady
-    case StatusRepairing:
-        return to == StatusActive
-    case StatusReady:
-        return to == StatusActive || to == StatusPublished
-    }
-    return false
-}
-
-func (s *TrainingSession) Transition(next Status, now time.Time) error {
-    if !allowedTransition(s.Status, next) {
-        return ErrInvalidTransition
-    }
-    s.Status = next
-    s.Version++
-    s.UpdatedAt = now.UTC()
-    return nil
-}
-
-func (s *TrainingSession) MarkCandidateChanged(head string, fence uint64, now time.Time) error {
-    if s.Status != StatusActive && s.Status != StatusRepairing {
-        return ErrCandidateNotWritable
-    }
-    if s.OperationKind == nil || (*s.OperationKind != "author" && *s.OperationKind != "restore") ||
-        s.ActiveOperationID == nil || s.OperationLeaseExpiresAt == nil ||
-        !now.Before(*s.OperationLeaseExpiresAt) || fence != s.OperationFence {
-        return ErrOperationLeaseLost
-    }
-    s.CandidateHead = head
-    s.LastValidationRunID = nil
-    s.LastEvaluationRunID = nil
-    s.Status = StatusActive
-    s.Version++
-    s.UpdatedAt = now.UTC()
-    return nil
-}
-```
-
-进入 ready 后的作者 Run/restore 先调用领域方法 `BeginCandidateEdit` 转 active 并清除
-LastValidationRunID/LastEvaluationRunID，再开放写权限；该方法与新操作 lease 的 CAS
-在同一数据库事务提交。MarkCandidateChanged 只提交已经持锁完成的 checkpoint，不负责
-事后许可写入。报告写回还必须比对 fence、CandidateHead、ReleaseSpec digest 和操作 ID，
-旧 worker 即使迟到也不能覆盖新状态。Transition 仅是状态边合法性检查，不是发布授权。
-
-Bundle/Git 通过应用端口隔离：
-
-```go
-package agentbundle
-
-type Store interface {
-    CreateCandidate(context.Context, CreateCandidateSpec) (CandidateWorkspace, error)
-    RestoreCandidate(context.Context, RestoreCandidateSpec) (CandidateWorkspace, error)
-    Checkpoint(context.Context, CheckpointSpec) (Checkpoint, error)
-    Diff(context.Context, DiffSpec) (TreeDiff, error)
-    Snapshot(context.Context, SnapshotSpec) (ReadOnlySnapshot, error)
-    Publish(context.Context, PublishSpec) (PublishedBundle, error)
-    DeleteUnreferenced(context.Context, PublishedBundle) error
-    DisposeCandidate(context.Context, CandidateWorkspace) error
-}
-```
-
-Gate B 是可组合 Validator，不与 HTTP 或 Git 命令输出耦合：
-
-```go
-type CandidateValidator interface {
-    Validate(context.Context, ValidationSpec) (ValidationReport, error)
-}
-
-type ValidationSpec struct {
-    TenantID        string
-    AgentID         string
-    TrainingID      *string
-    Workspace       agentbundle.ReadOnlySnapshot
-    BaseDigest      string
-    ModelRevisionID string
-    ReleaseSpecDigest string
-    ToolPolicy      agententity.ToolPolicySnapshot
-    RuntimeVersion  string
-}
-
-type ValidationReport struct {
-    CandidateHead   string
-    CandidateDigest string
-    ModelRevisionID string
-    ReleaseSpecDigest string
-    ToolPolicyDigest string
-    Diagnostics     []Diagnostic
-    SmokeResults    []SmokeResult
-    Passed          bool
-}
-```
-
-`ValidationReport.Passed` 由 Validator 根据结构、路径、Secret、Skill diagnostics、配额和
-smoke 结果计算；Agent 回复中的“测试通过”文本不能构造该对象。
-
-Training Service 的公开方法与 HTTP 一一对应，但 Controller 不持有 Repository：
-
-```go
-package agenttraining
-
-type Service struct {
-    sessions  trainingrepo.Repository
-    agents    agentrepo.Repository
-    runtimes  agentruntime.RuntimeManager
-    bundles   agentbundle.Store
-    validator CandidateValidator
-}
-
-func (s *Service) Create(context.Context, CreateCommand) (*SessionView, error)
-func (s *Service) Run(context.Context, RunCommand, pi.EventListener) (pi.RunResult, error)
-func (s *Service) Diff(context.Context, Query) (*DiffView, error)
-func (s *Service) Restore(context.Context, RestoreCommand) error
-func (s *Service) Validate(context.Context, ValidateCommand) (*ValidationView, error)
-func (s *Service) Submit(context.Context, SubmitCommand) (*SessionView, error)
-func (s *Service) Cancel(context.Context, CancelCommand) error
-func (s *Service) SelectModel(context.Context, SelectModelCommand) error
-func (s *Service) StreamEvents(context.Context, EventsQuery, EventSink) error
-```
-
-`Publish` 不放在 Training Service，避免 Author 服务拥有生产切换能力：
-
-```go
-package agentrelease
-
-func (s *Service) PublishTrainingCandidate(
-    ctx context.Context,
-    cmd PublishTrainingCommand,
-) (*agent.AgentRelease, error) {
-    principal, err := identity.RequireAdmin(ctx)
-    if err != nil {
-        return nil, err
-    }
-    return s.withAgentLock(ctx, principal.TenantID, cmd.AgentID, func(ctx context.Context) (*agent.AgentRelease, error) {
-        operation, err := s.acquirePublishOperation(ctx, principal, cmd)
-        if err != nil {
-            return nil, err
-        }
-        defer operation.Release()
-        session, evidence, err := s.loadAndRevalidate(ctx, principal, cmd)
-        if err != nil {
-            return nil, err
-        }
-        published, err := s.bundles.Publish(ctx, publishSpec(session, evidence))
-        if err != nil {
-            return nil, err
-        }
-        release := buildRelease(principal, published, evidence)
-        if err := s.releases.CommitPublish(ctx, commitCommand(session, release)); err != nil {
-            cleanupErr := s.bundles.DeleteUnreferenced(ctx, published)
-            return nil, errors.Join(err, cleanupErr)
-        }
-        // CommitPublish 同时写 Outbox；消费者按待迁移 Conversation 的旧 Runtime Key 失效。
-        return release, nil
-    })
-}
-```
-
-上面省略了日志字段和错误包装，但顺序是契约：先锁、再重读、再最终验证、再 Git、最后
-DB 事务；DB 已提交后 Runtime invalidation 失败只能通过 Outbox/重试向前恢复。
-acquirePublishOperation 同时校验 ready、管理员和 fence；Git Store 的 PublishedBundle
-记录是否本次新建，DeleteUnreferenced 仅补偿本次新建且未被引用的资源，纯模型变更不能
-删除复用的旧 Bundle。Outbox 消费者只失效 follow_latest 会话的旧 Key，不按 Release
-无差别关闭所有会话实例；新 Key 在下一次 AcquireChat 时按需创建。
-
-Conversation Runner 动态选择 Runtime，但 `pi.RunRequest` 不出现业务 ID：
-
-```go
-conversation, err := repository.FindOwned(ctx, tenantID, userID, conversationID)
-if err != nil {
-    return pi.RunResult{}, err
-}
-lease, err := runtimes.AcquireChat(ctx, agentruntime.ChatIdentity{
-    TenantID: tenantID,
-    UserID: userID,
-    ConversationID: conversationID,
-    AgentID: conversation.AgentID,
-    ReleaseID: conversation.AgentReleaseID,
-})
-if err != nil {
-    return pi.RunResult{}, err
-}
-defer lease.Release()
-
-return lease.Runner().Run(ctx, pi.RunRequest{
-    History: history,
-    Input: input,
-    Context: contextBlocks,
-    Limits: limits,
-}, listener)
-```
-
-HTTP DTO 不接受管理员、租户、CandidatePath、版本号或 ReleaseID 等服务端事实：
-
-```go
-type CreateTrainingSessionDTO struct {
-    ExpiresInSeconds int `json:"expires_in_seconds" binding:"omitempty,min=600,max=604800"`
-}
-
-type RunTrainingDTO struct {
-    Content   string   `json:"content" binding:"required"`
-    ImageURLs []string `json:"image_urls" binding:"omitempty,max=4,dive,http_url"`
-}
-
-// Phase 2 才加入。
-type RunTrainingWithEvaluationDTO struct {
-    RunTrainingDTO
-    AutoRepair bool `json:"auto_repair"`
-}
-
-type PublishTrainingDTO struct {
-    AcknowledgeManualOnly bool `json:"acknowledge_manual_only"`
-}
-```
-
-`ValidationMode` 由 Release Service 根据部署阶段和有效证据派生，不能由客户端选择。
-Phase 1 的 DTO 不包含 `AutoRepair`，也不注册 `run_candidate_evaluation`；Phase 2 增加该
-字段和 Tool，避免向模型暴露永远失败的能力。
-
-fx 组合根只组合模块：
-
-```go
-var Register = fx.Options(
-    notice.Register,
-    chattools.Register,
-    agentcatalog.Register,
-    agentmodel.Register,
-    agentruntime.Register,
-    agenttraining.Register,
-    agentrelease.Register,
-    infrastructure.Register,
-    conversation.Register,
-    chatservice.Register,
-)
-```
-
-`cmd/server/app.go` 不再直接调用一次全局 `pi.New`；只有 Runtime Manager factory 根据
-Conversation/Release、Training 或 Evaluation spec 调用 `pi.New`，并负责每个实例的 Start/Stop。
-
-### 17.8 测试文件落位
-
-- 每个领域状态机在同包 `<entity>_test.go` 做表驱动状态转换测试；
-- 每个应用用例对应同名测试，例如 `run.go` 对应 `run_test.go`，不把所有场景塞进一个
-  `service_test.go`；
-- `agentbundle` 提供一套 Store contract test，使用临时 bare repo 同时验证 ref、diff、
-  checkpoint、publish 和补偿；
-- MySQL Repository 延续现有 sqlmock 单测，并增加真实 MySQL integration test 验证 CAS、
-  FK 和发布事务；
-- 各 `infrastructure/persistence/<module>/migration_test.go` 检查 0007～0012 的 up/down、
-  表名、索引和危险 DROP，延续当前 Conversation migration test 的放置方式；
-- HTTP Controller 测试只验证鉴权、DTO 绑定、错误码和 SSE framing；业务状态由 Service
-  测试负责；
-- 身份测试覆盖匿名 Visitor 永远是 user、伪造角色 Header 无效、缺少 Resolver 时管理
-  路由不可用、真实 Admin Principal 才能进入 Service；
-- Runtime Manager 增加并发 race test，覆盖相同 Key 单飞、活跃 lease 不回收、Stop 逆序
-  和 Invalidate 与 Acquire 竞争，以及同 Release 不同会话目录/MCP 隔离；
-- 模型注册探针测试覆盖浮动别名、无权限 Provider、能力不满足及同模型幂等注册；
-- Suite 管理测试覆盖完整版本事务、重复内容幂等、跨 Agent 绑定拒绝和旧报告失效；
-- RunEvent 测试覆盖跨租户/管理员/Run 重连拒绝、序号幂等回放和过期游标；
-- 前端继续使用 Node 内置 test runner，DOM/stream/state 各自测试；
-- Phase 1D 增加 `infrastructure/controller/http/agenttraining/e2e_test.go`，跑通“创建训练
-  → 对话修改 → diff → validate → manual-only publish → 普通会话懒迁移 → rollback”。
-
-## 18. 数据库变更
-
-新增表：
-
-```text
-agents
-agent_tenant_settings
-agent_bundle_versions
-agent_model_revisions
-agent_releases
-agent_training_sessions
-agent_training_checkpoints
-agent_training_run_events
-agent_candidate_validation_runs
-agent_evaluation_suites
-agent_evaluation_cases
-agent_evaluation_runs
-agent_evaluation_case_results
-agent_training_examples
-agent_dataset_versions
-agent_dataset_version_examples
-agent_fine_tune_jobs
-agent_idempotency_keys
-agent_outbox_events
-```
-
-表按阶段创建：0007 创建 Agent（含 Presentation JSON、BootstrapKey）、TenantSettings、
-Bundle/Model/Release/Validation，bootstrap 依靠 `tenant_id + bootstrap_key` 唯一键保证幂等；
-0010 才创建 Training/Checkpoint/RunEvent/Idempotency/Outbox；0011 创建 Evaluation；0012 创建
-TrainingExample/Dataset/FineTuneJob。上面的列表表示最终目标，不表示首个 migration 一次
-创建全部表。
-
-跨阶段引用先保存 nullable ID，不提前创建指向不存在表的外键：0007 中
-`active_training_session_id`、`required_evaluation_suite_id`、`evaluation_run_id`、`dataset_version_id`、
-`fine_tune_job_id` 只建列；0010/0011/0012 在目标表存在后再补对应 FK。0010 的
-`last_evaluation_run_id` 同理在 0011 才补 FK。
-
-修改 `agent_conversations` 的目标结构：
-
-```text
-ADD tenant_id VARCHAR(32) NOT NULL
-ADD conversation_type VARCHAR(16) NOT NULL DEFAULT 'chat'
-ADD agent_id VARCHAR(32) NOT NULL
-ADD agent_release_id VARCHAR(32) NOT NULL
-ADD pending_release_id VARCHAR(32) NULL
-ADD follow_latest BOOLEAN NOT NULL DEFAULT TRUE
-ADD training_session_id VARCHAR(32) NULL
-```
-
-既有表不能直接增加无默认值的 NOT NULL Agent/Release 字段。迁移顺序固定为：
-
-1. 执行 `0007_agent_runtime.up.sql`：创建 Agent/Release 等新表，并以 nullable 形式增加
-   `tenant_id`、`agent_id`、`agent_release_id`、`pending_release_id`、
-   `training_session_id`；
-2. 部署兼容版本，旧代码仍可读 `profile_code`，新代码同时支持新列；
-3. 运维显式运行一次 `cmd/agent-bootstrap`，为八个 Profile 创建经验证的 Agent、Bundle、
-   ModelRevision 和 AgentRelease；该命令使用幂等 key，可安全重试；
-4. bootstrap 先把现有 Conversation 的 `tenant_id` 回填为部署配置的默认租户，再根据
-   `profile_code` 分批回填 `agent_id` 和 `agent_release_id`；
-5. 独立校验命令检查空值、未知 Profile、Bundle digest 和跨 Agent Release 引用，任何异常
-   都停止发布；
-6. 执行 `0008_agent_conversation_finalize.up.sql`，把 `tenant_id`、`agent_id`、
-   `agent_release_id` 改为 NOT NULL，并创建外键和查询索引。显式创建
-   `uq_agent_conversations_tenant_owner(tenant_id, user_id, conversation_id)` 后删除旧
-   `uq_agent_conversations_owner(user_id, conversation_id)`；核验新唯一索引有效后才开放
-   多租户写入，不让两个唯一约束长期并存而误拒绝合法数据；
-7. 应用切换为只读 `agent_id/agent_release_id`，停止写 `profile_code`；
-8. 经过一个兼容版本后执行 `0009_agent_profile_cleanup.up.sql`，删除 `profile_code` 和旧
-   Profile 索引；
-9. Phase 1C、2、3 再分别执行 0010 Training、0011 Evaluation、0012 Fine-tuning，禁止
-   在 Phase 1A 提前创建空表。
-
-0008 down 必须在停写窗口先检测 `(user_id, conversation_id)` 跨租户重复；有重复即拒绝
-回滚并报告冲突，禁止自动合并或删除客户数据。无冲突时先重建旧
-`uq_agent_conversations_owner`，确认成功后再删除 `uq_agent_conversations_tenant_owner`，
-然后撤销该 migration 的 FK/NOT NULL。MySQL DDL 不假定可事务回滚，脚本每步检查实际
-schema 并支持中断后继续；恢复旧 schema 前必须停止多租户应用写入并完成备份。
-
-0010 的 TrainingSession 保存 ActiveOperationID、OperationKind、OperationFence、
-OperationLeaseExpiresAt 和 CandidateModelRevisionID；RunEvent 保存 tenant_id、
-training_session_id、run_id、seq、事件内容与时间。0011 的 Suite 行包含 tenant_id、agent_id、
-suite_key、version、content_digest 和完整阈值/fixture/Judge 配置，Cases 指向版本行 ID；
-同时补 Agent.RequiredEvaluationSuiteID 的 FK 与同租户同 Agent 一致性校验。
-
-关键唯一约束：
-
-- `agents(id)` 和 `agents(tenant_id, id)`；
-- 内置 Agent 使用 `agents(tenant_id, bootstrap_key)`，普通创建的 BootstrapKey 为 NULL；
-- `agent_tenant_settings(tenant_id)`，default_agent_id 为同租户可空引用；
-- `agent_model_revisions(tenant_id, provider_id, model_id, kind)`；
-- `agent_bundle_versions(agent_id, version)`；
-- `agent_bundle_versions(agent_id, git_commit)`；
-- `agent_releases(agent_id, version)`；
-- `agent_training_sessions(conversation_id)`；
-- `agent_training_run_events(tenant_id, training_session_id, run_id, seq)`；
-- `agent_evaluation_suites(tenant_id, agent_id, suite_key, version)`；
-- `agent_evaluation_suites(tenant_id, agent_id, suite_key, content_digest)`；
-- `agent_evaluation_cases(suite_id, case_code)`；
-- `agent_training_examples(agent_id, source_run_id, content_digest)`；
-- `agent_dataset_versions(agent_id, content_digest)`；
-- `agent_fine_tune_jobs(provider_id, external_job_id)`。
-- `agent_conversations(tenant_id, user_id, conversation_id)`。
-
-活跃 Training Session 由 `agents.active_training_session_id` 的 CAS 更新约束，不依赖
-MySQL partial unique index。
-
-所有 Agent 聚合根和高风险子表（TrainingSession、Release、EvaluationRun、Dataset、
-FineTuneJob）都保存 `tenant_id`。Repository 方法必须把认证上下文中的 TenantID 作为
-必填查询条件；不能先按全局 ID 查出对象后再在 Controller 补做租户判断。子记录的
-`tenant_id + agent_id` 还需通过应用服务和外键/一致性检查确认属于同一聚合。
-
-## 19. 并发、错误和恢复
-
-### 19.1 并发边界
-
-- 同一 TrainingSession 每次只允许一个 Run；
-- 同一 Agent 第一阶段只允许一个 active TrainingSession；
-- 同一租户可以同时训练多个不同 Agent；训练活跃指针和发布锁均按目标 Agent 隔离；
-- 发布和评测集绑定更新按 TenantID + AgentID 获取分布式锁；
-- Runtime 创建按 Runtime Key 单飞；
-- Evaluation Case 可并发，但同一 Case 只有一个结果；
-- FineTune Job 的 webhook/poll 更新通过状态版本做幂等 CAS。
-
-Candidate 操作 lease 覆盖 author/restore/configure/validate/evaluate/publish，一次只允许
-一种操作占用工作树；ActiveRunID 仅作者执行时有值，不能拿它代替验证/发布占用标识。
-获取和续租使用数据库 CAS，fence 单调递增，所有完成写回比较操作 ID、fence、HEAD 和
-ReleaseSpec 摘要。阶段交接必须在同一事务内换操作 owner/状态，不能暴露可插入新作者的
-空窗；模型参数修改、Suite 绑定变化和发布都要重检证据。
-
-lease 失效仅撤销操作授权；Session `ExpiresAt` 才控制长期占用。同一 Agent 的活跃指针
-覆盖全部非终态，不能通过进入评测态绕过单 Candidate 限制。需要同时持两把锁时统一先
-Agent publish lock、后 Candidate 操作 lease，禁止反向获取；作者 Turn 不持发布锁。
-
-创建 TrainingSession、Training Run、publish 和 FineTune submit 必须支持
-`Idempotency-Key`，作用域为 `tenant + actor + route`，并持久化请求摘要和最终响应。
-相同 key 但请求摘要不同返回冲突；对已 `published` Session 重试 publish 返回既有
-Release，不再分配版本或重复发送事件。
-
-### 19.2 基础 Release 漂移
-
-如果 TrainingSession 创建后 Agent ActiveRelease 已改变：
-
-- Candidate 进入 `stale`；
-- 禁止直接发布；
-- 管理员选择“放弃”或“基于最新 Release 重建 Candidate 并重新应用 diff”；
-- 重建后所有旧 CandidateValidationRun 和 EvaluationRun 失效；
-- 不自动把旧 Candidate 静默 merge 到新版本。
-
-### 19.3 进程重启
-
-- Training Conversation、CandidateHead 和 checkpoint 均持久化；
-- Runtime 是可重建缓存；
-- 重启后从 CandidateHead 重新物化缺失 worktree；
-- EvaluationRun 执行中断后标记 `failed_interrupted`，不会猜测成功；
-- FineTune Job 从外部 Provider 状态恢复；
-- pending conversation migration 在下一 Turn 重试。
-
-操作续租失败时立即停止作者工具调度，并终止相关 exec/MCP/Subagent 进程。数据库 fence
-只能阻止迟到写回，不能阻止旧 shell 写盘，因此接管前必须由本机进程监管确认旧进程组
-已退出，才能重新开放 Candidate。如果无法确认旧宿主进程已隔离，保持冲突状态并交由
-运维处理，不能直接重用同一路径。第一阶段不支持跨节点抢占仍可写共享磁盘的作者进程。
-
-确认隔离后保留旧工作树用于故障诊断，从最后持久化 CandidateHead 重建；未 checkpoint
-的残留变更不自动作为成功候选。validating/evaluating 的中断报告记录 failed_interrupted，
-状态回 active 并清除可发布证据；repairing 中断同样回 active，保留已消耗次数和预算。
-恢复记录操作 ID、旧 fence 和新 fence，续跑必须重新验证。published 等终态不会被接管
-改回 active；publish 中断先对账 DB/refs/Outbox，再决定补偿或返回既有 Release。
-
-### 19.4 部分失败
-
-| 失败点 | 处理 |
-| --- | --- |
-| Agent Run 失败且无变更 | 保存错误和 Invocation，不创建 checkpoint |
-| Agent Run 失败但有变更 | 创建 partial checkpoint，禁止进入 ready |
-| Gate B 失败 | 保持 Candidate，返回结构化 diagnostics |
-| Evaluation 部分 Case 失败 | 保存所有已完成结果，Run 失败，不允许发布 |
-| Bundle tag 后 DB 失败 | 删除未引用 tag/物化目录并记录补偿 |
-| ActiveRelease 切换后事件失败 | 发布成功，事件进入 Outbox 重试 |
-| 会话懒迁移失败 | 保持旧 release_id 和 pending_release_id，下次重试 |
-| FineTune webhook 重复 | external_job_id + provider 幂等更新 |
-
-## 20. 安全模型
-
-### 20.1 信任边界
-
-- 管理员身份来自服务端认证；
-- TenantID 来自服务端认证，所有 Repository 查询和文件路径都按租户隔离；
-- Agent 输出、Skill 文本、附件和网页内容均不可信；
-- Candidate 可执行脚本不可信；
-- FineTune Provider 状态是外部输入，需要结构化校验；
-- Bundle Git repository 和 Release 表是发布事实来源；
-- Evaluation Suite 和 Release Gate 是平台维护资源，绝不挂载可写。
-
-### 20.2 强制要求
-
-- 生产 Bundle 目录只读；
-- 生产会话和 Evaluation Case 的临时目录互不共享，权威 Release 目录不包含可写 scratch/tmp；
-- validating/evaluating/ready 不授予作者写权限，冻结前必须收回所有进程写句柄；
-- Training Candidate 与其他 Agent、其他 Session 隔离；
-- exec 默认禁止网络并使用最小环境；
-- Secret 不进入消息、Bundle、diff、Invocation 内容或训练数据；
-- 文件写入必须同时受 Workspace root 和 OS sandbox 限制；
-- 发布再次扫描真实文件树，不能信任 Agent 自报修改清单；
-- 所有版本和摘要由服务端计算；
-- Fine-tuning 样本必须管理员审核；
-- 所有发布必须引用同一 Candidate digest 的成功 CandidateValidationRun；
-- Phase 2 起发布还必须引用同一 ReleaseSpec 的成功 EvaluationRun；
-- Agent 不能修改阈值、跳过 Case 或把失败改成成功；
-- 第一阶段不提供 Agent self-publish Tool。
-
-### 20.3 Workify 经验带来的额外防线
-
-Workify 的 Gate A 不解析 bash，说明 Tool 名称/参数 deny-list 不能成为文件安全边界。
-go-reagent 必须把以下两项作为硬要求：
-
-1. `chat/evaluation` exec 在 OS 沙箱层只写 scratch/tmp；
-2. 任何 Training exec 写入最终都必须经过 Gate B 的真实树检查后才能发布。
-
-## 21. 可观测性与审计
-
-新增 Span：
-
-```text
-agent.training.run
-agent.candidate.validate
-agent.evaluation.run
-agent.evaluation.case
-agent.release.publish
-agent.release.activate
-agent.dataset.build
-agent.finetune.submit
-agent.finetune.poll
-```
-
-关键属性只记录 ID、状态、计量和摘要，不记录消息正文、文件正文、Secret 或完整 Tool
-参数：
-
-```text
-agent.id
-agent.release.id
-agent.bundle.digest
-training.session.id
-training.candidate.digest
-evaluation.run.id
-evaluation.case.id
-finetune.job.id
-termination.reason
-run.total_tokens
-run.cost_usd
-```
-
-审计事件：
-
-```text
-agent.created
-agent.archived
-agent.enabled
-agent.presentation.updated
-agent.default.updated
-agent.model_revision.registered
-agent.evaluation_suite.created
-agent.evaluation_suite.bound
-agent.training.started
-agent.training.checkpointed
-agent.training.validation_failed
-agent.training.evaluated
-agent.training.auto_repair_stopped
-agent.training.submitted
-agent.training.cancelled
-agent.release.published
-agent.release.activated
-agent.release.rolled_back
-agent.training_example.approved
-agent.dataset.created
-agent.finetune.submitted
-agent.finetune.completed
-agent.finetune.failed
-```
-
-## 22. 现有 Profile 与会话迁移
-
-1. 把八个 `workspaces/chat/profiles/<code>` 重命名并转换到
-   `workspaces/agent-templates/<code>`，作为八个内置 AgentTemplate；
-2. 为每个 Template 运行 Workspace Validator；全部通过后创建来源为 `migration` 的
-   CandidateValidationRun，以及初始 Agent、BundleVersion、基础 ModelRevision 和
-   AgentRelease，任一验证失败则停止迁移；
-3. `workspaces/chat/AGENTS.md` 中真正的平台通用纪律保留为平台 Context，不复制到每个
-   Agent Bundle；Profile AGENTS 成为各初始 Bundle 的 `AGENTS.md`；
-4. Profile 专属 Skills 和被模板引用的 `workspaces/chat/skills` 在 bootstrap 时复制进
-   对应 Agent Bundle 的 `skills/`；
-5. 现有 Conversation 按 `profile_code` 映射到对应内置 Agent 和初始 Release；
-6. 新会话 API 改为提交 `agent_id`；
-7. `GET /agent-profiles` 在兼容窗口内改为返回 AgentTemplate 投影，前端迁移完成后删除；
-8. 迁移期间 `profile_code` 只读保留一个版本，之后通过独立 migration 删除；
-9. 不允许缺失映射时静默回退到 general，迁移应失败并报告具体 code。
-
-迁移同时复制 Profile 图标、欢迎语、starters、order 到 AgentPresentation，为明确指定的
-迁移租户设置原默认 Profile 对应 Agent；普通 Template 创建不写 BootstrapKey，避免同源
-Agent 被错误去重。既有匿名历史只允许回填到该部署明确指定的单客户租户；已有多客户
-数据必须提供可信用户到租户映射，禁止全部落入 default。
-
-Phase 1B 同步升级聊天前端及列表/创建/筛选接口；兼容期后端同时接受旧 profile_code
-和新 agent_id，但单请求不能同时提供两者。旧 code 只映射为当前租户的内置迁移 Agent，
-不能用于选择从相同模板创建的其他 Agent。新前端只发送 agent_id，旧接口仅为兼容投影；
-0009 清理前必须确认旧客户端已退役。详情/VO 包含展示信息以保留已归档 Agent 的历史。
-
-## 23. 实施阶段
-
-这是总架构设计，不应被展开成一个超大实现计划。审核通过后按以下依赖顺序分别编写、
-评审和执行实现计划，每个阶段通过验收后再进入下一阶段：
-
-1. Phase 1A：`pi` WorkspacePolicy、沙箱写边界、InspectWorkspace；
-2. Phase 1B：Agent/Release、基础模型注册、Profile 与聊天页面迁移、会话级 Runtime Manager、
-   生产 Bundle 只读运行；
-3. Phase 1C：TrainingSession、Candidate Git、checkpoint、Gate A/B、人工发布与回滚；
-4. Phase 1D：管理员训练工作台和完整端到端验收；
-5. Phase 2：评测集版本导入与绑定、Evaluation 与有限自主修正；
-6. Phase 3：Fine-tuning；
-7. Phase 4：规模化能力。
-
-本文件获批后首先只为 Phase 1A 编写实现计划，不把后续阶段混进同一个开发批次。
-
-### Phase 1：动态 Agent 与人工发布的资产训练
-
-- Agent、BundleVersion、基础 ModelRevision、AgentRelease、TrainingSession；
-- Profile → AgentTemplate 迁移；
-- Runtime Manager；
-- 会话独立 WorkDir、基础模型注册及生产前备份恢复演练；
-- Agent 展示配置、租户默认项、现有聊天页空状态及 agent_id 接口迁移；
-- Tool/MCP Effect Catalog 和 Training 安全替身策略；
-- Training Chat、Candidate Workspace、checkpoint；
-- `AGENTS.md`、文档、Skills、`.sh/.py` 脚本；
-- Gate A、Gate B；
-- 不可变 CandidateValidationRun；
-- 管理员 diff 审核、发布、回滚；
-- Chat Runtime 只读策略；
-- Conversation 绑定 AgentRelease。
-
-Phase 1 发布条件：没有自动评测时，只允许管理员明确勾选“尚未自动评测”，并在审计中
-标记 `manual_only`。默认发布按钮要求至少通过 Workspace Validator 和脚本 smoke。
-
-### Phase 2：Evaluation 与有限自主修正
-
-- Evaluation Suite/Case/Run；
-- 管理员完整导入不可变 Suite 版本并绑定到目标 Agent；
-- 生产权限 Evaluation Runner；
-- Tool trace、Schema、安全和 Judge 断言；
-- 最多三轮自动修正；
-- Candidate ready 门槛；
-- 发布强制绑定成功 EvaluationRun；
-- 基线 Release 回归对比。
-
-Phase 2 完成后移除 `manual_only` 发布例外。
-
-### Phase 3：Fine-tuning
-
-- TrainingExample 审核；
-- DatasetVersion 和脱敏；
-- FineTuneBackend 端口及第一个 Provider 实现；
-- FineTuneJob 状态机；
-- Fine-tuned ModelRevision 生命周期；
-- 微调模型与基础模型对照评测；
-- Bundle + Model 联合 AgentRelease。
-
-### Phase 4：规模化与高级能力
-
-- 对象存储 Bundle；
-- 分布式 Runtime cache；
-- 多管理员协作和 Candidate merge；
-- Agent 构建其他 Agent；
-- Bundle Extensions/Hooks；
-- 多 Provider Fine-tuning；
-- 灰度流量与在线指标自动回滚。
-
-## 24. 测试策略
-
-### 24.1 `pi` SDK 与 Runtime
-
-- `WorkspaceWriteRestricted + AllowWrite=false` 不注册文件写工具；
-- Seatbelt/Bubblewrap 下 exec 不能修改 Bundle；
-- exec 可写允许的 scratch/tmp；
-- Host backend 无法保证策略时启动失败；
-- `WorkspaceWriteAll + AllowWrite=true` 保持当前 Coding 行为；
-- `InspectWorkspace` 与真实 ContextBuilder 对同一 Workspace 结论一致；
-- symlink、路径逃逸和特殊文件被拒绝。
-
-Phase 1B Runtime 验证覆盖：同 Release 的两个 Conversation 拥有不同 WorkDir，不能
-互读 scratch/tmp；权威 releases 不产生任何临时目录，根只读不能 rename/unlink Bundle；
-复制过程不使用共享可写硬链接；系统临时目录、MCP 和 Subagent 不突破隔离。版本切换
-失败保留旧会话版本，follow_latest=false 不被发布事件失效；容量满时不淘汰活跃实例。
-
-### 24.2 Training Service
-
-- 非管理员不能创建、读取、运行或发布 TrainingSession；
-- 同一 Agent 第二个 active TrainingSession 被拒绝；
-- 同一租户的两个不同 Agent 可以各自创建 active TrainingSession，候选文件、checkpoint、
-  发布版本互不影响；跨租户或跨 Agent 引用训练会话、Candidate 和 checkpoint 被拒绝；
-- Candidate 从准确 BaseRelease 创建；
-- 每轮文件变更生成 checkpoint；
-- 失败 Run 只生成 partial checkpoint；
-- restore 只能选择本 TrainingSession checkpoint；
-- Candidate 修改使旧 CandidateValidationRun 和 EvaluationRun 失效；
-- validating/evaluating/ready 拒绝作者写入，ready 必须先失效证据再转 active；
-- 作者与 restore/配置修改/验证/发布竞争时只允许一个操作 lease 成功；
-- queued 验证 Tool 在作者 Turn 结束、子进程停止、checkpoint 完成前不执行检查；
-- 旧 shell 未停止时禁止接管，fence 失效的工具和报告写回在变更前被拒绝；
-- 操作 lease 到期隔离旧进程后可接管，但不会把 Session 错误标记为 stale；
-- repairing 的成功、失败和无变更均有明确出边，重新评测必先重新验证，总预算不重置；
-- Session 到期进入 expired 并释放 Agent 活跃训练指针；
-- 服务重启后能恢复 Candidate。
-
-### 24.3 Gate B 与发布
-
-- 合法 AGENTS、Skill、脚本能发布；
-- 保留路径、Secret、越界链接、特殊文件、超限 Bundle 被拒绝；
-- Skill diagnostics、重复名称、缺失脚本引用被拒绝；
-- Bundle 和运行配置都无变化的空发布被拒绝；纯模型变更可复用 Bundle，但须重新验证；
-- agent.yaml 的有效示例可解析，未知/重复键、多文档、错误类型、缺字段、不可用解释器
-  和低于所需版本的 Runtime 被拒绝；
-- 两个并发发布只产生一个新版本；
-- BaseRelease 漂移使 Candidate stale；
-- Git/DB 各失败点执行预期补偿；
-- Release digest 与物化目录一致；
-- 所有 Release 都绑定同 digest 的成功 CandidateValidationRun；
-- `manual_only` 只在 Phase 1 且管理员显式确认时可发布；
-- 回滚同时切换 Bundle、Model 和 ToolPolicy；
-- 历史 Release 的模型、Tool 版本或 SecretRef 不可用时，激活预检失败且生产指针不变。
-
-### 24.4 Evaluation
-
-- 每个 Case 无共享 History；
-- Evaluation Runner 不能写 Candidate；
-- Training/Evaluation 的副作用 Tool 只能命中 Fake、dry-run 或测试租户；
-- 训练 Agent 不能读取或修改隐藏期望；
-- hard failure 阻止 ready/publish；
-- Candidate digest 变化阻止复用旧报告；
-- 自动修正达到轮次/预算/无进展上限会停止；
-- Tool 未调用、Tool 报错和业务失败能正确区分。
-
-Suite 导入、绑定、Case 执行均校验同租户同 Agent；版本导入失败整套回滚；历史版本
-不可变，绑定更新后旧报告不能批准发布。各 Case/Attempt 不共享目录、MCP 状态或 History。
-
-### 24.5 Fine-tuning
-
-- 未审核 Example 不能进入 Dataset；
-- 脱敏失败阻止 Dataset 冻结；
-- Dataset digest 稳定；
-- webhook/poll 幂等；
-- 外部成功不会自动发布；
-- 新 ModelRevision 必须重新评测；
-- 失败或取消 Job 不能进入 AgentRelease。
-
-### 24.6 端到端
-
-1. 管理员从 writing Agent v1 创建训练会话；
-2. 要求新增带 Python 脚本的 Skill；
-3. Agent 修改 Candidate，页面展示 diff/checkpoint；
-4. 普通用户会话仍运行 v1，且不能看到训练工具；
-5. 运行评测，失败摘要触发一次自动修正；
-6. Candidate 进入 ready；
-7. 管理员发布 v2；
-8. 新会话立即使用 v2；
-9. 旧会话下次 Turn 懒迁移并收到变更提示；
-10. 管理员回滚 v1，Bundle、Model、ToolPolicy 一起恢复；
-11. 管理员把一个修正审核成 TrainingExample；
-12. Dataset → FineTuneJob → ModelRevision → Evaluation → 新 Release 完成闭环。
-
-### 24.7 迁移、页面与恢复验收
-
-- 0008 up 先创建新唯一索引再移除旧索引，允许合法的跨租户同 user/conversation 值；
-- 0008 down 遇到旧唯一键冲突时停在预检，不删数据；无冲突时先恢复旧索引再删新索引，
-  模拟 MySQL DDL 中断后可继续恢复；
-- bootstrap 可重试，同租户从同一 Template 创建多个普通 Agent 不被种子唯一键拦截；
-- 页面保留选助手、发送图片、流式回复、历史搜索/筛选及重命名删除；新接口使用 agent_id，
-  默认项不在首屏、空租户、无发布、归档历史和创建前停用均展示正确状态；
-- 管理入口按角色显示，直接访问管理 API 仍需后端认证；SSE 重连不能跨租户、管理员、
-  TrainingSession 或 Run 回放，也不能触发重复执行；
-- Agent PATCH 拒绝跨租户、非管理员、未知状态及空名称；归档与新训练竞争时不能同时
-  成功，存在非终态训练返回 409；归档原子清理默认项，历史可读，重新启用不自动成为默认；
-- 从同批数据库和 Git 备份恢复后核验所有发布和 checkpoint 引用；删除一份 Git 对象的
-  故障演练应阻止受影响 Agent 激活并准确报告；缓存丢失可重建，未 checkpoint 不伪造恢复；
-- 登记实际备份周期、保留策略、RPO 和实测 RTO，Phase 1 上线前完成一次恢复演练。
-
-## 25. 验收标准
-
-- 管理员能在 UI 内完成创建训练会话、聊天修改、查看 diff、评测、发布和回滚；
-- 训练回复确实来自目标 Agent 身份，不是另一个通用 Trainer；
-- 普通用户不能获得训练工具或写入 Candidate；
-- 任何生产 Run 都不能修改已发布 Bundle；
-- 训练失败或服务重启不会污染 ActiveRelease，也不会丢失已 checkpoint 的 Candidate；
-- 发布必须基于服务端计算的真实 Candidate digest；
-- Phase 2 后，没有成功 EvaluationRun 的 Candidate 不能发布；
-- AgentRelease 能完整复现 Bundle、模型、工具策略和运行配置；
-- 回滚不依赖重新构建旧配置；
-- Fine-tuning 数据只来自管理员审核样本；
-- Fine-tuning 成功不等于发布成功，必须重新评测并由管理员批准；
-- `pi.Runner`、`pi.RunRequest` 和 `pi.RunResult` 不承载训练业务字段。
-
-## 26. 已定决策
-
-1. 采用 Workify 式同一逻辑 Agent 自训练，不创建独立 Trainer Agent。
-2. 使用显式管理员 TrainingSession，不把训练能力开放给普通 Chat。
-3. TrainingSession 使用独立 Candidate Workspace 和独立 `pi.Agent` Runtime。
-4. 生产 Bundle 只读；会话 WorkDir 仅 scratch/tmp 可写，不能把权威 Release 目录作临时工作区。
-5. Training Agent 可修改资产、验证和提交 Candidate，但不能发布。
-6. Gate A 提供即时反馈，Gate B 是发布权威边界。
-7. 第一阶段一个 Agent 只允许一个 active TrainingSession。
-8. Git BundleVersion 与完整 AgentRelease 分层。
-9. AgentRelease 固定 Bundle、Model、ToolPolicy、RuntimeConfig、ValidationRun，并在
-   `evaluated` 模式固定 EvaluationRun。
-10. 现有 Profile 降级为创建 Agent 的 Template，不再承担运行身份。
-11. 自动评测由独立 Evaluation Runner 执行，训练 Agent 不修改用例和阈值。
-12. 自主修正最多三轮且受独立总预算限制。
-13. 第一阶段默认管理员发布，不提供 Agent self-publish Tool。
-14. Fine-tuning 在应用/基础设施层实现，`pi` 只消费最终模型引用。
-15. 普通聊天不会自动进入训练集，训练样本必须管理员审核。
-16. 发布和回滚以 AgentRelease 为单位，模型与 Bundle 一起切换。
-17. Chat Runtime 按租户、Agent、Conversation、Release 和配置缓存，不跨会话共享工作目录。
-18. Candidate 仅 active/repairing 的 author lease 可写；验证/评测/发布前先停止全部写入进程。
-19. 基础模型注册属于 Phase 1B；Suite 版本导入与门槛绑定属于 Phase 2，均由管理员管理。
-20. 现有聊天页面在 Phase 1B 完成 Agent 展示/默认值/空状态迁移，管理详情与训练工作台在 Phase 1D 提供。
+| pi/workspace_policy.go、pi/internal/workspacepolicy/ | 公共策略及内部规范化 |
+| pi/harness/tools/filesystem.go | 所有文件变更的统一子根边界 |
+| pi/harness/sandbox/、pi/mcp/sandbox.go | exec/MCP 的 OS 写策略 |
+| pi/harness/inspect.go、context.go、prompt.go | 检查与真实加载复用 |
+| config/、cmd/server/app.go、cmd/cli/main.go | 显式策略配置及兼容入口 |
+| domain/entity/agent/、domain/repository/agent/ | Agent、AgentVersion 及存储契约 |
+| domain/entity/agenttraining/、domain/repository/agenttraining/ | 训练状态及单操作记录 |
+| application/identity/、infrastructure/middleware/ | 宿主认证、租户和管理员守卫 |
+| application/service/agentcatalog/ | 创建、展示、归档、模板投影 |
+| application/service/agentruntime/ | 版本解析、会话 WorkDir、实例缓存 |
+| application/service/agenttraining/ | 创建、聊天、checkpoint、restore、validate、恢复 |
+| application/service/agentversion/ | 发布、激活、回滚及 Git/DB 补偿 |
+| application/port/agentbundle/、infrastructure/driver/agentbundle/ | Git、物化、快照和真实树检查 |
+| infrastructure/persistence/agent/、agenttraining/ | 三张表及事务实现 |
+| infrastructure/controller/http/agent/、agenttraining/ | API 绑定和响应，不实现业务状态机 |
+| frontend/templates/pages/、frontend/static/js/pages/ | 当前聊天适配、管理员列表/详情/训练页面 |
+
+用例按 create/run/checkpoint/validate/publish/activate/recover 分文件，不把所有代码塞进
+chat/service.go 或 server/app.go；也不为每个 JSON 字段新建服务和表。具体文件及 TDD
+步骤放各阶段计划，本文不预生成后续代码骨架。
+
+## 11. 实施阶段和验收
+
+### 11.1 分四个小阶段
+
+1. Phase 1A：WorkspacePolicy、OS 写边界、MCP 继承与 InspectWorkspace。现有
+   `2026-09-08-agent-workspace-policy-phase-1a.md` 计划继续适用，需按本版引用评审。
+2. Phase 1B：agents/agent_versions、模板迁移、管理员身份接入、会话 Runtime 和聊天页适配。
+3. Phase 1C：第三张训练表、Candidate/Git checkpoint、校验、人工发布、回滚及恢复。
+4. Phase 1D：管理员完整工作台、迁移与备份演练、端到端验收。
+
+每阶段单独编写和评审实施计划，完成本阶段验收再进入下一阶段。本轮只修设计，
+Phase 1A 计划仍待评审，不开始实现。自动评测、微调和分布式部署未来按真实需求另立
+设计，不作为第一版验收条件。
+
+### 11.2 Phase 1A 验收
+
+- restricted + AllowWrite=false 不注册文件写工具；可写模式不由 AllowExec 隐式决定。
+- Seatbelt/Bubblewrap 实测 exec 不能修改/删除/改名行为文件，能写显式允许的临时目录。
+- Host 无法保证受限进程时启动失败，stdio-only 也不能绕过；只读无进程不创建临时文件。
+- all + AllowWrite=true 保持 CLI Coding 行为。
+- InspectWorkspace 与 ContextBuilder 对同一 AGENTS/Skills 读取和诊断一致。
+- symlink、路径逃逸、特殊文件以及可写前缀兄弟目录被拒绝。
+- MCP/Subagent 不放大父策略；两个原生 OS 的实测证据与纯参数测试分开记录。
+
+### 11.3 业务与端到端验收
+
+- 同租户不同 Agent 可同时训练；同 Agent 第二个活跃训练被拒；跨租户/管理员引用被拒。
+- 两个聊天会话即使使用同一个版本也不能互读临时文件；版本目录没有运行产物。
+- 训练失败保存可恢复的 partial checkpoint；恢复旧 checkpoint 不丢失后续历史 refs。
+- 校验期间无写入进程；修改候选或配置使旧证据失效，发布检查实际 HEAD 和联合摘要。
+- 重复请求不重复执行，重复发布只产生一个版本；Git/DB 各故障点能对账或补偿。
+- 新会话用新版本，已有 follow_latest 会话下一轮迁移，加载失败保留旧版本；不依赖事件投递。
+- 回滚恢复文件、模型和工具配置；不可用历史引用拒绝激活。
+- 归档拒绝活跃训练，阻止新执行但保留历史；页面正常处理空租户、归档及分页默认项。
+- 普通 Chat API 不能读写训练会话；断线恢复获取快照不重发执行。
+- 校验页面明确“未自动质量评测”，发布要求人工确认；没有自动分数或微调入口。
+- bootstrap 可重试、同模板可创建多个 Agent，0008 回滚冲突不删数据。
+- 从同批 DB/Git 备份恢复后验证所有版本和 checkpoint 引用，缺失对象阻止激活。
+
+完整业务用例：创建客服 Agent → 管理员训练新增 Skill → 展示 diff/checkpoint → 校验
+→ 人工发布 v2 → 普通聊天下一轮使用 v2 → 回滚 v1。销售 Agent 和其他客户全过程不受影响。
+
+## 12. 简化后的边界
+
+三张表分别回答“是谁”“哪个完整版本”“这一次训练进行到哪里”。文件历史由 Git
+负责，聊天和执行计量由现有存储负责。减少的是独立模块、状态机和数据流水线；保留
+真实写入边界、租户归属检查、发布证据和故障恢复所需的最小记录。

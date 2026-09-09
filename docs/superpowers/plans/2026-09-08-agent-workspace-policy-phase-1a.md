@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26、`os.Root`、Go testing、macOS Seatbelt、Linux Bubblewrap、现有 fx/configor 配置；不增加第三方依赖。
 
-**Spec:** [Agent 自训练、评测与微调设计](../specs/2026-09-04-agent-self-training-design.md)，设计提交 `58793ca`；本计划仅实现 §10.2、§10.3、§17.2 和 §24.1 的 Phase 1A 部分。
+**Spec:** [Agent 资产自训练与人工发布设计（简化版）](../specs/2026-09-04-agent-self-training-design.md)，2026-09-09 修订；本计划仅实现 §6.1、§6.2、§10.2 和 §11.2 的 Phase 1A 部分。
 
 **Status:** 待评审；复选框表示未来执行步骤，本文件未执行任何功能开发或功能测试。
 
@@ -19,10 +19,10 @@
 - `WritablePrefixes` 只允许规范化后的 WorkDir 相对目录；不能配置绝对路径、`..` 或符号链接逃逸。
 - `AllowWrite` 或 `AllowExec` 为 true 时，`WriteMode` 不能为空；stdio MCP 同样是可执行进程，不能绕过显式策略要求。
 - `AllowExec=true + WorkspaceWriteRestricted` 在无法隔离的 Host 后端必须失败，不允许静默降级。
-- Chat/Evaluation 的行为文件只读；进程临时目录为本 WorkDir 内 `.tmp/`，允许写入时必须显式列入前缀。
+- Chat/validation 的行为文件只读；进程临时目录为本 WorkDir 内 `.tmp/`，允许写入时必须显式列入前缀。
 - 工作区校验与 ContextBuilder 使用相同 AGENTS/Skill 读取、解析和诊断，现有 SKILL.md 上限仍为 256 KiB。
-- 本期不创建数据库表、Agent/Release/TrainingSession、Git Bundle Store、会话 Runtime Manager、管理 API 或训练页面。
-- §8.1 的会话目录物化、租户隔离与缓存键由 Phase 1B 实现；本期仅提供可复用的目录写限制与底层沙箱契约。
+- 本期不创建数据库表、Agent/AgentVersion/TrainingSession、Git Bundle Store、会话 Runtime Manager、管理 API 或训练页面。
+- §5.2 的会话目录物化、租户隔离与缓存键由 Phase 1B 实现；本期仅提供可复用的目录写限制与底层沙箱契约。
 - 不在本期增加网络策略字段；保持现有网络行为。训练业务的默认禁网及副作用工具替身由后续阶段落实。
 - 原工作区未提交的 loopdetect/listener 改动不进入本分支、不自动提交或 stash；经评审后在隔离 worktree 执行。
 
@@ -48,7 +48,7 @@
 | `cmd/server/app.go`、`app_test.go`（新增） | 过渡期单 Workspace 显式策略，Task 8 |
 | `cmd/cli/main.go`、`main_test.go` | 保留显式 Coding all 语义，Task 6 |
 
-与 §17.2 相比增加的 internal 包用于避免 `pi → harness → pi` 循环；ProcessSupervisor/CLI/Prompt 文件是已核验的现有调用链依赖，不引入后续业务功能。仓库只有根 `go.mod`，没有 `pi/go.mod`；所有命令从仓库根运行。
+本表细化简化设计 §10.2 的 SDK 文件分工：internal 包用于避免 `pi → harness → pi` 循环；ProcessSupervisor/CLI/Prompt 文件是已核验的现有调用链依赖，不引入后续业务功能。仓库只有根 `go.mod`，没有 `pi/go.mod`；所有命令从仓库根运行。
 
 ### Task 0: 固定执行基线并隔离已有改动
 
@@ -361,7 +361,7 @@ func TestPayloadTmpDirUsesDeclaredPolicy(t *testing.T) {
 
 **Files:** 修改 `pi/agent.go`、`cmd/cli/main.go`、`cmd/cli/main_test.go`、`cmd/server/app.go`；新增 `pi/workspace_policy_test.go`。
 
-**Interfaces:** `pi.Options` 增加 `WorkspacePolicy WorkspacePolicy`。根包私有 `normalizeWorkspaceOptions(opts Options) (*workspacepolicy.Normalized, bool, error)` 返回规范化策略和 needsProcess；不增加新的公共 Normalized 类型。设计中的 NormalizeWorkspacePolicy 示意由此私有入口及 Task 1 internal.Normalize 落实。
+**Interfaces:** `pi.Options` 增加 `WorkspacePolicy WorkspacePolicy`。根包私有 `normalizeWorkspaceOptions(opts Options) (*workspacepolicy.Normalized, bool, error)` 返回规范化策略和 needsProcess；不增加新的公共 Normalized 类型。简化设计 §6.1 的统一规范化由此私有入口及 Task 1 internal.Normalize 落实。
 
 - [ ] RED：测试缺省写策略在创建 Runner/Workspace/Provider 前拒绝，错误包含 `workspace policy`，失败不创建 `.tmp`；stdio 单独启用时也必须拒绝：
 
@@ -579,8 +579,8 @@ git status --short
 
 | 设计要求 | 对应任务及可核验证据 |
 | --- | --- |
-| §10.2 显式模式、空值 fail fast、相对前缀 | Tasks 1、6；TestNormalize、TestNewRequiresExplicitWritePolicy |
-| §24.1 restricted + AllowWrite=false 不注册写工具 | Task 6 ToolDefinitions；Task 8 server 装配 |
+| §6.1 显式模式、空值 fail fast、相对前缀 | Tasks 1、6；TestNormalize、TestNewRequiresExplicitWritePolicy |
+| §11.2 restricted + AllowWrite=false 不注册写工具 | Task 6 ToolDefinitions；Task 8 server 装配 |
 | exec 不能写 Bundle，可写允许的临时区 | Tasks 3、4；两个 OS 的 TestNativeRestrictedWrites |
 | Host 无法保证时启动失败 | Tasks 3、6；Windows selector 与 stdio-only 用例 |
 | all + AllowWrite=true 保持 Coding 行为 | Tasks 2、6、8；工具/CLI 回归 |
