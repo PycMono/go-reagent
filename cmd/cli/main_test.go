@@ -222,10 +222,11 @@ func buildToolsetAgent(t *testing.T, flags cliFlags) *pi.Agent {
 		workDir: workDir,
 	}
 	agent, err := pi.New(pi.Options{
-		WorkDir:    runtime.workDir,
-		Platform:   runtime.options,
-		AllowWrite: flags.allowWrite || flags.yolo,
-		AllowExec:  flags.allowExec || flags.yolo,
+		WorkDir:         runtime.workDir,
+		Platform:        runtime.options,
+		AllowWrite:      flags.allowWrite || flags.yolo,
+		AllowExec:       flags.allowExec || flags.yolo,
+		WorkspacePolicy: pi.WorkspacePolicy{WriteMode: pi.WorkspaceWriteAll},
 	})
 	if err != nil {
 		t.Fatalf("pi.New 失败: %v", err)

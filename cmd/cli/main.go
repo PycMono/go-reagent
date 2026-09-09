@@ -359,6 +359,9 @@ func buildAgent(runtime *runtimeConfig, cfg *config.Config, flags cliFlags) (*pi
 	}
 	options.AllowWrite = flags.allowWrite || flags.yolo
 	options.AllowExec = flags.allowExec || flags.yolo
+	if options.WorkspacePolicy.WriteMode == "" {
+		options.WorkspacePolicy.WriteMode = pi.WorkspaceWriteAll
+	}
 	return pi.New(options)
 }
 

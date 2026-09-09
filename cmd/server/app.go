@@ -50,8 +50,12 @@ func newApp(lifecycle fx.Lifecycle, params appParams) (*pi.Agent, error) {
 	}
 	opts.Tools = params.ChatTools
 	opts.Notifiers = params.Notifiers
-	opts.AllowWrite = true
 	opts.AllowExec = true
+	opts.WorkspacePolicy = pi.WorkspacePolicy{
+		WriteMode:        pi.WorkspaceWriteRestricted,
+		WritablePrefixes: []string{".tmp", "scratch"},
+	}
+	opts.AllowWrite = false
 	opts.BuiltinSubagent = true
 	agent, err := pi.New(opts)
 	if err != nil {
