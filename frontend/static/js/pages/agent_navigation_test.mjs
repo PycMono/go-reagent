@@ -31,8 +31,27 @@ test("chat target requires one well-formed explicit target", function () {
   assert.deepEqual(resolveChatTarget(""), { kind: "directory" });
   assert.deepEqual(resolveChatTarget("?agent_id=a%2F1"), { kind: "new", agentID: "a/1", conversationID: "" });
   assert.deepEqual(resolveChatTarget("?conversation_id=c1"), { kind: "history", agentID: "", conversationID: "c1" });
+  assert.deepEqual(resolveChatTarget("?agent_id=a1&conversation_id=c1"), { kind: "history", agentID: "a1", conversationID: "c1" });
   assert.throws(() => resolveChatTarget("?agent_id=a&agent_id=b"), /重复/);
   assert.throws(() => resolveChatTarget("?agent_id=%ZZ"), /参数/);
+});
+
+test("run failure keeps text and images for an existing conversation", async function () {
+  const state = {
+    running: false, selectedAgentID: "a1", currentConversationID: "c1", readOnly: false,
+    draft: "retry this", imageURLs: ["https://example.test/keep.png"],
+  };
+  let shown = "";
+  await sendSelectedAgentMessage(state, state.draft, state.imageURLs, {
+    requestJSON: () => assert.fail("existing conversation must not be recreated"),
+    replaceURL: () => assert.fail("existing conversation URL must not change"),
+    startRun: async () => { throw new Error("连接失败"); },
+    showError: (message) => { shown = message; },
+  });
+  assert.equal(shown, "连接失败");
+  assert.equal(state.draft, "retry this");
+  assert.deepEqual(state.imageURLs, ["https://example.test/keep.png"]);
+  assert.equal(state.currentConversationID, "c1");
 });
 
 test("conversation must remain bound to the selected Agent", function () {

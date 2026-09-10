@@ -2,29 +2,16 @@ import { isVisibleChatMessage } from "./chat-visibility.js";
 import { renderMessageContent } from "./chat-message-content.js";
 import { createChatStream } from "./chat-stream.js";
 import { createImageBlock } from "./chat-image.js";
+import { assertConversationAgent, resolveChatTarget, sendSelectedAgentMessage } from "./agent-navigation.js";
 
 const API_ROOT = "/api/v1/conversations";
-const PROFILE_API = "/api/v1/agent-profiles";
-
-const PROFILE_SYMBOLS = Object.freeze({
-  "message-circle": "◎",
-  "pen-line": "✎",
-  "graduation-cap": "学",
-  "heart-pulse": "+",
-  "scale": "§",
-  "car-front": "车",
-  "briefcase": "公",
-  "baby": "育",
-});
+const AGENT_API = "/api/v1/agents";
 
 const state = {
   conversations: [],
-  profiles: [],
-  defaultProfileCode: "",
-  selectedProfileCode: "",
-  profileFilter: "",
-  profilesReady: false,
-  profileLoadFailed: false,
+  selectedAgentID: "",
+  selectedAgent: null,
+  readOnly: false,
   conversationCursor: "",
   messageCursor: "",
   currentConversationId: "",
@@ -45,7 +32,7 @@ const ui = {
   sidebarScrim: document.getElementById("sidebarScrim"),
   newChat: document.getElementById("newChatBtn"),
   search: document.getElementById("conversationSearch"),
-  profileFilter: document.getElementById("profileFilter"),
+  agentFilter: document.getElementById("agentFilter"),
   conversationList: document.getElementById("conversationList"),
   conversationCount: document.getElementById("conversationCount"),
   loadMoreConversations: document.getElementById("loadMoreConversations"),
@@ -53,13 +40,13 @@ const ui = {
   sessionProfile: document.getElementById("sessionProfile"),
   messages: document.getElementById("chatMessages"),
   welcome: document.getElementById("chatWelcome"),
-  welcomeProfileIcon: document.getElementById("welcomeProfileIcon"),
-  profileWelcomeTitle: document.getElementById("profileWelcomeTitle"),
-  profileWelcomeDescription: document.getElementById("profileWelcomeDescription"),
-  profileLoadError: document.getElementById("profileLoadError"),
-  profilePicker: document.getElementById("profilePicker"),
-  profileStarters: document.getElementById("profileStarters"),
+  welcomeAgentIcon: document.getElementById("welcomeAgentIcon"),
+  agentWelcomeTitle: document.getElementById("agentWelcomeTitle"),
+  agentWelcomeDescription: document.getElementById("agentWelcomeDescription"),
+  agentLoadError: document.getElementById("agentLoadError"),
+  agentStarters: document.getElementById("agentStarters"),
   loadOlderMessages: document.getElementById("loadOlderMessages"),
+  readOnlyNotice: document.getElementById("readOnlyNotice"),
   runStatus: document.getElementById("runStatus"),
   composer: document.getElementById("chatComposer"),
   input: document.getElementById("chatInput"),
@@ -102,12 +89,8 @@ function formatTime(value) {
   }).format(date);
 }
 
-function findProfile(code) {
-  return state.profiles.find(function (profile) { return profile.code === code; }) || null;
-}
-
-function profileSymbol(profile) {
-  return profile && PROFILE_SYMBOLS[profile.icon] ? PROFILE_SYMBOLS[profile.icon] : "◇";
+function agentSymbol(agent) {
+  return agent && agent.icon ? agent.icon : "A";
 }
 
 function currentConversation() {
@@ -115,74 +98,33 @@ function currentConversation() {
 }
 
 function updateSendAvailability() {
-  ui.send.disabled = !state.running && !state.currentConversationId && !state.profilesReady;
+  ui.send.disabled = !state.running && (!state.selectedAgent || !state.selectedAgent.selectable || state.readOnly);
+  ui.readOnlyNotice.hidden = !state.readOnly;
 }
 
-function renderProfileFilter() {
-  ui.profileFilter.replaceChildren();
+function renderAgentFilter() {
+  ui.agentFilter.replaceChildren();
   const all = document.createElement("option");
   all.value = "";
-  all.textContent = "全部助手";
-  ui.profileFilter.appendChild(all);
-  state.profiles.forEach(function (profile) {
+  all.textContent = "全部 Agent";
+  ui.agentFilter.appendChild(all);
+  if (state.selectedAgent) {
     const option = document.createElement("option");
-    option.value = profile.code;
-    option.textContent = profileSymbol(profile) + " " + profile.name;
-    ui.profileFilter.appendChild(option);
-  });
-  ui.profileFilter.value = state.profileFilter;
-  ui.profileFilter.disabled = !state.profilesReady;
+    option.value = state.selectedAgent.id;
+    option.textContent = agentSymbol(state.selectedAgent) + " " + state.selectedAgent.name;
+    ui.agentFilter.appendChild(option);
+  }
+  ui.agentFilter.value = "";
 }
 
-function setSelectedProfile(code) {
-  if (state.currentConversationId) return;
-  const profile = findProfile(code);
-  if (!profile || !profile.selectable) return;
-  state.selectedProfileCode = profile.code;
-  renderWelcome();
-}
-
-function renderProfilePicker() {
-  ui.profilePicker.replaceChildren();
-  if (state.currentConversationId || !state.profilesReady) {
-    ui.profilePicker.hidden = true;
+function renderAgentStarters(agent) {
+  ui.agentStarters.replaceChildren();
+  if (state.currentConversationId || !agent || !Array.isArray(agent.starters) || agent.starters.length === 0) {
+    ui.agentStarters.hidden = true;
     return;
   }
-  ui.profilePicker.hidden = false;
-  state.profiles.filter(function (profile) { return profile.selectable; }).forEach(function (profile) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "qb-chat__profile-option";
-    button.setAttribute("role", "option");
-    const selected = profile.code === state.selectedProfileCode;
-    button.setAttribute("aria-selected", selected ? "true" : "false");
-    if (selected) button.classList.add("is-selected");
-
-    const icon = document.createElement("span");
-    icon.className = "qb-chat__profile-option-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = profileSymbol(profile);
-    const copy = document.createElement("span");
-    copy.className = "qb-chat__profile-option-copy";
-    const name = document.createElement("strong");
-    name.textContent = profile.name;
-    const description = document.createElement("small");
-    description.textContent = profile.description;
-    copy.append(name, description);
-    button.append(icon, copy);
-    button.addEventListener("click", function () { setSelectedProfile(profile.code); });
-    ui.profilePicker.appendChild(button);
-  });
-}
-
-function renderProfileStarters(profile) {
-  ui.profileStarters.replaceChildren();
-  if (state.currentConversationId || !profile || !Array.isArray(profile.starters) || profile.starters.length === 0) {
-    ui.profileStarters.hidden = true;
-    return;
-  }
-  ui.profileStarters.hidden = false;
-  profile.starters.forEach(function (starter) {
+  ui.agentStarters.hidden = false;
+  agent.starters.forEach(function (starter) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = starter.title;
@@ -192,77 +134,62 @@ function renderProfileStarters(profile) {
       ui.input.focus();
       ui.input.setSelectionRange(ui.input.value.length, ui.input.value.length);
     });
-    ui.profileStarters.appendChild(button);
+    ui.agentStarters.appendChild(button);
   });
 }
 
 function renderSessionProfile() {
-  const conversation = currentConversation();
-  if (!conversation) {
+  if (!state.selectedAgent) {
     ui.sessionProfile.hidden = true;
     ui.sessionProfile.textContent = "";
     return;
   }
-  const profile = findProfile(conversation.profile_code);
-  ui.sessionProfile.textContent = profile ? profileSymbol(profile) + " " + profile.name : conversation.profile_code;
+  ui.sessionProfile.textContent = agentSymbol(state.selectedAgent) + " " + state.selectedAgent.name;
   ui.sessionProfile.hidden = false;
 }
 
 function renderWelcome() {
   const conversation = currentConversation();
-  const profileCode = conversation ? conversation.profile_code : state.selectedProfileCode;
-  const profile = findProfile(profileCode);
-  ui.profileLoadError.hidden = !state.profileLoadFailed || Boolean(conversation);
-  if (profile) {
-    ui.welcomeProfileIcon.textContent = profileSymbol(profile);
-    ui.profileWelcomeTitle.textContent = profile.welcome;
-    ui.profileWelcomeDescription.textContent = conversation
-      ? "这个对话固定使用" + profile.name + "。"
-      : profile.description;
-  } else if (state.profileLoadFailed) {
-    ui.welcomeProfileIcon.textContent = "!";
-    ui.profileWelcomeTitle.textContent = conversation ? "继续当前对话" : "助手列表加载失败";
-    ui.profileWelcomeDescription.textContent = conversation
-      ? "仍可继续发送消息，助手身份由服务端会话记录决定。"
-      : "刷新页面后再创建新对话。";
+  const agent = state.selectedAgent;
+  ui.agentLoadError.hidden = Boolean(agent);
+  if (agent) {
+    ui.welcomeAgentIcon.textContent = agentSymbol(agent);
+    ui.agentWelcomeTitle.textContent = agent.welcome || (conversation ? "继续与 " + agent.name + " 对话" : "开始与 " + agent.name + " 对话");
+    ui.agentWelcomeDescription.textContent = state.readOnly
+      ? "这个历史会话可以查看，但当前 Agent 已归档或停用。"
+      : (agent.description || "此对话将固定使用该 Agent。");
   } else {
-    ui.welcomeProfileIcon.textContent = "R";
-    ui.profileWelcomeTitle.textContent = "正在加载助手";
-    ui.profileWelcomeDescription.textContent = "每个对话会固定使用创建时选择的助手。";
+    ui.welcomeAgentIcon.textContent = "!";
+    ui.agentWelcomeTitle.textContent = "Agent 加载失败";
+    ui.agentWelcomeDescription.textContent = "返回 Agent 目录后重新选择。";
   }
-  renderProfilePicker();
-  renderProfileStarters(profile);
+  renderAgentStarters(agent);
   updateSendAvailability();
 }
 
-async function loadProfiles() {
-  try {
-    const catalog = await requestJSON(PROFILE_API);
-    const profiles = catalog && Array.isArray(catalog.items) ? catalog.items : [];
-    const defaultProfile = profiles.find(function (profile) {
-      return profile.code === catalog.default_profile && profile.selectable;
-    });
-    if (!defaultProfile) throw new Error("服务没有提供可用的默认助手");
-    state.profiles = profiles;
-    state.defaultProfileCode = defaultProfile.code;
-    if (!findProfile(state.selectedProfileCode)) state.selectedProfileCode = defaultProfile.code;
-    state.profilesReady = true;
-    state.profileLoadFailed = false;
-    renderProfileFilter();
-    renderConversationList();
-    renderSessionProfile();
-    renderWelcome();
-  } catch (error) {
-    state.profiles = [];
-    state.defaultProfileCode = "";
-    state.selectedProfileCode = "";
-    state.profilesReady = false;
-    state.profileLoadFailed = true;
-    renderProfileFilter();
-    renderSessionProfile();
-    renderWelcome();
-    showToast("助手列表加载失败：" + error.message);
-  }
+function agentFromConversation(conversation) {
+  return {
+    id: conversation.agent_id,
+    name: conversation.agent_name || "Agent",
+    icon: conversation.agent_icon || "A",
+    status: conversation.agent_status || "archived",
+    selectable: conversation.agent_status === "enabled",
+    description: "此历史会话固定使用 " + (conversation.agent_name || "该 Agent") + "。",
+    welcome: "继续与 " + (conversation.agent_name || "Agent") + " 对话",
+    starters: [],
+  };
+}
+
+async function loadNewAgent(agentID) {
+  const agent = await requestJSON(AGENT_API + "/" + encodeURIComponent(agentID));
+  if (!agent || agent.id !== agentID) throw new Error("Agent 响应与所选目标不一致");
+  state.selectedAgentID = agent.id;
+  state.selectedAgent = agent;
+  state.readOnly = !agent.selectable || agent.status !== "enabled";
+  ui.title.textContent = agent.name;
+  renderAgentFilter();
+  renderSessionProfile();
+  renderMessages([]);
 }
 
 function closeSidebar() {
@@ -275,7 +202,7 @@ function renderConversationList() {
   if (state.conversations.length === 0) {
     const empty = document.createElement("p");
     empty.className = "qb-chat__history-empty";
-    empty.textContent = ui.search.value.trim() || state.profileFilter ? "没有找到匹配的对话" : "发出第一条消息后，对话会出现在这里。";
+    empty.textContent = ui.search.value.trim() || ui.agentFilter.value ? "没有找到匹配的对话" : "发出第一条消息后，对话会出现在这里。";
     ui.conversationList.appendChild(empty);
     return;
   }
@@ -293,12 +220,13 @@ function renderConversationList() {
     title.textContent = conversation.name || "未命名对话";
     const meta = document.createElement("span");
     meta.className = "qb-chat__conversation-meta";
-    const profile = findProfile(conversation.profile_code);
-    const profileLabel = profile ? profileSymbol(profile) + " " + profile.name : conversation.profile_code;
-    meta.textContent = profileLabel + " · " + String(conversation.message_total || 0) + " 条 · " + formatTime(conversation.updated_at);
+    const agentLabel = (conversation.agent_icon || "A") + " " + (conversation.agent_name || "Agent");
+    meta.textContent = agentLabel + " · " + String(conversation.message_total || 0) + " 条 · " + formatTime(conversation.updated_at);
     main.append(title, meta);
     main.addEventListener("click", function () {
-      selectConversation(conversation.id);
+      selectConversation(conversation.id).catch(function (error) {
+        showToast("会话加载失败：" + error.message);
+      });
     });
 
     const menu = document.createElement("button");
@@ -323,7 +251,7 @@ async function loadConversations(reset) {
   const params = new URLSearchParams({ limit: "20" });
   const keyword = ui.search.value.trim();
   if (keyword) params.set("keyword", keyword);
-  if (state.profileFilter) params.set("profile_code", state.profileFilter);
+  if (ui.agentFilter.value) params.set("agent_id", ui.agentFilter.value);
   if (state.conversationCursor) params.set("cursor", state.conversationCursor);
   try {
     const page = await requestJSON(API_ROOT + "?" + params.toString());
@@ -332,39 +260,17 @@ async function loadConversations(reset) {
     ui.loadMoreConversations.hidden = !state.conversationCursor;
     renderConversationList();
     const current = state.conversations.find(function (item) { return item.id === state.currentConversationId; });
-  if (current) {
-    state.activeConversation = current;
-    ui.title.textContent = current.name;
+    if (current) {
+      state.activeConversation = current;
+      ui.title.textContent = current.name;
     }
-  renderSessionProfile();
+    renderSessionProfile();
   } catch (error) {
     showToast("会话列表加载失败：" + error.message);
   }
 }
 
-async function createConversation() {
-  const profile = findProfile(state.selectedProfileCode);
-  if (!state.profilesReady || !profile || !profile.selectable) {
-    throw new Error("请等待助手列表加载完成");
-  }
-  const conversation = await requestJSON(API_ROOT, {
-  method: "POST",
-  headers: { "Accept": "application/json", "Content-Type": "application/json" },
-  body: JSON.stringify({ profile_code: profile.code }),
-  });
-  state.conversations.unshift(conversation);
-  state.currentConversationId = conversation.id;
-  state.activeConversation = conversation;
-  state.messageCursor = "";
-  ui.title.textContent = conversation.name;
-  renderSessionProfile();
-  renderConversationList();
-  renderMessages([]);
-  closeSidebar();
-  return conversation;
-}
-
-async function selectConversation(id) {
+async function selectConversation(id, expectedAgentID) {
   if (!id || id === state.currentConversationId && ui.messages.dataset.loaded === "true") {
     closeSidebar();
     return;
@@ -373,10 +279,16 @@ async function selectConversation(id) {
     showToast("请先停止当前回复");
     return;
   }
-  state.currentConversationId = id;
-  const conversation = state.conversations.find(function (item) { return item.id === id; });
-  state.activeConversation = conversation || null;
-  ui.title.textContent = conversation ? conversation.name : "对话";
+  const conversation = await requestJSON(API_ROOT + "/" + encodeURIComponent(id));
+  assertConversationAgent(conversation, expectedAgentID || "");
+  state.currentConversationId = conversation.id;
+  state.activeConversation = conversation;
+  state.selectedAgentID = conversation.agent_id;
+  state.selectedAgent = agentFromConversation(conversation);
+  state.readOnly = conversation.agent_status !== "enabled";
+  ui.title.textContent = conversation.name || "对话";
+  window.history.replaceState(null, "", "/chat?conversation_id=" + encodeURIComponent(conversation.id));
+  renderAgentFilter();
   renderSessionProfile();
   renderConversationList();
   closeSidebar();
@@ -395,11 +307,11 @@ async function manageConversation(conversation) {
       state.conversations = state.conversations.filter(function (item) { return item.id !== conversation.id; });
       if (state.currentConversationId === conversation.id) {
         state.currentConversationId = "";
-    state.activeConversation = null;
+        state.activeConversation = null;
         state.messageCursor = "";
         ui.title.textContent = "新对话";
-    state.selectedProfileCode = state.defaultProfileCode;
-    renderSessionProfile();
+        window.history.replaceState(null, "", "/chat?agent_id=" + encodeURIComponent(state.selectedAgentID));
+        renderSessionProfile();
         renderMessages([]);
       }
       renderConversationList();
@@ -417,7 +329,7 @@ async function manageConversation(conversation) {
       body: JSON.stringify({ name: name }),
     });
     conversation.name = name;
-  if (state.activeConversation && state.activeConversation.id === conversation.id) state.activeConversation.name = name;
+    if (state.activeConversation && state.activeConversation.id === conversation.id) state.activeConversation.name = name;
     if (state.currentConversationId === conversation.id) ui.title.textContent = name;
     renderConversationList();
     showToast("会话已重命名");
@@ -433,7 +345,7 @@ function renderMessages(items) {
   const visibleItems = (items || []).filter(isVisibleChatMessage);
   if (visibleItems.length === 0) {
     ui.welcome.hidden = false;
-  renderWelcome();
+    renderWelcome();
     ui.messages.appendChild(ui.welcome);
     return;
   }
@@ -636,7 +548,7 @@ function addActivity(key, label, details) {
   ui.runStatus.scrollTop = ui.runStatus.scrollHeight;
 }
 
-async function startRun(content, imageURLs) {
+async function startRun(content, imageURLs, onAccepted) {
   chatStream.discard();
   resetActivity();
   setRunning(true);
@@ -664,6 +576,7 @@ async function startRun(content, imageURLs) {
       }
       throw new Error(message);
     }
+    if (onAccepted) onAccepted();
     await readSSE(response.body, async function (eventName, data) {
       if (eventName === "run.started") {
         state.runId = data.run_id || "";
@@ -768,31 +681,56 @@ ui.composer.addEventListener("submit", async function (event) {
     await cancelCurrentRun();
     return;
   }
-  const content = ui.input.value.trim();
-  if (!content) return;
+  const content = ui.input.value;
   const imageURLs = [];
   if (ui.imageURL) {
     const raw = ui.imageURL.value.trim();
     if (raw) imageURLs.push(raw);
   }
+  const sendState = {};
+  Object.defineProperties(sendState, {
+    running: { get: () => state.running, set: (value) => setRunning(value) },
+    selectedAgentID: { get: () => state.selectedAgentID },
+    currentConversationID: {
+      get: () => state.currentConversationId,
+      set: (value) => { state.currentConversationId = value; },
+    },
+    readOnly: { get: () => state.readOnly },
+  });
   try {
-    if (!state.currentConversationId) await createConversation();
-    const userBlocks = [{ type: "text", text: content }];
-    imageURLs.forEach(function (url) {
-      userBlocks.push({ type: "image", image: { url: url } });
+    await sendSelectedAgentMessage(sendState, content, imageURLs, {
+      requestJSON: async function (path, options) {
+        const conversation = await requestJSON(path, options);
+        assertConversationAgent(conversation, state.selectedAgentID);
+        state.activeConversation = conversation;
+        state.messageCursor = "";
+        if (!state.conversations.some(function (item) { return item.id === conversation.id; })) {
+          state.conversations.unshift(conversation);
+        }
+        ui.title.textContent = conversation.name || "新对话";
+        renderConversationList();
+        closeSidebar();
+        return conversation;
+      },
+      replaceURL: function (path) {
+        window.history.replaceState(null, "", path);
+        renderConversationList();
+      },
+      startRun: function (id, text, images) {
+        if (id !== state.currentConversationId) throw new Error("会话状态已变化");
+        return startRun(text, images, function () {
+          const userBlocks = [{ type: "text", text: text.trim() }];
+          images.forEach(function (url) { userBlocks.push({ type: "image", image: { url: url } }); });
+          appendMessage({ role: "user", content: userBlocks, created_at: new Date().toISOString() }, true);
+          ui.input.value = "";
+          if (ui.imageURL) ui.imageURL.value = "";
+          resizeComposer();
+        });
+      },
+      showError: function (message) { showToast("消息发送失败：" + message); },
     });
-    appendMessage({
-      role: "user",
-      content: userBlocks,
-      created_at: new Date().toISOString(),
-    }, true);
-    ui.input.value = "";
-    if (ui.imageURL) ui.imageURL.value = "";
-    resizeComposer();
-    await startRun(content, imageURLs);
   } catch (error) {
-    showToast("消息发送失败：" + error.message);
-    setRunning(false);
+    showToast(error.message || "消息发送失败");
   }
 });
 
@@ -811,8 +749,8 @@ ui.newChat.addEventListener("click", async function () {
   state.currentConversationId = "";
   state.activeConversation = null;
   state.messageCursor = "";
-  state.selectedProfileCode = state.defaultProfileCode;
   ui.title.textContent = "新对话";
+  window.history.replaceState(null, "", "/chat?agent_id=" + encodeURIComponent(state.selectedAgentID));
   renderSessionProfile();
   renderConversationList();
   renderMessages([]);
@@ -823,8 +761,7 @@ ui.search.addEventListener("input", function () {
   window.clearTimeout(state.searchTimer);
   state.searchTimer = window.setTimeout(function () { loadConversations(true); }, 240);
 });
-ui.profileFilter.addEventListener("change", function () {
-  state.profileFilter = ui.profileFilter.value;
+ui.agentFilter.addEventListener("change", function () {
   loadConversations(true);
 });
 ui.loadMoreConversations.addEventListener("click", function () { loadConversations(false); });
@@ -836,6 +773,33 @@ document.addEventListener("keydown", function (event) {
   if (event.key === "Escape") closeSidebar();
 });
 
+async function initializeChat() {
+  let target;
+  try {
+    target = resolveChatTarget(window.location.search);
+  } catch (error) {
+    showToast(error.message);
+    window.location.replace("/agents");
+    return;
+  }
+  if (target.kind === "directory") {
+    window.location.replace("/agents");
+    return;
+  }
+  try {
+    if (target.kind === "new") {
+      await loadNewAgent(target.agentID);
+    } else {
+      await selectConversation(target.conversationID, target.agentID);
+    }
+    await loadConversations(true);
+  } catch (error) {
+    showToast("聊天加载失败：" + error.message);
+    ui.agentLoadError.hidden = false;
+    updateSendAvailability();
+  }
+}
+
 resizeComposer();
 renderMessages([]);
-Promise.allSettled([loadProfiles(), loadConversations(true)]);
+initializeChat();

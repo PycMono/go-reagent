@@ -599,6 +599,36 @@ textarea:focus-visible,
   display: none;
 }
 
+.qb-chat__switch-agent {
+  margin-top: 16px;
+  padding: 7px 11px;
+  color: #175cd3;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  background: var(--blue-soft);
+  border: 1px solid #dbeafe;
+  border-radius: 7px;
+}
+
+.qb-chat__switch-agent:hover {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.qb-chat__read-only {
+  width: min(820px, calc(100% - 48px));
+  margin: 10px auto 0;
+  padding: 9px 12px;
+  color: #7a2e0e;
+  font-size: 12px;
+  line-height: 1.45;
+  background: #fff6ed;
+  border: 1px solid #fedf89;
+  border-radius: 7px;
+}
+
 .qb-chat__profile-picker {
   display: grid;
   width: 100%;
