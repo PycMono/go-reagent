@@ -10,6 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	sqlsdk "github.com/PycMono/go-mysql-sdk"
 	"github.com/PycMono/go-mysql-sdk/transaction"
+	"github.com/PycMono/go-reagent/application/identity"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	gormmysql "gorm.io/driver/mysql"
@@ -39,6 +40,36 @@ func TestRepositoryFindByUserIDAndConversationIDLoadsMetadataOnly(t *testing.T) 
 	}
 }
 
+func TestRepositoryFindWithPrincipalScopesTenantExactOwnerAndChatType(t *testing.T) {
+	provider, mock, cleanup := newRepositoryTestProvider(t)
+	defer cleanup()
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{TenantID: "tenant-a", UserID: "User-A", Role: identity.RoleUser})
+	mock.ExpectQuery("SELECT .*agent_conversations.*tenant_id.*BINARY user_id.*BINARY conversation_id.*conversation_type.*LIMIT").
+		WithArgs("tenant-a", "User-A", "chat-a").
+		WillReturnRows(sqlmock.NewRows(conversationColumns))
+
+	conversation, found, err := newTestRepository(provider).FindByUserIDAndConversationID(ctx, "User-A", "chat-a")
+	if err != nil || found || conversation != nil {
+		t.Fatalf("Find() = %#v, %v, %v", conversation, found, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryFindWithPrincipalRejectsPassedUserMismatch(t *testing.T) {
+	provider, mock, cleanup := newRepositoryTestProvider(t)
+	defer cleanup()
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{TenantID: "tenant-a", UserID: "User-A", Role: identity.RoleUser})
+	_, _, err := newTestRepository(provider).FindByUserIDAndConversationID(ctx, "user-a", "chat-a")
+	if !errors.Is(err, commonerrors.ErrNotFound) {
+		t.Fatalf("Find() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepositoryListMessagesLoadsBoundedHistory(t *testing.T) {
 	provider, mock, cleanup := newRepositoryTestProvider(t)
 	defer cleanup()
@@ -58,6 +89,21 @@ func TestRepositoryListMessagesLoadsBoundedHistory(t *testing.T) {
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages = %#v, want %#v", messages, want)
+	}
+}
+
+func TestRepositoryListMessagesWithPrincipalJoinsOwnedChatConversation(t *testing.T) {
+	provider, mock, cleanup := newRepositoryTestProvider(t)
+	defer cleanup()
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{TenantID: "tenant-a", UserID: "User-A", Role: identity.RoleUser})
+	mock.ExpectQuery("SELECT .*agent_messages AS messages.*JOIN agent_conversations AS conversations.*conversations.id = .*tenant_id.*BINARY conversations.user_id.*conversation_type = 'chat'.*ORDER BY.*LIMIT").
+		WithArgs("conversation-pk-7", "tenant-a", "User-A").
+		WillReturnRows(sqlmock.NewRows(messageColumns))
+	if _, err := newTestRepository(provider).ListMessagesByConversationID(ctx, "conversation-pk-7", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

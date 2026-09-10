@@ -21,7 +21,7 @@ import (
 )
 
 func TestRegisteredConversationGraphStartsDisabledWithoutMySQL(t *testing.T) {
-	cfg := &config.Config{Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
+	cfg := &config.Config{Identity: config.IdentityConfig{Mode: config.IdentityModeAnonymous, TenantID: "local-test"}, Conversation: config.ConversationConfig{HistoryMessageLimit: 100}}
 	redisClient := goredis.NewUniversalClient(&goredis.UniversalOptions{Addrs: []string{"127.0.0.1:1"}})
 	t.Cleanup(func() { _ = redisClient.Close() })
 	app := fxtest.New(t,
