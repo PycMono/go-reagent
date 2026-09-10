@@ -24,3 +24,10 @@ type IConversationRepository interface {
 		invocations []*conversationentity.ModelInvocation,
 	) error
 }
+
+// IAgentConversationRepository adds tenant-bound Web conversation operations.
+// Implementations derive verified tenant/user ownership from the context.
+type IAgentConversationRepository interface {
+	CreateBound(context.Context, *conversationentity.Conversation) error
+	CommitAgentVersion(ctx context.Context, userID, conversationID, expectedAgentVersionID, targetVersionID string) error
+}

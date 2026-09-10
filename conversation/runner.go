@@ -9,6 +9,7 @@ import (
 	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
+	"github.com/PycMono/go-reagent/application/identity"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	conversationrepo "github.com/PycMono/go-reagent/domain/repository/conversation"
@@ -52,12 +53,19 @@ func (r *runner) Run(ctx context.Context, request RunRequest, listener pi.EventL
 	if err != nil {
 		return result, err
 	}
+	_, webRequest := identity.FromContext(ctx)
+	if principal, ok := identity.FromContext(ctx); ok && principal.UserID != userID {
+		return result, commonerrors.ErrNotFound
+	}
 
 	conversation, found, err := r.repository.FindByUserIDAndConversationID(ctx, userID, conversationID)
 	if err != nil {
 		return result, err
 	}
 	if !found {
+		if webRequest {
+			return result, commonerrors.ErrNotFound
+		}
 		if err := r.repository.Create(ctx, &conversationentity.Conversation{ConversationID: conversationID, UserID: userID}); err != nil {
 			return result, err
 		}

@@ -90,10 +90,7 @@ func TestMySQLConversationRepositoryRoundTrip(t *testing.T) {
 		}
 	})
 
-	idService, err := serviceimpl.NewIDService(0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	idService := serviceimpl.NewIDService(0)
 	repository := conversationpersistence.NewConversationRepo(provider, transactions, idService)
 	created := &conversationentity.Conversation{UserID: userID, ConversationID: conversationID, Name: "Integration Chat", ProfileCode: "writing"}
 	if err := repository.Create(ctx, created); err != nil {

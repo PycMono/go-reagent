@@ -21,6 +21,7 @@ type ListQuery struct {
 	UserID      string
 	Keyword     string
 	ProfileCode string
+	AgentID     string
 	Cursor      *ListCursor
 	Limit       int
 }

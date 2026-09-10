@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/application/identity"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
@@ -76,6 +77,24 @@ func TestRunnerCreatesConversationWhenNotFound(t *testing.T) {
 	}
 	if store.findCalls != 2 || store.createCalls != 1 || store.created.ConversationID != "conversation" || store.created.UserID != "user" {
 		t.Fatalf("find/create = %d/%d, created = %#v", store.findCalls, store.createCalls, store.created)
+	}
+}
+
+func TestRunnerWithPrincipalDoesNotCreateMissingConversation(t *testing.T) {
+	store := &runnerStoreFake{notFoundOnce: true}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{TenantID: "tenant-a", UserID: "user", Role: identity.RoleUser})
+	_, err := NewRunner(&runnerRuntimeFake{}, store, 100, governor.Limits{}).Run(ctx, validConversationRunRequest(), nil)
+	if !errors.Is(err, commonerrors.ErrNotFound) || store.findCalls != 1 || store.createCalls != 0 {
+		t.Fatalf("Run() error/find/create = %v, %d/%d", err, store.findCalls, store.createCalls)
+	}
+}
+
+func TestRunnerWithPrincipalRejectsPassedUserMismatchBeforeRepository(t *testing.T) {
+	store := &runnerStoreFake{}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{TenantID: "tenant-a", UserID: "other-user", Role: identity.RoleUser})
+	_, err := NewRunner(&runnerRuntimeFake{}, store, 100, governor.Limits{}).Run(ctx, validConversationRunRequest(), nil)
+	if !errors.Is(err, commonerrors.ErrNotFound) || store.findCalls != 0 {
+		t.Fatalf("Run() error/find = %v, %d", err, store.findCalls)
 	}
 }
 
