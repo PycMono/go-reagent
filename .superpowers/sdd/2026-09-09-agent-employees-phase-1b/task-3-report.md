@@ -36,3 +36,7 @@ Git blob size is checked with `cat-file -s` before content allocation and conten
 - Review race: agentversion `2.178s`, agentbundle `2.646s`.
 - Review vet and `git diff --check` passed.
 - Review macOS native: `TestNativeChatCannotReadSiblingScratch` passed; package `1.130s`.
+
+## Review fix round 2
+
+Existing materializations now revalidate directory permissions as well as file content and modes. The WorkDir root and every behavior directory must remain exactly `0555`; chat `scratch` and `.tmp` must remain actual `0700` directories, and only their descendants are excluded from immutable content comparison. Regression fixtures mutate the root, a behavior subdirectory, and scratch permissions and confirm reuse fails closed. `go test ./infrastructure/driver/agentbundle -count=1` passed in `2.309s`.

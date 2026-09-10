@@ -154,3 +154,52 @@ func TestExistingMaterializationRejectsOversizedAndHardlinkedFiles(t *testing.T)
 		})
 	}
 }
+
+func TestExistingMaterializationRejectsDirectoryModeChanges(t *testing.T) {
+	for _, target := range []string{"root", "behavior directory", "scratch not writable"} {
+		t.Run(target, func(t *testing.T) {
+			store := mustStore(t)
+			source := validSource(t)
+			if err := os.MkdirAll(filepath.Join(source, "documents"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, "documents", "note.txt"), []byte("note"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ref, err := store.CreateInitial(context.Background(), "tenant", "agent", "v1", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			chat := target == "scratch not writable"
+			var root string
+			if chat {
+				root, err = store.MaterializeChat(context.Background(), "tenant", "agent", "conversation", "v1", ref)
+			} else {
+				root, err = store.MaterializeVersion(context.Background(), "tenant", "agent", "v1", ref)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := root
+			mode := os.FileMode(0o755)
+			if target == "behavior directory" {
+				path = filepath.Join(root, "documents")
+			}
+			if target == "scratch not writable" {
+				path = filepath.Join(root, "scratch")
+				mode = 0o500
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				t.Fatal(err)
+			}
+			if chat {
+				_, err = store.MaterializeChat(context.Background(), "tenant", "agent", "conversation", "v1", ref)
+			} else {
+				_, err = store.MaterializeVersion(context.Background(), "tenant", "agent", "v1", ref)
+			}
+			if err == nil {
+				t.Fatalf("%s mode change accepted", target)
+			}
+		})
+	}
+}
