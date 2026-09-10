@@ -115,3 +115,42 @@ func TestFailedMaterializationKeepsExistingDestination(t *testing.T) {
 		t.Fatalf("existing destination changed: %q %v", b, readErr)
 	}
 }
+
+func TestExistingMaterializationRejectsOversizedAndHardlinkedFiles(t *testing.T) {
+	for _, name := range []string{"oversized", "hardlink"} {
+		t.Run(name, func(t *testing.T) {
+			store := mustStore(t)
+			ref, err := store.CreateInitial(context.Background(), "tenant", "agent", "v1", validSource(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := store.MaterializeVersion(context.Background(), "tenant", "agent", "v1", ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agents := filepath.Join(root, "AGENTS.md")
+			if err := os.Chmod(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(agents); err != nil {
+				t.Fatal(err)
+			}
+			if name == "oversized" {
+				if err := os.WriteFile(agents, make([]byte, maxBundleFile+1), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				external := filepath.Join(t.TempDir(), "linked")
+				if err := os.WriteFile(external, []byte("You are useful.\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Link(external, agents); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.MaterializeVersion(context.Background(), "tenant", "agent", "v1", ref); err == nil {
+				t.Fatalf("%s materialized file accepted", name)
+			}
+		})
+	}
+}

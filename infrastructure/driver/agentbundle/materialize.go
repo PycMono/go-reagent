@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -138,10 +140,10 @@ func (s *Store) verifyMaterialized(ctx context.Context, root, tenant, agent stri
 			}
 			content = []byte(target)
 		} else {
-			if !info.Mode().IsRegular() || (want.entry.Mode == "100755") != (info.Mode()&0o111 != 0) || info.Mode().Perm()&0o222 != 0 {
+			if (want.entry.Mode == "100755") != (info.Mode()&0o111 != 0) || info.Mode().Perm()&0o222 != 0 {
 				return ErrInvalidBundle
 			}
-			content, err = os.ReadFile(name)
+			content, err = readRegularBounded(name, info, maxBundleFile)
 			if err != nil {
 				return err
 			}
@@ -196,6 +198,7 @@ func (s *Store) readCommit(ctx context.Context, repo, commit string) ([]treeFile
 	scanner.Split(splitNUL)
 	var files []treeFile
 	var total int64
+	paths := map[string]struct{}{}
 	for scanner.Scan() {
 		line := scanner.Text()
 		meta, name, ok := strings.Cut(line, "\t")
@@ -209,22 +212,36 @@ func (s *Store) readCommit(ctx context.Context, repo, commit string) ([]treeFile
 		if !agentPathAllowed(name) {
 			return nil, ErrInvalidBundle
 		}
-		blob, err := s.runBytes(ctx, repo, "cat-file", "blob", parts[2])
+		for current := name; current != "." && current != ""; current = filepath.ToSlash(filepath.Dir(filepath.FromSlash(current))) {
+			paths[current] = struct{}{}
+		}
+		if len(paths) > maxBundlePaths {
+			return nil, ErrInvalidBundle
+		}
+		sizeText, err := s.run(ctx, "", nil, "--git-dir", repo, "cat-file", "-s", parts[2])
 		if err != nil {
 			return nil, err
 		}
-		if len(blob) > maxBundleFile {
+		size, err := strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64)
+		if err != nil || size < 0 || size > maxBundleFile {
+			return nil, ErrInvalidBundle
+		}
+		blob, err := s.runBytesLimit(ctx, repo, maxBundleFile, "cat-file", "blob", parts[2])
+		if err != nil || int64(len(blob)) != size {
 			return nil, ErrInvalidBundle
 		}
 		total += int64(len(blob))
-		if total > maxBundleBytes || len(files) >= maxBundlePaths {
+		if total > maxBundleBytes {
 			return nil, ErrInvalidBundle
 		}
 		if parts[0] == "120000" && !safeLink(name, string(blob)) {
 			return nil, ErrInvalidBundle
 		}
+		if err := validateBundleAsset(name, false, parts[0], blob); err != nil {
+			return nil, ErrInvalidBundle
+		}
 		sum := sha256.Sum256(blob)
-		files = append(files, treeFile{agentversion.Entry{Path: name, Mode: parts[0], Size: int64(len(blob)), ContentSHA256: fmt.Sprintf("sha256:%x", sum)}, blob})
+		files = append(files, treeFile{agentversion.Entry{Path: name, Mode: parts[0], Size: int64(len(blob)), ContentSHA256: fmt.Sprintf("%x", sum)}, blob})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -284,13 +301,23 @@ func writeTreeFiles(root string, files []treeFile) error {
 	}
 	return nil
 }
-func (s *Store) runBytes(ctx context.Context, repo string, args ...string) ([]byte, error) {
+func (s *Store) runBytesLimit(ctx context.Context, repo string, limit int64, args ...string) ([]byte, error) {
 	all := append([]string{"--git-dir", repo}, args...)
 	cmd := exec.CommandContext(ctx, s.git, all...)
 	cmd.Env = gitEnv(s.root, nil)
-	out, err := cmd.Output()
+	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	out, readErr := io.ReadAll(io.LimitReader(pipe, limit+1))
+	waitErr := cmd.Wait()
+	if readErr != nil || waitErr != nil || int64(len(out)) > limit {
+		return nil, ErrInvalidBundle
 	}
 	return out, nil
 }

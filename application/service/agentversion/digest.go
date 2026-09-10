@@ -26,7 +26,7 @@ func BundleDigest(entries []Entry) (string, error) {
 	ordered := slices.Clone(entries)
 	slices.SortFunc(ordered, func(a, b Entry) int { return strings.Compare(a.Path, b.Path) })
 	for i, e := range ordered {
-		if !validEntryPath(e.Path) || (e.Mode != "100644" && e.Mode != "100755" && e.Mode != "120000") || e.Size < 0 || !validSHA256(e.ContentSHA256) || (i > 0 && ordered[i-1].Path == e.Path) {
+		if !validEntryPath(e.Path) || (e.Mode != "100644" && e.Mode != "100755" && e.Mode != "120000") || e.Size < 0 || !validContentSHA256(e.ContentSHA256) || (i > 0 && ordered[i-1].Path == e.Path) {
 			return "", ErrInvalidDigestInput
 		}
 	}
@@ -44,17 +44,21 @@ func SpecDigest(bundle string, snapshot Snapshot) (string, error) {
 	if !validSHA256(bundle) || snapshot.validate() != nil {
 		return "", ErrInvalidDigestInput
 	}
-	encoded, err := canonicalMarshal(struct {
-		DigestVersion int           `json:"digest_version"`
-		BundleDigest  string        `json:"bundle_digest"`
-		Model         ModelConfig   `json:"model"`
-		Tools         ToolPolicy    `json:"tools"`
-		Runtime       RuntimeConfig `json:"runtime"`
-	}{1, bundle, snapshot.Model, snapshot.Tools, snapshot.Runtime})
+	encoded, err := specDigestCanonical(bundle, snapshot)
 	if err != nil {
 		return "", err
 	}
 	return digestBytes(encoded), nil
+}
+
+func specDigestCanonical(bundle string, snapshot Snapshot) ([]byte, error) {
+	return canonicalMarshal(struct {
+		DigestVersion int           `json:"digest_version"`
+		BundleDigest  string        `json:"bundle_digest"`
+		ModelConfig   ModelConfig   `json:"model_config"`
+		ToolPolicy    ToolPolicy    `json:"tool_policy"`
+		RuntimeConfig RuntimeConfig `json:"runtime_config"`
+	}{1, bundle, snapshot.Model, snapshot.Tools, snapshot.Runtime})
 }
 
 func canonicalMarshal(value any) ([]byte, error) {
@@ -71,6 +75,17 @@ func validSHA256(v string) bool {
 		return false
 	}
 	for _, c := range v[7:] {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+func validContentSHA256(v string) bool {
+	if len(v) != 64 {
+		return false
+	}
+	for _, c := range v {
 		if !strings.ContainsRune("0123456789abcdef", c) {
 			return false
 		}

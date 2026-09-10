@@ -22,3 +22,17 @@ Materialization copies blobs into a temporary sibling directory without hard lin
 The pinned JCS implementation is `github.com/cyberphone/json-canonicalization` at `v0.0.0-20241213102144-19d51d7fe467`, licensed Apache-2.0. Its RFC number and Unicode ordering behavior are covered by fixed canonical-byte and digest fixtures.
 
 Linux Bubblewrap native verification remains for the parent using the frozen source. No publication endpoint or training checkpoint behavior was added.
+
+## Review fix round 1
+
+Aligned the digest wire exactly with the master protocol: per-entry `content_sha256` is now 64 lowercase hexadecimal characters without a prefix, while aggregate digests retain `sha256:`. The fixed manifest fixture now expects `sha256:e159b3c1fa68d9942d8aff1778399c9cce45aad72e44ce6e2a15c85f424b6425`. Spec payload keys are exactly `model_config`, `tool_policy`, and `runtime_config`; the complete independent canonical-byte fixture expects `sha256:1f7129dbf7fc286b5aec648c210c14cf39c323948ea12a2941206fdb6b587dba`.
+
+Bundle validation now enforces the fixed §5.1 paths and §7.3 asset rules. Tests reject arbitrary root files, nested Git metadata, `.gitmodules`, `.gitattributes`, platform config, ELF/PE/Mach-O binaries, misplaced scripts, and executables outside Skill script directories. Checked files are staged by their exact paths instead of `git add -A`; `.gitignore` cannot silently omit an inspected file.
+
+Git blob size is checked with `cat-file -s` before content allocation and content is read through a `max+1` bounded stream. Existing materialized regular files are stat-checked, bounded while reading, identity-checked, and rejected when multiply hardlinked. Real oversized Git blob, oversized materialized file, and materialized hardlink fixtures cover these boundaries.
+
+- Review RED: digest tests failed on the prefixed entry format and missing exact SpecDigest helper; seven fixed-tree/native/script cases were accepted by the old driver.
+- Review GREEN: agentversion `0.366s`, agentbundle `1.744s`, config `1.121s`.
+- Review race: agentversion `2.178s`, agentbundle `2.646s`.
+- Review vet and `git diff --check` passed.
+- Review macOS native: `TestNativeChatCannotReadSiblingScratch` passed; package `1.130s`.
