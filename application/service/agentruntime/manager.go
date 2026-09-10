@@ -52,7 +52,9 @@ type entry struct {
 	key                                    Key
 	runtime                                ManagedRuntime
 	leased, creating, closing, quarantined bool
+	stopErr                                error
 	idleSince                              time.Time
+	timer                                  *time.Timer
 }
 type waiter struct{ request Request }
 type Manager struct {
@@ -82,7 +84,8 @@ func validRequest(r Request) bool {
 	k := r.Key
 	return (k.Kind == "chat" || k.Kind == "training" || k.Kind == "validation") && identity.ValidID(k.TenantID) && identity.ValidID(k.AgentID) &&
 		identity.ValidID(k.ConversationID) && identity.ValidID(k.VersionID) && k.SpecDigest != "" && r.Version.ID == k.VersionID &&
-		r.Version.AgentID == k.AgentID && r.Version.TenantID == k.TenantID && r.Version.SpecDigest == k.SpecDigest
+		r.Version.AgentID == k.AgentID && r.Version.TenantID == k.TenantID && r.Version.SpecDigest == k.SpecDigest &&
+		(k.Kind == "chat" || identity.ValidID(k.OperationID))
 }
 func (m *Manager) Acquire(ctx context.Context, r Request) (*Lease, error) {
 	if !validRequest(r) {
@@ -121,6 +124,10 @@ func (m *Manager) Acquire(ctx context.Context, r Request) (*Lease, error) {
 		if m.next() == w {
 			if e := m.entries[r.Key]; e != nil && m.reusable(e) {
 				if time.Since(e.idleSince) < m.options.IdleTTL {
+					if e.timer != nil {
+						e.timer.Stop()
+						e.timer = nil
+					}
 					e.leased = true
 					lease := m.lease(e)
 					m.mu.Unlock()
@@ -163,17 +170,7 @@ func (m *Manager) occupiedConversation(k Key) bool {
 	}
 	return false
 }
-func priority(k Key) int {
-	if k.Kind == "validation" {
-		return 0
-	}
-	if k.Kind == "training" {
-		return 1
-	}
-	return 2
-}
 func (m *Manager) next() *waiter {
-	var selected *waiter
 	for _, w := range m.queue {
 		k := w.request.Key
 		if m.occupiedConversation(k) {
@@ -183,11 +180,9 @@ func (m *Manager) next() *waiter {
 		if (e == nil || !m.reusable(e)) && !m.fits(k) && m.evictable(k) == nil {
 			continue
 		}
-		if selected == nil || priority(k) < priority(selected.request.Key) {
-			selected = w
-		}
+		return w
 	}
-	return selected
+	return nil
 }
 func (m *Manager) fits(k Key) bool {
 	total, tenant, ordinary, tenantOrdinary := 0, 0, 0, 0
@@ -234,8 +229,35 @@ func (m *Manager) evictable(k Key) *entry {
 func (m *Manager) lease(e *entry) *Lease {
 	var once sync.Once
 	return &Lease{Runner: e.runtime, Release: func() {
-		once.Do(func() { m.mu.Lock(); e.leased = false; e.idleSince = time.Now(); m.signal(); m.mu.Unlock() })
+		once.Do(func() {
+			m.mu.Lock()
+			e.leased = false
+			e.idleSince = time.Now()
+			if !m.closed {
+				idleSince := e.idleSince
+				e.timer = time.AfterFunc(m.options.IdleTTL, func() { m.expire(e, idleSince) })
+			}
+			m.signal()
+			m.mu.Unlock()
+		})
 	}}
+}
+
+func (m *Manager) expire(e *entry, idleSince time.Time) {
+	select {
+	case <-m.lifetime.Done():
+		return
+	default:
+	}
+	m.mu.Lock()
+	if m.closed || m.entries[e.key] != e || !m.reusable(e) || !e.idleSince.Equal(idleSince) {
+		m.mu.Unlock()
+		return
+	}
+	e.closing = true
+	e.timer = nil
+	m.mu.Unlock()
+	m.closeEntry(e)
 }
 func (m *Manager) create(ctx context.Context, e *entry, r Request) (*Lease, error) {
 	createCtx, cancel := context.WithCancel(ctx)
@@ -284,6 +306,7 @@ func (m *Manager) closeEntry(e *entry) error {
 	} else {
 		e.closing = false
 		e.quarantined = true
+		e.stopErr = err
 	}
 	m.signal()
 	return err
@@ -295,9 +318,14 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Lock()
 	m.closed = true
 	m.stop()
+	for _, e := range m.entries {
+		if e.timer != nil {
+			e.timer.Stop()
+			e.timer = nil
+		}
+	}
 	m.signal()
 	m.mu.Unlock()
-	var cleanupErrors error
 	for {
 		m.mu.Lock()
 		var candidate *entry
@@ -310,14 +338,15 @@ func (m *Manager) Close(ctx context.Context) error {
 		}
 		if candidate != nil {
 			m.mu.Unlock()
-			cleanupErrors = errors.Join(cleanupErrors, m.closeEntry(candidate))
+			m.closeEntry(candidate)
 			continue
 		}
 		active := false
+		var cleanupErrors error
 		for _, e := range m.entries {
+			cleanupErrors = errors.Join(cleanupErrors, e.stopErr)
 			if e.leased || e.creating || e.closing {
 				active = true
-				break
 			}
 		}
 		changed := m.changed

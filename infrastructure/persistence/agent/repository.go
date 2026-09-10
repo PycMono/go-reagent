@@ -156,9 +156,9 @@ func (r *Repository) List(ctx context.Context, query agentrepo.ListQuery) (agent
 	return page, nil
 }
 
-func (r *Repository) ListVersions(ctx context.Context, tenantID, agentID string, before uint64, limit int) ([]agententity.Version, error) {
+func (r *Repository) ListVersions(ctx context.Context, tenantID, agentID string, before uint64, limit int) (agentrepo.VersionPage, error) {
 	if err := r.validate(ctx); err != nil {
-		return nil, err
+		return agentrepo.VersionPage{}, err
 	}
 	limit = boundedLimit(limit)
 	where := "tenant_id = ? AND agent_id = ?"
@@ -170,8 +170,9 @@ func (r *Repository) ListVersions(ctx context.Context, tenantID, agentID string,
 	args = append(args, limit+1)
 	var rows []versionRow
 	if err := r.provider.UseDB(ctx).Raw("SELECT "+versionColumns+" FROM agent_versions WHERE "+where+" ORDER BY version DESC LIMIT ?", args...).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("mysql agent: list versions: %w", err)
+		return agentrepo.VersionPage{}, fmt.Errorf("mysql agent: list versions: %w", err)
 	}
+	hasMore := len(rows) > limit
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
@@ -179,7 +180,7 @@ func (r *Repository) ListVersions(ctx context.Context, tenantID, agentID string,
 	for i := range rows {
 		items[i] = rows[i].entity()
 	}
-	return items, nil
+	return agentrepo.VersionPage{Items: items, HasMore: hasMore}, nil
 }
 
 func (r *Repository) ReserveDraft(ctx context.Context, agent agententity.Agent) (agententity.Agent, error) {
