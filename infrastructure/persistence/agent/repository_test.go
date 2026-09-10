@@ -88,6 +88,22 @@ func TestListVersionsUsesBoundedDescendingStoragePagination(t *testing.T) {
 	assertExpectations(t, mock)
 }
 
+func TestUpdatePresentationArchivesOnlyWithoutActiveTrainingAndUsesCAS(t *testing.T) {
+	repository, mock := newRepositoryTest(t)
+	agent := draftAgent()
+	agent.Status = "archived"
+	agent.Name = "Archived writer"
+	mock.ExpectExec("UPDATE `agents` SET .*description.*name.*presentation_json.*row_version.*status.*WHERE .*tenant_id = .*id = .*row_version = .*active_training_session_id IS NULL").
+		WithArgs("desc", "Archived writer", sqlmock.AnyArg(), "archived", "tenant-a", "agent-a", uint64(4)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := repository.UpdatePresentation(context.Background(), agent, 4)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("UpdatePresentation() error = %v, want conflict", err)
+	}
+	assertExpectations(t, mock)
+}
+
 func draftAgent() agententity.Agent {
 	return agententity.Agent{ID: "agent-a", TenantID: "tenant-a", Name: "Writer", Description: "desc", Status: "enabled", Presentation: agententity.Presentation{Starters: []agententity.Starter{}}, TemplateCode: "general", RowVersion: 0, CreatedBy: "admin"}
 }
