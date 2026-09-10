@@ -10,7 +10,7 @@
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <div class="qb-chat__session-heading">
-        <span class="qb-chat__session-kicker">WORKSPACE AGENT</span>
+        <span class="qb-chat__session-kicker">AGENT CHAT</span>
         <div class="qb-chat__session-line">
           <h1 class="qb-chat__session-title" id="sessionTitle">新对话</h1>
           <span class="qb-chat__session-profile" id="sessionProfile" hidden></span>
@@ -23,23 +23,25 @@
 
     <section class="qb-chat__messages" id="chatMessages" aria-live="polite" aria-label="聊天消息">
       <div class="qb-chat__welcome" id="chatWelcome">
-        <div class="qb-chat__welcome-mark" aria-hidden="true"><span id="welcomeProfileIcon">R</span></div>
-        <p class="qb-chat__welcome-kicker">选择适合这次对话的助手</p>
-        <h2 id="profileWelcomeTitle">正在加载助手</h2>
-        <p class="qb-chat__welcome-description" id="profileWelcomeDescription">每个对话会固定使用创建时选择的助手。</p>
-        <p class="qb-chat__profile-error" id="profileLoadError" role="status" hidden>助手列表暂时无法加载，请刷新页面后重试。</p>
-        <div class="qb-chat__profile-picker" id="profilePicker" role="listbox" aria-label="选择助手"></div>
-        <div class="qb-chat__profile-starters" id="profileStarters" aria-label="推荐问题"></div>
+        <div class="qb-chat__welcome-mark" aria-hidden="true"><span id="welcomeAgentIcon">A</span></div>
+        <p class="qb-chat__welcome-kicker">当前 Agent</p>
+        <h2 id="agentWelcomeTitle">正在加载 Agent</h2>
+        <p class="qb-chat__welcome-description" id="agentWelcomeDescription">每个对话固定使用创建时选择的 Agent。</p>
+        <p class="qb-chat__profile-error" id="agentLoadError" role="status" hidden>当前 Agent 无法加载，请返回目录重新选择。</p>
+        <a class="qb-chat__switch-agent" href="/agents">切换 Agent</a>
+        <div class="qb-chat__profile-starters" id="agentStarters" aria-label="推荐问题"></div>
       </div>
     </section>
 
     <div class="qb-chat__activity-shell" id="runStatus" role="status" aria-live="polite" hidden></div>
 
+    <p class="qb-chat__read-only" id="readOnlyNotice" role="status" hidden>此 Agent 已归档或停用，当前会话只能查看历史。可返回 Agent 目录选择其他 Agent。</p>
+
     <div class="qb-chat__input-bar">
       <button class="older-messages" id="loadOlderMessages" type="button" hidden>查看更早消息</button>
       <form class="qb-chat__composer" id="chatComposer">
         <label class="sr-only" for="chatInput">发送消息</label>
-        <textarea class="qb-chat__input" id="chatInput" rows="1" maxlength="12000" placeholder="给 Reagent 发消息" aria-describedby="composerHint"></textarea>
+        <textarea class="qb-chat__input" id="chatInput" rows="1" maxlength="12000" placeholder="给当前 Agent 发消息" aria-describedby="composerHint"></textarea>
         <input class="qb-chat__image-url" id="chatImageURL" type="url" inputmode="url"
                placeholder="图片 URL（可选）" aria-label="图片 URL（可选）" autocomplete="off" spellcheck="false" />
         <button class="qb-chat__send" id="sendBtn" type="submit" aria-label="发送消息">

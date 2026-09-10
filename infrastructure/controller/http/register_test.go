@@ -43,7 +43,9 @@ func TestRegisterPageRoutesServesEmbeddedStaticAssets(t *testing.T) {
 	RegisterPageRoutes(router, pagectl.NewController(renderer))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/js/pages/chat.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `const PROFILE_API = "/api/v1/agent-profiles"`) {
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `const AGENT_API = "/api/v1/agents"`) ||
+		strings.Contains(body, "/api/v1/agent-profiles") || strings.Contains(body, "defaultProfile") {
 		t.Fatalf("static response = %d / %s", response.Code, response.Body.String())
 	}
 }

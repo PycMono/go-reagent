@@ -44,7 +44,7 @@ func TestRendererRejectsMissingOrInvalidTemplateTree(t *testing.T) {
 	}
 }
 
-func TestProductionChatPageRendersAgentProfileControls(t *testing.T) {
+func TestProductionChatPageRendersExplicitAgentControls(t *testing.T) {
 	renderer, err := NewProductionRenderer()
 	if err != nil {
 		t.Fatal(err)
@@ -53,10 +53,13 @@ func TestProductionChatPageRendersAgentProfileControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"profilePicker", "profileStarters", "sessionProfile", "profileFilter"} {
+	for _, id := range []string{"agentWelcomeTitle", "agentStarters", "sessionProfile", "agentFilter", "readOnlyNotice"} {
 		if !strings.Contains(body, `id="`+id+`"`) {
-			t.Fatalf("chat page missing Profile control %q", id)
+			t.Fatalf("chat page missing Agent control %q", id)
 		}
+	}
+	if !strings.Contains(body, `href="/agents"`) || strings.Contains(body, `id="profilePicker"`) {
+		t.Fatal("chat page must switch through the Agent directory without legacy Profile selection")
 	}
 }
 
