@@ -120,6 +120,29 @@ func TestListVersionsUsesBoundedDescendingStoragePagination(t *testing.T) {
 	assertExpectations(t, mock)
 }
 
+func TestListVersionsReportsExactPageBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		rows    *sqlmock.Rows
+		hasMore bool
+	}{
+		{name: "exact terminal page", rows: versionRows().AddRow("v2", "tenant-a", "agent-a", 2, "c", "t", "d", `{}`, `{}`, `{}`, "s", `{}`, nil, "admin", now(), "two")},
+		{name: "one extra row", rows: versionRows().AddRow("v2", "tenant-a", "agent-a", 2, "c", "t", "d", `{}`, `{}`, `{}`, "s", `{}`, nil, "admin", now(), "two").AddRow("v1", "tenant-a", "agent-a", 1, "c", "t", "d", `{}`, `{}`, `{}`, "s", `{}`, nil, "admin", now(), "one"), hasMore: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository, mock := newRepositoryTest(t)
+			mock.ExpectQuery("SELECT .* FROM agent_versions WHERE tenant_id = .*agent_id = .*ORDER BY version DESC LIMIT ").
+				WithArgs("tenant-a", "agent-a", 2).
+				WillReturnRows(test.rows)
+			page, err := repository.ListVersions(context.Background(), "tenant-a", "agent-a", 0, 1)
+			if err != nil || len(page.Items) != 1 || page.HasMore != test.hasMore {
+				t.Fatalf("ListVersions() = %#v, %v", page, err)
+			}
+			assertExpectations(t, mock)
+		})
+	}
+}
+
 func TestUpdatePresentationArchivesOnlyWithoutActiveTrainingAndUsesCAS(t *testing.T) {
 	repository, mock := newRepositoryTest(t)
 	agent := draftAgent()

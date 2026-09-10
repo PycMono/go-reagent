@@ -20,11 +20,16 @@ type ListPage struct {
 	DefaultAgentID *string
 }
 
+type VersionPage struct {
+	Items   []agententity.Version
+	HasMore bool
+}
+
 type Repository interface {
 	Find(context.Context, string, string) (agententity.Agent, error)
 	List(context.Context, ListQuery) (ListPage, error)
 	FindVersion(context.Context, string, string, string) (agententity.Version, error)
-	ListVersions(context.Context, string, string, uint64, int) ([]agententity.Version, error)
+	ListVersions(context.Context, string, string, uint64, int) (VersionPage, error)
 	FindBootstrap(context.Context, string, string) (agententity.Agent, error)
 	ReserveDraft(context.Context, agententity.Agent) (agententity.Agent, error)
 	CommitInitial(context.Context, agententity.Agent, agententity.Version, uint64) error
