@@ -81,7 +81,11 @@ func (s *Store) CreateInitial(ctx context.Context, tenant, agent, version, sourc
 	if _, err := s.run(ctx, source, env, "--git-dir", repo, "read-tree", "--empty"); err != nil {
 		return BundleRef{}, err
 	}
-	if _, err := s.run(ctx, source, env, "--git-dir", repo, "--work-tree", source, "add", "-A", "-f", "--", "."); err != nil {
+	addArgs := []string{"--git-dir", repo, "--work-tree", source, "add", "-f", "--"}
+	for _, file := range files {
+		addArgs = append(addArgs, file.entry.Path)
+	}
+	if _, err := s.run(ctx, source, env, addArgs...); err != nil {
 		return BundleRef{}, err
 	}
 	tree, err := s.run(ctx, source, env, "--git-dir", repo, "write-tree")
