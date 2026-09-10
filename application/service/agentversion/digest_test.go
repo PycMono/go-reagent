@@ -1,6 +1,7 @@
 package agentversion
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -18,6 +19,17 @@ func TestCanonicalJSONRFC8785Vectors(t *testing.T) {
 	if err != nil || string(got) != unicodeWant {
 		t.Fatalf("unicode canonicalization = %s, %v", got, err)
 	}
+	ordinary, err := json.Marshal(map[string]string{"😀": "emoji", "דּ": "ligature"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := canonicalizeJSON(ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ordinary) == string(canonical) {
+		t.Fatalf("ordinary JSON unexpectedly matched JCS order: %s", ordinary)
+	}
 }
 
 func TestBundleDigestCoversBytesModeAndUTF8PathOrder(t *testing.T) {
@@ -30,6 +42,9 @@ func TestBundleDigestCoversBytesModeAndUTF8PathOrder(t *testing.T) {
 	digest, err := BundleDigest(entries)
 	if err != nil || digest == "" {
 		t.Fatalf("BundleDigest() = %q, %v", digest, err)
+	}
+	if digest != "sha256:ab4ff41d070185c0c0f7b3218c63b3b317c2ec41f0bbe1934b158d665f3f221f" {
+		t.Fatalf("BundleDigest() = %q", digest)
 	}
 	if !slices.Equal(entries, original) {
 		t.Fatal("BundleDigest mutated input order")
