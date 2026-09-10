@@ -48,6 +48,31 @@ func TestMaterializeVersionAndChatAreImmutableAndIsolated(t *testing.T) {
 	}
 }
 
+func TestMaterializeValidationUsesIsolatedRuntimePath(t *testing.T) {
+	store := mustStore(t)
+	ref, err := store.CreateInitial(context.Background(), "tenant", "agent", "v1", validSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := store.MaterializeValidation(context.Background(), "tenant", "agent", "operation-1", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(store.agentRoot("tenant", "agent"), "runtime-cache", "validation", "operation-1")
+	if root != want {
+		t.Fatalf("path=%q want %q", root, want)
+	}
+	for _, name := range []string{"scratch", ".tmp"} {
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %#v", name, err, info)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(root, "AGENTS.md")); err != nil || info.Mode().Perm() != 0o444 {
+		t.Fatalf("AGENTS.md: %v %#v", err, info)
+	}
+}
+
 func TestNativeChatCannotReadSiblingScratch(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("requires OS sandbox")

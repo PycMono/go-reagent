@@ -18,32 +18,38 @@ import (
 )
 
 func (s *Store) MaterializeVersion(ctx context.Context, tenant, agent, version string, ref BundleRef) (string, error) {
-	return s.materialize(ctx, tenant, agent, version, "", ref, false)
-}
-func (s *Store) MaterializeChat(ctx context.Context, tenant, agent, conversation, version string, ref BundleRef) (string, error) {
-	if err := validateIDs(conversation); err != nil {
+	if err := validateIDs(version); err != nil {
 		return "", err
 	}
-	return s.materialize(ctx, tenant, agent, version, conversation, ref, true)
+	return s.materialize(ctx, tenant, agent, []string{"versions", version}, ref, false)
+}
+func (s *Store) MaterializeChat(ctx context.Context, tenant, agent, conversation, version string, ref BundleRef) (string, error) {
+	if err := validateIDs(conversation, version); err != nil {
+		return "", err
+	}
+	return s.materialize(ctx, tenant, agent, []string{"runtime-cache", "chat", conversation, version}, ref, true)
+}
+func (s *Store) MaterializeValidation(ctx context.Context, tenant, agent, operation string, ref BundleRef) (string, error) {
+	if err := validateIDs(operation); err != nil {
+		return "", err
+	}
+	return s.materialize(ctx, tenant, agent, []string{"runtime-cache", "validation", operation}, ref, true)
 }
 
-func (s *Store) materialize(ctx context.Context, tenant, agent, version, conversation string, ref BundleRef, chat bool) (string, error) {
-	if err := validateIDs(tenant, agent, version); err != nil {
+func (s *Store) materialize(ctx context.Context, tenant, agent string, suffix []string, ref BundleRef, runtime bool) (string, error) {
+	if err := validateIDs(tenant, agent); err != nil {
 		return "", err
 	}
 	if err := s.Verify(ctx, tenant, agent, ref); err != nil {
 		return "", err
 	}
-	base := filepath.Join(s.agentRoot(tenant, agent), "versions")
-	if chat {
-		base = filepath.Join(s.agentRoot(tenant, agent), "runtime-cache", "chat", conversation)
-	}
+	destination := filepath.Join(append([]string{s.agentRoot(tenant, agent)}, suffix...)...)
+	base := filepath.Dir(destination)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return "", err
 	}
-	destination := filepath.Join(base, version)
 	if _, err := os.Stat(destination); err == nil {
-		if err := s.verifyMaterialized(ctx, destination, tenant, agent, ref, chat); err != nil {
+		if err := s.verifyMaterialized(ctx, destination, tenant, agent, ref, runtime); err != nil {
 			return "", err
 		}
 		return destination, nil
@@ -70,14 +76,14 @@ func (s *Store) materialize(ctx context.Context, tenant, agent, version, convers
 	if err := inspectWorkspaceStrict(ctx, tmp); err != nil {
 		return "", err
 	}
-	if chat {
+	if runtime {
 		for _, name := range []string{"scratch", ".tmp"} {
 			if err := os.Mkdir(filepath.Join(tmp, name), 0o700); err != nil {
 				return "", err
 			}
 		}
 	}
-	if err := makeDirsReadOnly(tmp, chat); err != nil {
+	if err := makeDirsReadOnly(tmp, runtime); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmp, destination); err != nil {
