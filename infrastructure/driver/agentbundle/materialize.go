@@ -107,18 +107,28 @@ func (s *Store) verifyMaterialized(ctx context.Context, root, tenant, agent stri
 		}
 		rel = filepath.ToSlash(rel)
 		if rel == "." {
+			info, err := d.Info()
+			if err != nil || !d.IsDir() || info.Mode().Perm() != 0o555 {
+				return ErrInvalidBundle
+			}
 			return nil
 		}
 		first := strings.Split(rel, "/")[0]
 		if chat && (first == "scratch" || first == ".tmp") {
-			if rel == first && !d.IsDir() {
+			if rel != first {
 				return ErrInvalidBundle
 			}
-			if d.IsDir() {
-				return filepath.SkipDir
+			info, err := d.Info()
+			if err != nil || !d.IsDir() || info.Mode().Perm() != 0o700 {
+				return ErrInvalidBundle
 			}
+			return filepath.SkipDir
 		}
 		if d.IsDir() {
+			info, err := d.Info()
+			if err != nil || info.Mode().Perm() != 0o555 {
+				return ErrInvalidBundle
+			}
 			return nil
 		}
 		want, ok := expected[rel]
