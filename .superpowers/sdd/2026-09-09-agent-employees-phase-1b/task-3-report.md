@@ -40,3 +40,5 @@ Git blob size is checked with `cat-file -s` before content allocation and conten
 ## Review fix round 2
 
 Existing materializations now revalidate directory permissions as well as file content and modes. The WorkDir root and every behavior directory must remain exactly `0555`; chat `scratch` and `.tmp` must remain actual `0700` directories, and only their descendants are excluded from immutable content comparison. Regression fixtures mutate the root, a behavior subdirectory, and scratch permissions and confirm reuse fails closed. `go test ./infrastructure/driver/agentbundle -count=1` passed in `2.309s`.
+
+The shared Store port now also exposes `MaterializeValidation(ctx, tenant, agent, operationID, ref)`. It reuses the same verified atomic materializer and produces `runtime-cache/validation/<operationID>` with read-only behavior assets plus private `scratch/.tmp`; no second copy path was introduced. Agentbundle, agentversion, and config integration tests passed after the port extension.
