@@ -8,6 +8,7 @@
 - Added additive migration `0007_agent_catalog`: binary-collated Agent identifiers, immutable versions, scoped foreign keys, nullable conversation ownership, `conversation_type`, and `follow_latest`. The down migration removes the active-version FK before tables and added conversation columns.
 - Added sqlmock coverage for tenant-scoped first reads, scoped version reads, transactional rollback, bounded catalog/version limits, independent default selection, and archive CAS with no active training session.
 - Added an integration test that creates and removes a unique disposable schema and verifies duplicate bootstrap keys, multiple NULL bootstrap keys, cross-Agent active pointer rejection, duplicate version numbers, duplicate non-NULL source sessions, retained drafts/rolled-back version rows after failed initial CAS, and binary collations.
+- Follow-up review fixed management recovery visibility: `IncludeArchived` uses a tenant-scoped LEFT JOIN so drafts without an active version remain visible, while the ordinary catalog still requires an enabled Agent with an active version. Initial-version CAS now also requires the draft to remain enabled, preventing an archived draft from being activated by a delayed recovery path.
 
 ## Ownership and commits
 

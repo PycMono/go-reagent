@@ -49,7 +49,23 @@ func TestCommitInitialRollsBackWhenPointerCASFails(t *testing.T) {
 	repository, mock := newRepositoryTest(t)
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `agent_versions`").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("UPDATE `agents` SET .*active_version_id.*row_version.*WHERE tenant_id = .*id = .*active_version_id IS NULL.*row_version =").
+	mock.ExpectExec("UPDATE `agents` SET .*active_version_id.*row_version.*WHERE tenant_id = .*id = .*status = 'enabled'.*active_version_id IS NULL.*row_version =").
+		WithArgs("version-a", "tenant-a", "agent-a", uint64(0)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err := repository.CommitInitial(context.Background(), draftAgent(), initialVersion(), 0)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("CommitInitial() error = %v, want conflict", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestCommitInitialCASRequiresEnabledDraft(t *testing.T) {
+	repository, mock := newRepositoryTest(t)
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `agent_versions`").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE `agents` SET .*WHERE tenant_id = .*id = .*status = 'enabled'.*active_version_id IS NULL.*row_version =").
 		WithArgs("version-a", "tenant-a", "agent-a", uint64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
@@ -73,6 +89,22 @@ func TestListClampsLimitAndComputesDefaultIndependently(t *testing.T) {
 	page, err := repository.List(context.Background(), agentrepo.ListQuery{TenantID: "tenant-a", Limit: 500})
 	if err != nil || page.DefaultAgentID == nil || *page.DefaultAgentID != "default-a" {
 		t.Fatalf("List() = %#v, %v", page, err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestListIncludingArchivedUsesLeftJoinSoDraftsRemainManageable(t *testing.T) {
+	repository, mock := newRepositoryTest(t)
+	mock.ExpectQuery("SELECT .* FROM agents AS a LEFT JOIN agent_versions AS v .*WHERE a.tenant_id = .*ORDER BY .*LIMIT ").
+		WithArgs("tenant-a", 11).
+		WillReturnRows(agentRows().AddRow("draft-a", "tenant-a", "Draft", "recover me", "enabled", `{"icon":"","welcome":"","starters":[],"order":-1}`, "general", nil, nil, nil, 0, "admin", now(), now()))
+	mock.ExpectQuery("SELECT a.id FROM agents AS a JOIN agent_versions AS v .*WHERE a.tenant_id = .*status = 'enabled'.*ORDER BY .*LIMIT 1").
+		WithArgs("tenant-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	page, err := repository.List(context.Background(), agentrepo.ListQuery{TenantID: "tenant-a", Limit: 10, IncludeArchived: true})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "draft-a" || page.Items[0].ActiveVersionID != nil {
+		t.Fatalf("List(include archived) = %#v, %v", page, err)
 	}
 	assertExpectations(t, mock)
 }

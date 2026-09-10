@@ -105,6 +105,10 @@ func (r *Repository) List(ctx context.Context, query agentrepo.ListQuery) (agent
 		return agentrepo.ListPage{}, err
 	}
 	limit := boundedLimit(query.Limit)
+	join := "JOIN"
+	if query.IncludeArchived {
+		join = "LEFT JOIN"
+	}
 	where := []string{"a.tenant_id = ?"}
 	args := []any{query.TenantID}
 	if !query.IncludeArchived {
@@ -124,7 +128,7 @@ func (r *Repository) List(ctx context.Context, query agentrepo.ListQuery) (agent
 		args = append(args, order, order, id)
 	}
 	args = append(args, limit+1)
-	statement := "SELECT " + agentColumnsWithAlias() + " FROM agents AS a JOIN agent_versions AS v ON v.tenant_id = a.tenant_id AND v.agent_id = a.id AND v.id = a.active_version_id WHERE " + strings.Join(where, " AND ") + " ORDER BY " + presentationOrder + ", a.id LIMIT ?"
+	statement := "SELECT " + agentColumnsWithAlias() + " FROM agents AS a " + join + " agent_versions AS v ON v.tenant_id = a.tenant_id AND v.agent_id = a.id AND v.id = a.active_version_id WHERE " + strings.Join(where, " AND ") + " ORDER BY " + presentationOrder + ", a.id LIMIT ?"
 	var rows []agentRow
 	if err := r.provider.UseDB(ctx).Raw(statement, args...).Scan(&rows).Error; err != nil {
 		return agentrepo.ListPage{}, fmt.Errorf("mysql agent: list: %w", err)
@@ -205,7 +209,7 @@ func (r *Repository) CommitInitial(ctx context.Context, agent agententity.Agent,
 		if err := db.Table("agent_versions").Create(versionRecord(version)).Error; err != nil {
 			return fmt.Errorf("insert initial version: %w", err)
 		}
-		result := db.Table("agents").Where("tenant_id = ? AND id = ? AND active_version_id IS NULL AND row_version = ?", agent.TenantID, agent.ID, expected).Updates(map[string]any{"active_version_id": version.ID, "row_version": gorm.Expr("row_version + 1")})
+		result := db.Table("agents").Where("tenant_id = ? AND id = ? AND status = 'enabled' AND active_version_id IS NULL AND row_version = ?", agent.TenantID, agent.ID, expected).Updates(map[string]any{"active_version_id": version.ID, "row_version": gorm.Expr("row_version + 1")})
 		if result.Error != nil {
 			return result.Error
 		}

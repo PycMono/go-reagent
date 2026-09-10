@@ -15,6 +15,7 @@ import (
 
 	"github.com/PycMono/go-reagent/config"
 	agententity "github.com/PycMono/go-reagent/domain/entity/agent"
+	agentrepo "github.com/PycMono/go-reagent/domain/repository/agent"
 	"github.com/PycMono/go-reagent/infrastructure/driver/mysql"
 	agentpersistence "github.com/PycMono/go-reagent/infrastructure/persistence/agent"
 	_ "github.com/go-sql-driver/mysql"
@@ -77,6 +78,14 @@ func TestMySQLAgentCatalogConstraintsAndRecovery(t *testing.T) {
 	if err != nil || reserved.ActiveVersionID != nil {
 		t.Fatalf("ReserveDraft() = %#v, %v", reserved, err)
 	}
+	userPage, err := repository.List(ctx, agentrepo.ListQuery{TenantID: draft.TenantID, Limit: 10})
+	if err != nil || len(userPage.Items) != 0 {
+		t.Fatalf("ordinary list exposed draft: %#v, %v", userPage, err)
+	}
+	adminPage, err := repository.List(ctx, agentrepo.ListQuery{TenantID: draft.TenantID, Limit: 10, IncludeArchived: true})
+	if err != nil || len(adminPage.Items) != 1 || adminPage.Items[0].ID != draft.ID {
+		t.Fatalf("management list omitted draft: %#v, %v", adminPage, err)
+	}
 
 	failedVersion := validVersion("version-failed", draft.ID, 1, nil)
 	if err := repository.CommitInitial(ctx, reserved, failedVersion, reserved.RowVersion+1); err == nil {
@@ -98,6 +107,23 @@ func TestMySQLAgentCatalogConstraintsAndRecovery(t *testing.T) {
 	active, err := repository.Find(ctx, draft.TenantID, draft.ID)
 	if err != nil || active.ActiveVersionID == nil || *active.ActiveVersionID != version.ID {
 		t.Fatalf("active agent = %#v, %v", active, err)
+	}
+
+	archivedDraft, err := repository.ReserveDraft(ctx, validAgent("agent-archived", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedDraft.Status = "archived"
+	if err := repository.UpdatePresentation(ctx, archivedDraft, archivedDraft.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	archivedVersion := validVersion("version-archived", archivedDraft.ID, 1, nil)
+	if err := repository.CommitInitial(ctx, archivedDraft, archivedVersion, archivedDraft.RowVersion+1); err == nil {
+		t.Fatal("archived draft initial commit accepted")
+	}
+	var archivedVersionCount int64
+	if err := db.Table("agent_versions").Where("id = ?", archivedVersion.ID).Count(&archivedVersionCount).Error; err != nil || archivedVersionCount != 0 {
+		t.Fatalf("archived initial version was not rolled back: count=%d err=%v", archivedVersionCount, err)
 	}
 
 	if _, err := repository.ReserveDraft(ctx, validAgent("agent-b", stringPtr("general"))); err == nil {
