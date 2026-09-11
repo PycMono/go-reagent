@@ -56,8 +56,8 @@ func newProvider(config providers.Options) (ai.Provider, error) {
 		return nil, err
 	}
 	// TracingProvider 只消费标准化 Usage 和包内 Timing Snapshot；Telemetry
-	// 关闭时 Span/Metric 经 SDK 全局 Noop 空转，业务结果不变（OBS-006）。
-	return observability.NewTracingProvider(tracker, string(config.Protocol), config.ID, config.Model), nil
+	// 关闭时 Span 经 SDK 全局 Noop 空转，业务结果不变（OBS-006）。
+	return observability.NewTracingProvider(tracker, string(config.Protocol), config.Model), nil
 }
 
 // New 内部完成 pi 的全部初始化，调用顺序即启动时序约束：
@@ -127,7 +127,6 @@ func New(opts Options) (agent *Agent, err error) {
 		return nil, err
 	}
 	loop := NewLoop(provider, toolRuntime, opts.Compaction,
-		WithLoopProviderIdentity(opts.Platform.ID, opts.Platform.Model),
 		WithLoopDetection(opts.LoopDetection))
 
 	composer := harness.NewPromptComposer(normalized.Root())
@@ -253,7 +252,6 @@ func (a *Agent) Stop(ctx context.Context) error {
 // conversation.run 的子 Span；直接 SDK 调用时自然成为根 Span。
 // Span 状态与生命周期由 WithSpan 管理。
 func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListener) (result RunResult, err error) {
-	startedAt := time.Now()
 	err = contexttracing.WithSpan(ctx, observability.AgentSpanName(observability.AgentName), func(ctx context.Context) (runErr error) {
 		defer func() {
 			// 终止原因与 governor.Totals 无论成败都写入。
@@ -272,18 +270,16 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 			}
 			fields = append(fields, observability.ErrorFields(runErr)...)
 			contexttracing.WithKV(ctx, fields...)
-			observability.RecordAgentRun(ctx, reason, time.Since(startedAt))
-			observability.RecordAgentRunShape(ctx, result.Termination.Totals.Turns, int(result.Termination.Totals.Invocations))
 		}()
 
 		fail := func(failErr error) error {
 			result.Termination = governor.TerminationFromError(failErr, governor.Totals{})
 			return failErr
 		}
-		if err := ctx.Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return fail(err)
 		}
-		if err := request.Validate(); err != nil {
+		if err = request.Validate(); err != nil {
 			return fail(err)
 		}
 
@@ -299,7 +295,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, listener EventListe
 		if prepErr != nil {
 			return fail(prepErr)
 		}
-		if err := ctx.Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return fail(err)
 		}
 

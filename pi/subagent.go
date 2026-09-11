@@ -362,7 +362,6 @@ func (b *SubagentBinder) Start(_ context.Context) error {
 				tool.name, subagentToolName(tool.name))
 		}
 		childLoop := NewLoop(b.provider, b.toolRuntime, b.compaction,
-			WithLoopProviderIdentity(b.platform.ID, b.platform.Model),
 			WithLoopDetection(b.loopDetection))
 		pipelines = append(pipelines, &subagentPipeline{childLoop: childLoop, childTools: defs})
 	}

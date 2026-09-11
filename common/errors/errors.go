@@ -100,6 +100,7 @@ var (
 	ErrConflict     = NewBizError(10007, "resource conflict")
 	ErrRateLimited  = NewBizError(10008, "rate limited")
 	ErrInternal     = NewSysError(10009, "internal server error")
+	ErrBusy         = NewBizError(10010, "agent runtime busy")
 )
 
 // HTTPStatusForCode 是本项目错误码 → HTTP 状态的统一映射，供响应层
@@ -118,6 +119,8 @@ func HTTPStatusForCode(code int) int {
 		return http.StatusConflict
 	case ErrRateLimited.Code():
 		return http.StatusTooManyRequests
+	case ErrBusy.Code():
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

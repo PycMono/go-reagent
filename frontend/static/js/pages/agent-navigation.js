@@ -1,5 +1,10 @@
 function malformedEncoding(value) {
-  return /%(?![0-9a-fA-F]{2})/.test(String(value || ""));
+  try {
+    decodeURIComponent(String(value || ""));
+    return false;
+  } catch (_error) {
+    return true;
+  }
 }
 
 export function resolveChatTarget(search) {
@@ -10,8 +15,24 @@ export function resolveChatTarget(search) {
   }
   const agentID = query.get("agent_id") || "";
   const conversationID = query.get("conversation_id") || "";
+  if ((query.has("agent_id") && !agentID.trim()) || (query.has("conversation_id") && !conversationID.trim())) {
+    throw new Error("聊天目标参数不能为空");
+  }
   if (!agentID && !conversationID) return { kind: "directory" };
   return { kind: conversationID ? "history" : "new", agentID, conversationID };
+}
+
+export function clearChatDraft(ui) {
+  ui.input.value = "";
+  if (ui.imageURL) ui.imageURL.value = "";
+}
+
+export function updateChatAvailability(state, ui) {
+  const unavailable = !state.selectedAgent || !state.selectedAgent.selectable || state.readOnly;
+  ui.send.disabled = !state.running && unavailable;
+  ui.input.disabled = state.running || unavailable;
+  if (ui.imageURL) ui.imageURL.disabled = state.running || unavailable;
+  ui.readOnlyNotice.hidden = !state.readOnly;
 }
 
 export function assertConversationAgent(conversation, selectedAgentID) {
@@ -103,7 +124,7 @@ export async function publishTraining(session, summary, confirmed, io) {
       request_id: io.newRequestID(),
       expected_row_version: session.row_version,
       change_summary: summary,
-      confirm_manual_review: true,
+      human_confirmed: true,
     }),
   });
 }

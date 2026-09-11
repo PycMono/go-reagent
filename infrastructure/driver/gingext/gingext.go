@@ -57,6 +57,13 @@ func newEngine(conf *config.Config, sessions visitorSessions, authenticator iden
 		}
 		router.Use(applicationOnly(mw.Visitor(conf, sessions)))
 		router.Use(applicationOnly(principal))
+		if conf.Identity.DevAdminToken != "" {
+			upgrade, err := mw.DevAdminUpgrade(conf.Identity.DevAdminToken)
+			if err != nil {
+				return nil, err
+			}
+			router.Use(applicationOnly(upgrade))
+		}
 	case config.IdentityModeHost:
 		principal, err := mw.HostPrincipal(authenticator)
 		if err != nil {

@@ -2,7 +2,7 @@ import { isVisibleChatMessage } from "./chat-visibility.js";
 import { renderMessageContent } from "./chat-message-content.js";
 import { createChatStream } from "./chat-stream.js";
 import { createImageBlock } from "./chat-image.js";
-import { assertConversationAgent, resolveChatTarget, sendSelectedAgentMessage } from "./agent-navigation.js";
+import { assertConversationAgent, clearChatDraft, resolveChatTarget, sendSelectedAgentMessage, updateChatAvailability } from "./agent-navigation.js";
 
 const API_ROOT = "/api/v1/conversations";
 const AGENT_API = "/api/v1/agents";
@@ -98,8 +98,7 @@ function currentConversation() {
 }
 
 function updateSendAvailability() {
-  ui.send.disabled = !state.running && (!state.selectedAgent || !state.selectedAgent.selectable || state.readOnly);
-  ui.readOnlyNotice.hidden = !state.readOnly;
+  updateChatAvailability(state, ui);
 }
 
 function renderAgentFilter() {
@@ -281,11 +280,14 @@ async function selectConversation(id, expectedAgentID) {
   }
   const conversation = await requestJSON(API_ROOT + "/" + encodeURIComponent(id));
   assertConversationAgent(conversation, expectedAgentID || "");
+  clearChatDraft(ui);
+  resizeComposer();
   state.currentConversationId = conversation.id;
   state.activeConversation = conversation;
   state.selectedAgentID = conversation.agent_id;
   state.selectedAgent = agentFromConversation(conversation);
   state.readOnly = conversation.agent_status !== "enabled";
+  updateSendAvailability();
   ui.title.textContent = conversation.name || "对话";
   window.history.replaceState(null, "", "/chat?conversation_id=" + encodeURIComponent(conversation.id));
   renderAgentFilter();
@@ -749,6 +751,8 @@ ui.newChat.addEventListener("click", async function () {
   state.currentConversationId = "";
   state.activeConversation = null;
   state.messageCursor = "";
+  clearChatDraft(ui);
+  resizeComposer();
   ui.title.textContent = "新对话";
   window.history.replaceState(null, "", "/chat?agent_id=" + encodeURIComponent(state.selectedAgentID));
   renderSessionProfile();

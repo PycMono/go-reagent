@@ -28,11 +28,15 @@ type treeFile struct {
 }
 
 func inspectSource(ctx context.Context, root string) ([]treeFile, error) {
+	return inspectSourceMode(ctx, root, false)
+}
+
+func inspectSourceMode(ctx context.Context, root string, draft bool) ([]treeFile, error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
 	}
-	if err := inspectWorkspaceStrict(ctx, canonical); err != nil {
+	if err := inspectWorkspaceStrict(ctx, canonical); !draft && err != nil {
 		return nil, err
 	}
 	var files []treeFile
@@ -58,6 +62,12 @@ func inspectSource(ctx context.Context, root string) ([]treeFile, error) {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if draft && rel == ".tmp" {
+			if !d.IsDir() {
+				return ErrInvalidBundle
+			}
+			return filepath.SkipDir
 		}
 		paths++
 		if paths > maxBundlePaths {
@@ -111,9 +121,15 @@ func inspectSource(ctx context.Context, root string) ([]treeFile, error) {
 			if e != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("symlink %q escapes bundle", rel)
 			}
+			if draft && (within == ".git" || strings.HasPrefix(within, ".git/") || within == ".tmp" || strings.HasPrefix(within, ".tmp/")) {
+				return ErrInvalidBundle
+			}
 			content, mode = []byte(target), "120000"
 		default:
 			return fmt.Errorf("bundle path %q has unsupported file type", rel)
+		}
+		if draft && (strings.HasSuffix(rel, "/SKILL.md") && len(content) > 256<<10 || candidateSecret(rel, content)) {
+			return fmt.Errorf("unsafe candidate path %q", rel)
 		}
 		if err := validateBundleAsset(rel, false, mode, content); err != nil {
 			return err

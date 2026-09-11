@@ -9,7 +9,6 @@ import (
 	logsdk "github.com/PycMono/go-logger-sdk"
 	sdkobservability "github.com/PycMono/go-observability-sdk"
 	"github.com/PycMono/go-reagent/config"
-	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 	"go.uber.org/fx"
 )
 
@@ -27,10 +26,6 @@ func NewRuntime(conf *config.Config) (*sdkobservability.Runtime, error) {
 	return sdkobservability.New(
 		context.Background(),
 		ToObservabilityConfig(conf.Observability, serviceVersion()),
-		// 领域指标定义与基数红线由 pi 语义层（pi/harness/observability）
-		// 集中定义，此处原样注册，无转换层。
-		sdkobservability.WithMetricDefinitions(piobservability.DomainMetricDefinitions()...),
-		sdkobservability.WithForbiddenLabelKeys(piobservability.ForbiddenLabelKeys...),
 		sdkobservability.WithErrorHandler(newRateLimitedErrorHandler(5*time.Second)),
 	)
 }

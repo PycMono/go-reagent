@@ -3,38 +3,31 @@
 ## 关联路径
 
 ```text
-Metric → Exemplar → Trace → Related Logs → Run Ledger
+Run Ledger ↔ Trace ↔ Related Logs
 ```
 
-1. Grafana 告警/面板发现异常指标（含 Exemplar 时点按 trace_id 跳转 Tempo）。
-2. Tempo 中按 `trace_id` 查看完整 Span 树；从 Ledger 反查时先读
-   `agent_model_invocations.trace_id`，再用 `reagent.provider.request_index`
-   属性在单条 Trace 内定位唯一 Provider Span（需要 Trace 后端支持属性过滤）。
-3. 结构化日志的 `trace_id`/`span_id` 由 go-logger-sdk 自动注入；
-   `run_id` 用于关联 `agent_messages` / `agent_model_invocations`。
-4. Trace 默认保留 7 天，Metrics 30 天，Ledger 沿用 Conversation 策略；
-   过期 Trace 不可恢复，长期汇总以 Ledger 为准。
+1. 从运行结果或日志发现失败、预算触顶等情况。
+2. 从 `agent_model_invocations.trace_id` 查找 Tempo Trace，再用
+   `reagent.provider.request_index` 属性定位 Provider Span。
+3. 结构化日志自动携带 `trace_id`/`span_id`，`run_id` 用于关联消息与调用账本。
+4. Trace 默认保留 7 天，基础 Metrics 30 天；长期用量和成本汇总以账本为准。
 
-## 关键指标口径
+## 用量和成本
 
-- `reagent.model.requests` 统计**物理请求**（含失败/重试）；`outcome` 区分
-  `success|error|canceled|deadline_exceeded`，`error_code` 无错误时为 `none`。
-- `reagent.model.invocations` 只统计**可信 Usage**；`acceptance` 区分
-  `accepted|contract_invalid`（契约非法但已计费的调用）。
-- `reagent.model.tokens` 的 `cache_read/cache_write/reasoning` 是
-  `input_total/output_total` 的子集，**不能全部求和**。
-- `reagent.model.cost` 按 `cost_quality` 区分 `exact|estimated`；
-  精确成本报表只使用 `exact`。
-- TTFT 三处同源（Span `reagent.stream.ttft_ms`、Histogram、Ledger `ttft_ms`）；
-  纯 Tool Call 为缺省/NULL，已观测但不足 1ms 为 0。
+Agent、模型、工具、压缩和护栏不再上报自定义 Metrics，也不再提供相关业务看板和指标告警。
+预算控制使用 Governor 的运行累计值，持久化使用调用账本，不依赖 Metrics。
 
-## 首次部署后必做
+- 账本中的 `accepted|contract_invalid` 区分调用契约结果，非法回复产生的可信用量仍入账。
+- 缓存和推理 Token 是输入/输出总量的子集，不能与总量重复相加。
+- 成本按 `cost_quality` 区分 `exact|estimated`，精确报表只使用 `exact`。
+- TTFT 保留在 Span 的 `reagent.stream.ttft_ms` 和账本的 `ttft_ms` 中；
+  纯工具调用为缺省/NULL，已观测但不足 1ms 为 0。
 
-- 打开 `http://<host>:9464/metrics` 确认 Prometheus 序列名（尤其
-  `reagent_model_cost_*` 的 USD 单位后缀与 Histogram 的 `_seconds` 后缀），
-  如与 `prometheus-rules.yaml`、Dashboard JSON 中的名称不符，同步修正。
-- 验证 Exemplar：采样请求后 Histogram 数据点应携带 trace_id。
-- 验证告警最小样本条件在低流量环境不误报。
+## 部署验证
+
+- 检查应用 `/metrics` 端点及 Prometheus 抓取状态；该端点用于 SDK 的进程、HTTP 等基础指标。
+- 执行一次请求，验证调用账本与运行汇总一致，且账本的 trace_id 能关联 Tempo。
+- 业务费用和用量阈值由运行预算控制；需要跨运行成本分析时查询账本。
 
 ## 故障处置
 
@@ -42,9 +35,9 @@ Metric → Exemplar → Trace → Related Logs → Run Ledger
 |---|---|
 | `ReagentCollectorDroppingSpans` | 检查 Collector 与 Tempo 容量/网络；应用侧队列有界且 Fail-open，业务不受影响 |
 | `ReagentMetricsScrapeFailing` | 检查应用 9464 端口监听与 NetworkPolicy |
-| `ReagentRateLimitedRatioHigh` | 检查 Provider 配额；Retry 已有退避，必要时降流 |
-| `ReagentContextOverflowRatioHigh` | 检查上下文窗口配置与 Compaction 是否生效（`reagent.compactions`） |
-| `ReagentHourlyCostOverBudget` | 按 `provider/model/phase` 分解成本；Ledger 与 Provider 账单对账 |
+| 模型限流 | 检查 Provider 配额；Retry 已有退避，必要时降流 |
+| 上下文超限 | 检查上下文窗口配置与 压缩是否生效（查看压缩 Span） |
+| 模型成本偏高 | 按账本中的平台、模型和阶段汇总成本，与 Provider 账单对账 |
 
 ## Collector 不可达
 

@@ -23,6 +23,7 @@ const (
 )
 
 type Service struct {
+	platform   *Platform
 	repository conversationrepo.IConversationManagementRepository
 	ids        repository.IIDService
 	runner     conversation.Runner
@@ -30,6 +31,7 @@ type Service struct {
 
 	activeMu sync.Mutex
 	active   map[string]*activeRunEntry
+	deleting map[string]bool
 }
 
 func NewService(
@@ -42,6 +44,9 @@ func NewService(
 }
 
 func (s *Service) CreateConversation(ctx context.Context, userID string, param dto.CreateConversationDTO) (*vo.ConversationVO, error) {
+	if s != nil && s.platform != nil {
+		return s.createBound(ctx, userID, param)
+	}
 	if !validIdentity(userID) || s == nil || s.repository == nil || s.ids == nil || s.catalog == nil {
 		return nil, commonerrors.ErrInvalidParam
 	}
@@ -64,6 +69,9 @@ func (s *Service) CreateConversation(ctx context.Context, userID string, param d
 }
 
 func (s *Service) ListConversations(ctx context.Context, userID string, query dto.ListConversationsQuery) (*vo.ConversationPageVO, error) {
+	if s != nil && s.platform != nil {
+		return s.listBound(ctx, userID, query)
+	}
 	if !validIdentity(userID) || s == nil || s.repository == nil || s.catalog == nil {
 		return nil, commonerrors.ErrInvalidParam
 	}
@@ -129,6 +137,9 @@ func (s *Service) ListAgentProfiles() *vo.AgentProfileCatalogVO {
 }
 
 func (s *Service) ListMessages(ctx context.Context, userID, conversationID string, query dto.ListMessagesQuery) (*vo.MessagePageVO, error) {
+	if err := s.requireOwner(ctx, userID); err != nil {
+		return nil, err
+	}
 	if !validIdentity(userID) || !validIdentity(conversationID) {
 		return nil, commonerrors.ErrInvalidParam
 	}
@@ -178,6 +189,9 @@ func (s *Service) ListMessages(ctx context.Context, userID, conversationID strin
 }
 
 func (s *Service) RenameConversation(ctx context.Context, userID, conversationID string, param dto.RenameConversationDTO) error {
+	if err := s.requireOwner(ctx, userID); err != nil {
+		return err
+	}
 	if !validIdentity(userID) || !validIdentity(conversationID) {
 		return commonerrors.ErrInvalidParam
 	}
@@ -189,6 +203,12 @@ func (s *Service) RenameConversation(ctx context.Context, userID, conversationID
 }
 
 func (s *Service) DeleteConversation(ctx context.Context, userID, conversationID string) error {
+	if err := s.requireOwner(ctx, userID); err != nil {
+		return err
+	}
+	if s.platform != nil {
+		return s.deleteBound(ctx, userID, conversationID)
+	}
 	if !validIdentity(userID) || !validIdentity(conversationID) {
 		return commonerrors.ErrInvalidParam
 	}

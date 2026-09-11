@@ -14,6 +14,9 @@ const (
 
 // Config is the go-reagent business-service configuration.
 type Config struct {
+	AgentDataDir    string              `json:"agent_data_dir" yaml:"agent_data_dir" toml:"agent_data_dir"`
+	AgentRuntime    AgentRuntimeConfig  `json:"agent_runtime" yaml:"agent_runtime" toml:"agent_runtime"`
+	AgentTraining   AgentTrainingConfig `json:"agent_training" yaml:"agent_training" toml:"agent_training"`
 	CurrentPlatform string              `json:"currentPlatform" yaml:"currentPlatform" toml:"currentPlatform"`
 	Platforms       []providers.Options `json:"platforms" yaml:"platforms" toml:"platforms"`
 	HTTP            HTTPConfig          `json:"http" yaml:"http" toml:"http"`

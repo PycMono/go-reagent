@@ -1,5 +1,20 @@
 {
   "snowflake_node_id": 0,
+  "agent_data_dir": "./data/agents",
+  "agent_runtime": {
+    "max_instances": 32,
+    "max_instances_per_tenant": 8,
+    "validation_reserved_instances": 2,
+    "validation_reserved_instances_per_tenant": 1,
+    "idle_ttl_seconds": 900,
+    "acquire_timeout_seconds": 5
+  },
+  "agent_training": {
+    "session_ttl_seconds": 86400,
+    "validation_ttl_seconds": 1800,
+    "smoke_timeout_seconds": 30,
+    "approved_interpreters": []
+  },
   "http": {
     "host": "127.0.0.1",
     "port": "8080",
@@ -9,7 +24,8 @@
   },
   "identity": {
     "mode": "anonymous",
-    "tenant_id": "default"
+    "tenant_id": "default",
+    "dev_admin_token": ""
   },
   "agent": {
     "workspace_dir": "./workspaces/chat",

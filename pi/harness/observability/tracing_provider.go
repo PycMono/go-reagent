@@ -12,7 +12,7 @@ import (
 )
 
 // errStreamAbandoned 表示流在 Result 之前被放弃（§5 abandoned 路径）；
-// 只用于错误分类，正文不进入 Span 或 Metrics。
+// 只用于错误分类，正文不进入 Span。
 var errStreamAbandoned = errors.New("observability: stream abandoned before result")
 
 // streamTimingReader 是 CostTracker 暴露 TTFT Snapshot 的包内私有接口（§5）；
@@ -24,24 +24,21 @@ type streamTimingReader interface {
 
 // TracingProvider 为每次物理 Provider 请求创建 CLIENT Span（§4.5），
 // 装饰顺序固定为 Loop → TracingProvider → CostTracker → Raw Provider（§5）。
-// Span 创建经 go-context-sdk StartSpan（全局 Provider 未安装时 Noop），
-// 指标经 go-observability-sdk 包级 API（默认 Manager 未安装时 Noop）。
+// Span 创建经 go-context-sdk StartSpan（全局 Provider 未安装时 Noop）。
 type TracingProvider struct {
-	next       ai.Provider
-	provider   string // gen_ai.provider.name（协议名，如 openai/anthropic）
-	platformID string // Metrics provider Label，与 Ledger Usage.PlatformID 一致
-	model      string
-	now        func() time.Time
+	next     ai.Provider
+	provider string // gen_ai.provider.name（协议名，如 openai/anthropic）
+	model    string
+	now      func() time.Time
 }
 
-// NewTracingProvider 包装 next。provider 取协议名，platformID 取平台 ID。
-func NewTracingProvider(next ai.Provider, provider, platformID, model string) *TracingProvider {
+// NewTracingProvider 包装 next。provider 取协议名。
+func NewTracingProvider(next ai.Provider, provider, model string) *TracingProvider {
 	return &TracingProvider{
-		next:       next,
-		provider:   provider,
-		platformID: platformID,
-		model:      model,
-		now:        time.Now,
+		next:     next,
+		provider: provider,
+		model:    model,
+		now:      time.Now,
 	}
 }
 
@@ -67,7 +64,6 @@ func (p *TracingProvider) Stream(ctx context.Context, messages []ai.Message, too
 		span:      span,
 		next:      p.next.Stream(spanCtx, messages, tools),
 		provider:  p,
-		phase:     GenerationPhase(hint.Phase),
 		startedAt: p.now(),
 	}
 }
@@ -77,7 +73,6 @@ type tracingStream struct {
 	span      trace.Span
 	next      ai.Stream
 	provider  *TracingProvider
-	phase     GenerationPhase
 	startedAt time.Time
 
 	current     ai.StreamEvent
@@ -98,7 +93,7 @@ func (s *tracingStream) Next() bool {
 	return true
 }
 
-// writeTTFT 把 CostTracker 的同一 TTFT Snapshot 写入 Span 和 Histogram（§5）；
+// writeTTFT 把 CostTracker 的同一 TTFT Snapshot 写入 Span（§5）；
 // 标准链路禁止第二套 TTFT 计时，仅在下游缺少 streamTimingReader 时本地兜底。
 func (s *tracingStream) writeTTFT() {
 	s.ttftWritten = true
@@ -107,7 +102,6 @@ func (s *tracingStream) writeTTFT() {
 		ttft = s.provider.now().Sub(s.startedAt)
 	}
 	contexttracing.WithKV(s.ctx, contexttracing.KV(AttrStreamTTFTMS, ttft.Milliseconds()))
-	RecordModelTTFT(s.ctx, s.provider.platformID, s.provider.model, s.phase, ttft)
 }
 
 func ttftOf(stream ai.Stream) (time.Duration, bool) {
@@ -143,11 +137,7 @@ func (s *tracingStream) Close() error {
 
 func (s *tracingStream) finish(message *ai.Message, err error) {
 	defer s.span.End()
-	p := s.provider
 	contexttracing.WithKV(s.ctx, contexttracing.KV(AttrStreamChunkCount, s.chunks))
-	// 每次物理请求恰好记录一次 requests 与 gen_ai 操作时延。
-	RecordModelRequest(s.ctx, p.platformID, p.model, s.phase, err)
-	RecordGenAIClientOperation(s.ctx, p.provider, p.model, p.now().Sub(s.startedAt), err)
 	if err != nil {
 		// 失败请求只保留 Span、耗时、Attempt、Request Index 和错误类型（§4.5）。
 		SpanError(s.span, err)
@@ -170,5 +160,4 @@ func (s *tracingStream) finish(message *ai.Message, err error) {
 		fields = append(fields, contexttracing.FinishReasons(string(message.FinishReason)))
 	}
 	contexttracing.WithKV(s.ctx, fields...)
-	RecordGenAITokenUsage(s.ctx, p.provider, p.model, usage.InputTokens, usage.OutputTokens)
 }

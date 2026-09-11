@@ -6,9 +6,7 @@ import (
 	"time"
 
 	sdkobservability "github.com/PycMono/go-observability-sdk"
-	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
 	"github.com/PycMono/go-reagent/config"
-	piobservability "github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
 func mappedConfig(t *testing.T, mutate func(*config.ObservabilityConfig)) config.ObservabilityConfig {
@@ -87,15 +85,5 @@ func TestDisabledRuntimeIsFullyNoop(t *testing.T) {
 	}
 	if err := runtime.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestDomainDefinitionsPassSDKValidation(t *testing.T) {
-	definitions := piobservability.DomainMetricDefinitions()
-	if len(definitions) == 0 {
-		t.Fatal("领域指标定义不能为空")
-	}
-	if _, err := sdkmetrics.ValidateDefinitions(piobservability.ForbiddenLabelKeys, definitions); err != nil {
-		t.Fatalf("领域 Definition 必须通过 SDK 校验（含基数红线）: %v", err)
 	}
 }

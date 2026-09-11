@@ -3,14 +3,12 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
-	sdkmetrics "github.com/PycMono/go-observability-sdk/metrics"
 	conversationentity "github.com/PycMono/go-reagent/domain/entity/conversation"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
@@ -37,47 +35,9 @@ func fakeOpenAIServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-// reconMetrics 记录领域指标用于对账。
-type reconMetrics struct {
-	requests, invocations int
-	costUSD               float64
-	inputTokens           int64
-	outputTokens          int64
-}
-
-func (m *reconMetrics) Counter(_ context.Context, name string, value float64, labels ...sdkmetrics.Label) {
-	switch name {
-	case piobservability.MetricModelRequests:
-		m.requests++
-	case piobservability.MetricModelInvocations:
-		m.invocations++
-	case piobservability.MetricModelCost:
-		m.costUSD += value
-	case piobservability.MetricModelTokens:
-		for _, label := range labels {
-			if label.Key == piobservability.LabelTokenType {
-				if label.Value.AsString() == string(piobservability.TokenTypeInputTotal) {
-					m.inputTokens += int64(value)
-				} else if label.Value.AsString() == string(piobservability.TokenTypeOutputTotal) {
-					m.outputTokens += int64(value)
-				}
-			}
-		}
-	}
-}
-func (m *reconMetrics) UpDownCounter(context.Context, string, float64, ...sdkmetrics.Label) {}
-func (m *reconMetrics) Histogram(context.Context, string, float64, ...sdkmetrics.Label)     {}
-func (m *reconMetrics) Timer(context.Context, string, float64, ...sdkmetrics.Label)         {}
-func (m *reconMetrics) Value(context.Context, string, float64, ...sdkmetrics.Label)         {}
-
-// TestMetricsRunTotalsLedgerReconcile 是阶段 3 的三方对账验收（§19、§20）：
-// 同一 Fixture 下 Metrics、RunTotals 与 MySQL Ledger 必须一致，且 Ledger 的
-// trace_id + provider_request_index 指向唯一 Provider Span。
-func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
+// TestRunTotalsLedgerReconcile 验证实际模型用量与持久化账本一致，并可关联 Provider Span。
+func TestRunTotalsLedgerReconcile(t *testing.T) {
 	exporter := installSpanRecorder(t)
-	metrics := &reconMetrics{}
-	sdkmetrics.SetDefault(sdkmetrics.NewManager(metrics))
-	t.Cleanup(func() { sdkmetrics.SetDefault(nil) })
 
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte("You are a test Agent."), 0o600); err != nil {
@@ -109,17 +69,9 @@ func TestMetricsRunTotalsLedgerReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// RunTotals 与 Metrics 对账。
 	totals := result.Termination.Totals
-	if metrics.requests != 1 || metrics.invocations != 1 || totals.Invocations != 1 {
-		t.Fatalf("requests/invocations/totals = %d/%d/%d", metrics.requests, metrics.invocations, totals.Invocations)
-	}
-	if metrics.inputTokens != totals.InputTokens || metrics.outputTokens != totals.OutputTokens {
-		t.Fatalf("tokens 对账失败: metrics %d/%d, totals %d/%d",
-			metrics.inputTokens, metrics.outputTokens, totals.InputTokens, totals.OutputTokens)
-	}
-	if math.Abs(metrics.costUSD-totals.CostUSD) > 1e-12 {
-		t.Fatalf("cost 对账失败: metrics %v, totals %v", metrics.costUSD, totals.CostUSD)
+	if totals.Invocations != 1 || totals.InputTokens != 100 || totals.OutputTokens != 50 {
+		t.Fatalf("unexpected totals: %+v", totals)
 	}
 
 	// Ledger 与 RunTotals 对账。

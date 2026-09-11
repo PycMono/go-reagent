@@ -10,6 +10,7 @@ import (
 	"github.com/PycMono/go-reagent/common/dto"
 	commonerrors "github.com/PycMono/go-reagent/common/errors"
 	"github.com/PycMono/go-reagent/common/vo"
+	agentctl "github.com/PycMono/go-reagent/infrastructure/controller/http/agent"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,11 +24,16 @@ func NewController(service *chatservice.Service) *Controller {
 
 func (ctl *Controller) CreateConversation(c *gin.Context) {
 	var param dto.CreateConversationDTO
-	if err := c.ShouldBindJSON(&param); err != nil {
+	if err := agentctl.Decode(c, &param); err != nil {
 		ginsdk.Send(c, nil, commonerrors.ErrInvalidParam.Wrap(err), commonerrors.HTTPStatusForCode)
 		return
 	}
 	data, err := ctl.service.CreateConversation(c.Request.Context(), userID(c), param)
+	ginsdk.Send(c, data, err, commonerrors.HTTPStatusForCode)
+}
+
+func (ctl *Controller) GetConversation(c *gin.Context) {
+	data, err := ctl.service.GetConversation(c.Request.Context(), userID(c), c.Param("id"))
 	ginsdk.Send(c, data, err, commonerrors.HTTPStatusForCode)
 }
 

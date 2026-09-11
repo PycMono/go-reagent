@@ -8,11 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
-	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/middleware"
 )
 
@@ -121,11 +119,6 @@ func (runtime *Runtime) Schedule(
 	observer EventObserver,
 ) ([]Event, error) {
 	parallelSafe := availableTools.ParallelSafety()
-	knownTools := make(map[string]bool, len(parallelSafe))
-	for name := range parallelSafe {
-		knownTools[name] = true
-	}
-	mode := runtime.Mode(calls, availableTools)
 	results := make([]Event, len(calls))
 	for start := 0; start < len(calls); {
 		if err := ctx.Err(); err != nil {
@@ -137,7 +130,7 @@ func (runtime *Runtime) Schedule(
 				end++
 			}
 		}
-		if err := runtime.executeWave(ctx, calls, results, start, end, observer, mode, knownTools); err != nil {
+		if err := runtime.executeWave(ctx, calls, results, start, end, observer); err != nil {
 			return nil, err
 		}
 		start = end
@@ -150,6 +143,7 @@ func (runtime *Runtime) Mode(calls []ai.ToolCall, availableTools ai.ToolDefiniti
 	if len(calls) == 0 || runtime.maxParallel <= 1 {
 		return "serial"
 	}
+
 	parallelSafe := availableTools.ParallelSafety()
 	hasParallelWave := false
 	hasSerialCall := false
@@ -170,6 +164,7 @@ func (runtime *Runtime) Mode(calls []ai.ToolCall, availableTools ai.ToolDefiniti
 		}
 		start = end
 	}
+
 	if hasParallelWave && hasSerialCall {
 		return "mixed"
 	}
@@ -186,8 +181,6 @@ func (runtime *Runtime) executeWave(
 	start int,
 	end int,
 	observer EventObserver,
-	mode string,
-	knownTools map[string]bool,
 ) error {
 	limit := runtime.maxParallel
 	if limit <= 0 {
@@ -205,13 +198,9 @@ func (runtime *Runtime) executeWave(
 		waitGroup.Add(1)
 		go func(index int, call ai.ToolCall) {
 			defer waitGroup.Done()
-			// 信号量等待只进入 queue_duration Histogram，不创建 Queue Span。
-			queuedAt := time.Now()
 			select {
 			case semaphore <- struct{}{}:
-				recordToolQueue(ctx, call, mode, knownTools, nil, time.Since(queuedAt))
 			case <-ctx.Done():
-				recordToolQueue(ctx, call, mode, knownTools, ctx.Err(), time.Since(queuedAt))
 				return
 			}
 			defer func() { <-semaphore }()
@@ -222,28 +211,13 @@ func (runtime *Runtime) executeWave(
 		}(index, call)
 	}
 	waitGroup.Wait()
+
 	for _, err := range executionErrors {
 		if err != nil {
 			return err
 		}
 	}
 	return ctx.Err()
-}
-
-// recordToolQueue 记录排队时延；未注册 Tool 的 Label 固定为 unknown。
-func recordToolQueue(
-	ctx context.Context,
-	call ai.ToolCall,
-	mode string,
-	knownTools map[string]bool,
-	err error,
-	wait time.Duration,
-) {
-	tool := call.Name
-	if !knownTools[call.Name] {
-		tool = "unknown"
-	}
-	observability.RecordToolQueueDuration(ctx, tool, observability.ExecutionMode(mode), err, wait)
 }
 
 func normalizeEndEvent(call ai.ToolCall, output ai.ToolOutput, err error) Event {

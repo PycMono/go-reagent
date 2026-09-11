@@ -6,12 +6,18 @@ import (
 )
 
 type ConversationVO struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	ProfileCode  string    `json:"profile_code"`
-	MessageTotal int64     `json:"message_total"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	AgentID        string    `json:"agent_id"`
+	AgentVersionID string    `json:"agent_version_id"`
+	AgentName      string    `json:"agent_name"`
+	AgentIcon      string    `json:"agent_icon"`
+	AgentStatus    string    `json:"agent_status"`
+	FollowLatest   bool      `json:"follow_latest"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	ProfileCode    string    `json:"profile_code"`
+	MessageTotal   int64     `json:"message_total"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type AgentProfileStarterVO struct {

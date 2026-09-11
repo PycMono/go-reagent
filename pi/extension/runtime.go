@@ -27,6 +27,7 @@ func NewRuntime(registry *toolexec.Registry, extensions []Extension) (*Runtime, 
 		if isNilExtension(extension) {
 			return nil, errors.New("extension must not be nil")
 		}
+
 		name := strings.TrimSpace(extension.Name())
 		if name == "" {
 			return nil, errors.New("extension name must not be empty")
@@ -85,5 +86,6 @@ func closeExtension(ctx context.Context, extension Extension) error {
 	if err := closer.Close(ctx); err != nil {
 		return fmt.Errorf("close extension %q: %w", extension.Name(), err)
 	}
+
 	return nil
 }

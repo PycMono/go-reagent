@@ -8,8 +8,38 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
+	"github.com/PycMono/go-reagent/infrastructure/driver/agenttemplate"
+	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 )
+
+func TestMaterializeRealGeneralTemplate(t *testing.T) {
+	work, err := filepath.Abs("../../../workspaces/chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := agentprofile.NewCatalog(pi.WorkDir(work))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembler, err := agenttemplate.New(work, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	if err := assembler.Assemble(context.Background(), "general", source); err != nil {
+		t.Fatal(err)
+	}
+	s := mustStore(t)
+	ref, err := s.CreateInitial(context.Background(), "tenant", "agent", "version", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MaterializeVersion(context.Background(), "tenant", "agent", "version", ref); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMaterializeVersionAndChatAreImmutableAndIsolated(t *testing.T) {
 	store := mustStore(t)
@@ -71,6 +101,73 @@ func TestMaterializeValidationUsesIsolatedRuntimePath(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(root, "AGENTS.md")); err != nil || info.Mode().Perm() != 0o444 {
 		t.Fatalf("AGENTS.md: %v %#v", err, info)
 	}
+}
+
+func TestCleanupPreparationDeletesOnlyExactRefAndArtifacts(t *testing.T) {
+	store := mustStore(t)
+	source := validSource(t)
+	v1, err := store.CreateInitial(context.Background(), "tenant", "agent", "v1", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := store.CreateInitial(context.Background(), "tenant", "agent", "v2", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := store.MaterializeVersion(context.Background(), "tenant", "agent", "v1", v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation, err := store.MaterializeValidation(context.Background(), "tenant", "agent", "v1", v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CleanupPreparation(context.Background(), PreparationArtifacts{TenantID: "tenant", AgentID: "agent", VersionID: "v1", Ref: v1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{version, validation} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("artifact retained: %s %v", path, err)
+		}
+	}
+	if err := store.Verify(context.Background(), "tenant", "agent", v2); err != nil {
+		t.Fatalf("other ref or shared commit removed: %v", err)
+	}
+}
+
+func TestCleanupPreparationFailsClosedOnMismatchOrSymlink(t *testing.T) {
+	t.Run("commit mismatch", func(t *testing.T) {
+		store := mustStore(t)
+		ref, err := store.CreateInitial(context.Background(), "tenant", "agent", "v1", validSource(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := ref
+		bad.Commit = strings.Repeat("b", 40)
+		if err := store.CleanupPreparation(context.Background(), PreparationArtifacts{TenantID: "tenant", AgentID: "agent", VersionID: "v1", Ref: bad}); err == nil {
+			t.Fatal("commit mismatch accepted")
+		}
+		if err := store.Verify(context.Background(), "tenant", "agent", ref); err != nil {
+			t.Fatalf("tag changed: %v", err)
+		}
+	})
+	t.Run("symlink artifact", func(t *testing.T) {
+		store := mustStore(t)
+		outside := t.TempDir()
+		target := filepath.Join(store.agentRoot("tenant", "agent"), "versions", "v1")
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, target); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CleanupPreparation(context.Background(), PreparationArtifacts{TenantID: "tenant", AgentID: "agent", VersionID: "v1"}); err == nil {
+			t.Fatal("symlink artifact accepted")
+		}
+		if _, err := os.Stat(outside); err != nil {
+			t.Fatalf("outside target changed: %v", err)
+		}
+	})
 }
 
 func TestNativeChatCannotReadSiblingScratch(t *testing.T) {
