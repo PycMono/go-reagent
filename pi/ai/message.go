@@ -48,6 +48,18 @@ type Message struct {
 	IsError bool `json:"is_error,omitempty"`
 }
 
+// MergeMessages 按顺序合并消息切片，不修改输入切片的底层数组。
+// additional 为空时直接返回 messages；否则分配新切片并浅拷贝消息，消息内部内容仍共享。
+func MergeMessages(messages, additional []Message) []Message {
+	if len(additional) == 0 {
+		return messages
+	}
+	merged := make([]Message, 0, len(messages)+len(additional))
+	merged = append(merged, messages...)
+	merged = append(merged, additional...)
+	return merged
+}
+
 // PrepareOutbound validates and prepares a provider-bound copy of the message.
 // Image blocks are replaced by redacted placeholders when vision is disabled.
 func (message Message) PrepareOutbound(vision bool) (Message, error) {

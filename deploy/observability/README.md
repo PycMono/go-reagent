@@ -28,16 +28,12 @@ docker compose -f deploy/observability/docker-compose.yaml ps    # 确认 4 个�
 - Prometheus: http://127.0.0.1:9090 （抓取应用 `127.0.0.1:9464/metrics`）
 - 应用 Trace 经 OTLP/gRPC 4317 进入 Collector，再写入 Tempo
 
-## 看板
+## 排查入口
 
-Grafana 左侧 Dashboards → go-reagent 目录，或直接访问：
+Grafana Explore 选择 Tempo 查看运行、模型请求、工具执行和压缩的 Trace。
+模型用量、成本与调用结果保存在调用账本中，用于预算控制和对账。
 
-| 看板 | 地址 | 内容 |
-|---|---|---|
-| Agent | http://127.0.0.1:3000/d/reagent-agent | Run 数/终止原因、P50/P95/P99 时延、每 Run 成本、Turn/Invocation 分布 |
-| Model | http://127.0.0.1:3000/d/reagent-model | 请求/错误率、P95 时延与 TTFT、Token 分类、成本（CostQuality）、Retry/Overflow、缓存命中率 |
-| Tool | http://127.0.0.1:3000/d/reagent-tool | 调用与错误率、P95 执行/排队时延、稳定错误码 |
-
-告警规则见 Prometheus → Alerts（`reagent.agent` / `reagent.pipeline` 两组）。
+应用不再上报 Agent、模型、工具、压缩和护栏的自定义 Metrics，相关看板和业务指标告警已移除。
+Prometheus 保留 SDK 的进程、HTTP 等基础指标；告警规则保留 `reagent.pipeline` 组，监测采集链路。
 
 注意：容器内 Prometheus 抓取宿主机应用时使用 `host.docker.internal:9464`。

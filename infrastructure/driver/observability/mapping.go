@@ -1,6 +1,5 @@
 // Package observability 把 go-reagent 的项目配置映射为
-// go-observability-sdk 的 Runtime 配置，注册领域 Metric Definition 与
-// Label 基数红线，并在阶段 1 接入 Fx 生命周期。
+// go-observability-sdk 的 Runtime 配置，并接入 Fx 生命周期。
 //
 // 本包不重复创建 TracerProvider、MeterProvider、Exporter、Resource、
 // W3C Propagator 或 Metrics Listener——这些全部由 go-observability-sdk

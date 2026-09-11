@@ -364,3 +364,24 @@ func agentversionPath(name string) bool {
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(name)))
 	return name != "" && utf8.ValidString(name) && clean == name && name != "." && !strings.HasPrefix(name, "../") && !strings.ContainsRune(name, 0)
 }
+
+// VerifyValidation checks the exact immutable validation copy, including file
+// contents, modes, unexpected entries and the isolated temporary directories.
+func (s *Store) VerifyValidation(ctx context.Context, tenant, agent, operation string, ref BundleRef) error {
+	if err := validateIDs(tenant, agent, operation); err != nil {
+		return err
+	}
+	if err := s.Verify(ctx, tenant, agent, ref); err != nil {
+		return err
+	}
+	root := filepath.Join(s.agentRoot(tenant, agent), "runtime-cache", "validation", operation)
+	return s.verifyMaterialized(ctx, root, tenant, agent, ref, true)
+}
+
+func (s *Store) VerifyValidationWorkspace(ctx context.Context, tenant, agent, workspace string, ref BundleRef) error {
+	operation := filepath.Base(workspace)
+	if filepath.Clean(workspace) != filepath.Join(s.agentRoot(tenant, agent), "runtime-cache", "validation", operation) {
+		return ErrInvalidBundle
+	}
+	return s.VerifyValidation(ctx, tenant, agent, operation, ref)
+}

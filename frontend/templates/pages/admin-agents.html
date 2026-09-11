@@ -1,0 +1,56 @@
+{{ define "layout" }}base{{ end }}
+{{ define "head" }}
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,"><link rel="stylesheet" href="/static/css/pages/agents.css"><link rel="stylesheet" href="/static/css/pages/admin-agents.css">
+{{ end }}
+{{ define "content" }}
+<div class="agent-directory" id="adminApp" data-mode="{{ .Mode }}" data-agent-id="{{ .AgentID }}">
+ <aside class="agent-directory__rail" aria-label="主导航">
+  <a class="agent-directory__brand" href="/agents"><span class="admin-brand-mark" aria-hidden="true">r</span>Reagent</a>
+  <nav class="agent-directory__nav">
+   <a href="/agents"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>Agent 目录</a>
+   <a href="/admin/agents" class="is-current" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg>管理 Agent</a>
+  </nav>
+  <div class="admin-workspace"><span class="admin-workspace-icon" aria-hidden="true">R</span><div><strong>当前工作区</strong><p class="agent-directory__rail-note">{{ .TenantLabel }}</p></div></div>
+ </aside>
+ <main class="agent-directory__main admin-main">
+  <div class="admin-breadcrumb">工作区 <span aria-hidden="true">/</span> Agent 管理{{ if ne .Mode "list" }} <span aria-hidden="true">/</span> {{ .Title }}{{ end }}</div>
+  <header class="agent-directory__header"><div><h1>{{ .Title }}</h1><p>{{ if eq .Mode "list" }}让每个 Agent 专注于自己的工作。{{ else if eq .Mode "create" }}选一个起点，创建属于你的助手。{{ else }}管理资料、训练行为，查看每一次版本变化。{{ end }}</p></div><a class="admin-button {{ if ne .Mode "list" }}admin-button--secondary{{ end }}" href="{{ if eq .Mode "list" }}/admin/agents/new{{ else }}/admin/agents{{ end }}">{{ if eq .Mode "list" }}<span aria-hidden="true">＋</span> 创建 Agent{{ else }}返回管理列表{{ end }}</a></header>
+  <div id="adminError" class="admin-error" role="alert" hidden><span id="adminErrorText"></span><button id="adminRetry" type="button">重新加载</button></div>
+  {{ if eq .Mode "list" }}
+  <div class="admin-list-toolbar"><form id="adminSearchForm" class="admin-search" role="search"><label class="sr-only" for="adminSearch">搜索 Agent</label><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="adminSearch" type="search" maxlength="120" placeholder="搜索名称或用途…"><button type="submit">搜索</button></form><p id="adminStatus" role="status" aria-live="polite">正在加载…</p></div>
+  <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>名称与用途</th><th>状态</th><th>正式版本</th><th><span class="sr-only">管理</span></th></tr></thead><tbody id="adminAgentList"></tbody></table><p id="adminEmpty" class="admin-empty" hidden>还没有匹配的 Agent。调整搜索，或创建一个新的助手。</p></div>
+  <button id="adminMore" class="admin-more" type="button" hidden>加载更多</button>
+  {{ else }}
+  <p id="adminStatus" class="admin-form-status" role="status" aria-live="polite">正在加载…</p>
+  <div class="admin-detail-layout {{ if eq .Mode "create" }}admin-detail-layout--create{{ end }}">
+  <form id="adminAgentForm" class="admin-form admin-editor">
+   <fieldset id="adminFields" disabled>
+    <legend class="sr-only">Agent 资料</legend>
+    <section class="admin-form-section"><div class="admin-section-heading"><h2>基本资料</h2><p>帮助大家了解这个 Agent 能做什么。</p></div>
+     <div class="admin-field"><label for="agentName">名称 <span aria-hidden="true">*</span></label><input id="agentName" maxlength="128" required autocomplete="off" placeholder="例如：资料分析助手"></div>
+     <div class="admin-field"><label for="agentDescription">用途说明</label><textarea id="agentDescription" rows="3" maxlength="2000" placeholder="用一两句话，介绍它擅长的工作。"></textarea></div>
+     {{ if eq .Mode "detail" }}<div class="admin-field"><label for="agentState">可用状态</label><select id="agentState"><option value="enabled">启用</option><option value="archived">停用（历史只读）</option></select><p id="agentVersion" class="admin-hint"></p></div>{{ end }}
+    </section>
+    {{ if eq .Mode "create" }}
+    <section class="admin-form-section"><div class="admin-section-heading"><h2>初始能力</h2><p>从现有模板开始，之后可以继续训练。</p></div><div class="admin-field-row"><div class="admin-field"><label for="agentTemplate">初始模板</label><select id="agentTemplate" required></select></div><div class="admin-field"><label for="agentModel">初始模型</label><select id="agentModel" required></select></div></div><p class="admin-hint">模型与工具使用工作区允许的配置。</p></section>
+    {{ end }}
+    <section class="admin-form-section"><div class="admin-section-heading"><h2>聊天展示</h2><p>设置用户看到的第一印象。</p></div><div class="admin-field-row"><div class="admin-field"><label for="agentIcon">图标</label><select id="agentIcon"></select></div><div class="admin-field"><label for="agentOrder">目录排序</label><input id="agentOrder" type="number" value="0" step="1" min="-2147483648" max="2147483647" required><span class="admin-hint">数值越小，越靠前</span></div></div><div class="admin-field"><label for="agentWelcome">欢迎语</label><textarea id="agentWelcome" rows="2" maxlength="2000" placeholder="向用户打个招呼，告诉他们可以从哪里开始。"></textarea></div><div class="admin-starters-heading"><h3>开场问题</h3><button id="addStarter" type="button">＋ 添加问题</button></div><div id="agentStartersEditor"></div></section>
+    <div class="admin-form-footer"><span>展示资料不会改变已发布的行为规则。</span><button id="adminSave" class="admin-primary" type="submit">{{ if eq .Mode "create" }}创建 Agent{{ else }}保存资料{{ end }}</button></div>
+   </fieldset>
+  </form>
+  <aside class="admin-detail-side">
+  {{ if eq .Mode "detail" }}
+   <section class="admin-versions" aria-labelledby="trainingHeading"><div class="admin-section-heading"><h2 id="trainingHeading">训练</h2><p>把新的工作方式，变成它的能力。</p></div><button id="createTraining" class="admin-primary" type="button" disabled>开始训练</button><ul id="agentTrainingList"></ul><p id="trainingListEmpty" class="admin-hint" hidden>暂无训练记录。每次训练独立保存，发布后才会生效。</p><button id="trainingListMore" type="button" hidden>加载更多训练</button></section>
+   <section class="admin-versions" aria-labelledby="versionHeading"><div class="admin-section-heading"><h2 id="versionHeading">版本历史</h2><p>查看发布记录，或恢复历史版本。</p></div><ol id="versionList"></ol><p id="versionsEmpty" class="admin-hint" hidden>尚未发布正式版本。</p><button id="versionsMore" type="button" hidden>加载更多版本</button></section>
+   <section class="admin-versions" aria-labelledby="modelReleaseHeading"><div class="admin-section-heading"><h2 id="modelReleaseHeading">更换模型</h2><p>保留行为资产，发布新的模型配置。</p></div><form id="modelReleaseForm" class="admin-form"><fieldset id="modelReleaseFields" disabled><label for="releaseModel">模型</label><select id="releaseModel" required></select><label for="modelReleaseSummary">变更说明</label><input id="modelReleaseSummary" required maxlength="2000" placeholder="说明这次更换的原因"><label class="admin-checkbox"><input id="modelReleaseConfirmed" type="checkbox" required><span>已检查模型选择，确认发布新版本。</span></label><button type="submit">发布模型变更</button></fieldset></form></section>
+  {{ else }}
+   <div class="admin-create-note"><span class="admin-note-symbol" aria-hidden="true">✳</span><h2>先有一个好起点</h2><p>模板会成为 Agent 的独立副本。之后的训练，只会改变这个 Agent。</p><div><strong>创建</strong><p>选择模板与模型，生成第一个正式版本。</p></div><div><strong>训练</strong><p>通过对话调整规则、资料与回答方式。</p></div><div><strong>发布</strong><p>检查改动并确认，让新能力正式生效。</p></div></div>
+  {{ end }}
+  </aside>
+  </div>
+  {{ end }}
+ </main>
+</div>
+{{ end }}
+{{ define "scripts" }}<script type="module" src="/static/js/pages/admin-agents.js"></script>{{ end }}

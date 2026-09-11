@@ -62,6 +62,36 @@ func TestNonChatRequestRequiresOperationID(t *testing.T) {
 	}
 }
 
+func TestValidationReservationSharesCapacityWithoutStartingModel(t *testing.T) {
+	f := &testFactory{}
+	m, err := NewManager(f, smallOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close(context.Background())
+	release, err := m.ReserveValidation(context.Background(), "t", "a", "validation-op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.created.Load() != 0 {
+		t.Fatal("validation started an unnecessary model runtime")
+	}
+	m.mu.Lock()
+	count := len(m.entries)
+	m.mu.Unlock()
+	if count != 1 {
+		t.Fatal("validation not counted")
+	}
+	release()
+	release()
+	m.mu.Lock()
+	count = len(m.entries)
+	m.mu.Unlock()
+	if count != 0 {
+		t.Fatal("validation capacity leaked")
+	}
+}
+
 func TestIdleRuntimeStopsAfterTTL(t *testing.T) {
 	runtime := &testRuntime{}
 	factory := &blockingFactory{entered: make(chan struct{}, 1), unblock: make(chan struct{}, 1), runtime: runtime}

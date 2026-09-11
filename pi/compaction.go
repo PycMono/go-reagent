@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	logsdk "github.com/PycMono/go-logger-sdk"
@@ -104,7 +103,7 @@ func (l *Loop) maybeCompact(
 		return current, nil
 	}
 	before := pressure(current)
-	outcome := l.compactWithSpan(ctx, observability.CompactionReasonThreshold, current, tools, observe, rt)
+	outcome := l.compact(ctx, observability.CompactionReasonThreshold, current, tools, observe, rt)
 	if outcome.fatal {
 		return messages, outcome.err
 	}
@@ -147,7 +146,7 @@ func (l *Loop) recoverOverflow(
 	rt := gs.rt
 	toolDefs := ai.ToolDefinitions(tools)
 	retry := func(compacted []ai.Message) (generationResult, error) {
-		response, _, retryErr := l.generateWithRetry(ctx, gs, mergeMessages(compacted, ephemeral), tools, onText)
+		response, _, retryErr := l.generateWithRetry(ctx, gs, ai.MergeMessages(compacted, ephemeral), tools, onText)
 		return generationResult{
 			message:             response,
 			context:             compacted,
@@ -181,7 +180,7 @@ func (l *Loop) recoverOverflow(
 
 	// 必要时尝试一次 L2。
 	gs.compactionTriggered = true
-	outcome := l.compactWithSpan(ctx, observability.CompactionReasonOverflow, candidate, toolDefs, onCompactionUsage, rt)
+	outcome := l.compact(ctx, observability.CompactionReasonOverflow, candidate, toolDefs, onCompactionUsage, rt)
 	if outcome.fatal {
 		return generationResult{context: messages, compactionTriggered: true}, outcome.err
 	}
@@ -200,10 +199,9 @@ func (l *Loop) recoverOverflow(
 	return generationResult{message: response, context: messages, compactionTriggered: true}, overflowErr
 }
 
-// compactWithSpan 为一次 L2 摘要创建 reagent.compact_context Span
-// 并记录 Compaction 指标；before/after 使用同一 TokenMeter 口径，
-// 不冒充 Provider Token。Span 状态与生命周期由 WithSpan 管理。
-func (l *Loop) compactWithSpan(
+// compact 执行一次摘要并记录 Span：选择范围、调用模型、构造替换结果。
+// 调用方确认上下文实际缩小后，再同时提交消息与压缩状态。
+func (l *Loop) compact(
 	ctx context.Context,
 	reason observability.CompactionReason,
 	messages []ai.Message,
@@ -211,130 +209,120 @@ func (l *Loop) compactWithSpan(
 	observe invocationObserver,
 	rt *compactionRuntime,
 ) (outcome compactionOutcome) {
-	contexttracing.WithSpan(ctx, observability.SpanNameCompaction, func(ctx context.Context) error {
+	contexttracing.WithSpan(ctx, observability.SpanNameCompaction, func(ctx context.Context) (err error) {
 		contexttracing.WithKV(ctx,
 			contexttracing.KV(observability.AttrCompactionReason, string(reason)),
 			contexttracing.KV(observability.AttrCompactionBeforeMessageCount, len(messages)),
 			contexttracing.KV(observability.AttrCompactionBeforeTokens,
 				rt.meter.Estimate(harness.RequestFootprint{Messages: messages, Tools: tools})),
 		)
+		defer func() {
+			// panic 交给 WithSpan 处理，不记录为正常完成的摘要。
+			if recovered := recover(); recovered != nil {
+				panic(recovered)
+			}
+			outcome.err = err
+			if err != nil {
+				contexttracing.WithKV(ctx, observability.ErrorFields(err)...)
+				return
+			}
+			contexttracing.WithKV(ctx,
+				contexttracing.KV(observability.AttrCompactionAfterMessageCount, len(outcome.messages)),
+				contexttracing.KV(observability.AttrCompactionAfterTokens,
+					rt.meter.Estimate(harness.RequestFootprint{Messages: outcome.messages, Tools: tools})),
+				contexttracing.KV(observability.AttrCompactionSummaryTokens, outcome.summaryTokens),
+			)
+		}()
 
-		startedAt := time.Now()
-		outcome = l.tryCompactOnce(ctx, messages, observe, rt)
-		observability.RecordCompaction(ctx, reason, outcome.err)
-		afterCount := len(messages)
-		if outcome.err == nil {
-			afterCount = len(outcome.messages)
+		fail := func(err error) error {
+			outcome.state = rt.state
+			return err
 		}
-		observability.RecordCompactionDetail(ctx, reason, outcome.err, time.Since(startedAt), len(messages), afterCount)
-		if outcome.err != nil {
-			contexttracing.WithKV(ctx, observability.ErrorFields(outcome.err)...)
-			return outcome.err
+		fatal := func(err error) error {
+			outcome.fatal = true
+			return fail(err)
 		}
-		contexttracing.WithKV(ctx,
-			contexttracing.KV(observability.AttrCompactionAfterMessageCount, len(outcome.messages)),
-			contexttracing.KV(observability.AttrCompactionAfterTokens,
-				rt.meter.Estimate(harness.RequestFootprint{Messages: outcome.messages, Tools: tools})),
-			contexttracing.KV(observability.AttrCompactionSummaryTokens, outcome.summaryTokens),
-		)
+
+		plan, err := harness.BuildCompactionPlan(messages, rt.state, harness.PlanOptions{
+			RetainRecentUnits: harness.DefaultRetainRecentUnits,
+		})
+		if err != nil {
+			return fail(err)
+		}
+
+		encoded, err := harness.MarshalVisibleMessages(plan.SummaryMessages)
+		if err != nil {
+			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", fmt.Errorf("encode summary input: %w", err)))
+		}
+
+		summaryGenerate := &generateState{phase: observability.GenerationPhaseCompaction, rt: rt}
+		response, _, err := l.generateWithRetry(ctx, summaryGenerate, []ai.Message{
+			{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock(compactionSystemPrompt)}},
+			{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(string(encoded))}},
+		}, nil, nil)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return fatal(err)
+			}
+			return fail(err)
+		}
+
+		if response == nil {
+			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
+				errors.New("provider returned an empty summary response")))
+		}
+
+		// 记账顺序固定：校验 Usage → 立即记账并累加预算 → 校验正文
+		// 与收敛条件 → 固定 Outcome（accepted / contract_invalid）。
+		if err = response.Usage.ValidateMetered(); err != nil {
+			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction usage", err))
+		}
+		var contractMessages []ai.Message
+		var contractState harness.CompactionState
+		finalize := func(error) {}
+		if observe != nil {
+			finalizeObserve, observeErr := observe(*response.Usage, summaryGenerate.lastRequestIndex, string(response.FinishReason))
+			if observeErr != nil {
+				// 预算错误先于契约判定：Invocation 已入账，Outcome 保持 accepted。
+				if finalizeObserve != nil {
+					finalizeObserve(nil)
+				}
+				return fatal(observeErr)
+			}
+			finalize = finalizeObserve
+		}
+		contractErr := func() error {
+			if err := response.ValidateThinking(); err != nil {
+				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+			}
+			text, err := response.Content.Text()
+			if err != nil {
+				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+			}
+			compacted, nextState, err := harness.ApplySummary(messages, plan, text, rt.state)
+			if err != nil {
+				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+			}
+			if harness.VisibleMessagesBytes(compacted[plan.Start:plan.Start+1]) >= harness.VisibleMessagesBytes(plan.SummaryMessages) {
+				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
+					errors.New("compaction checkpoint is not smaller than the replaced range"))
+			}
+			contractMessages = compacted
+			contractState = nextState
+			return nil
+		}()
+		finalize(contractErr)
+		if contractErr != nil {
+			return fail(contractErr)
+		}
+		outcome = compactionOutcome{
+			messages:      contractMessages,
+			state:         contractState,
+			summaryTokens: response.Usage.OutputTokens,
+		}
 		return nil
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
 	return outcome
-}
-
-// tryCompactOnce 执行一次 L2：选择连续范围、调用摘要模型、原位替换。
-// 成功时返回替换后的消息与对应的新状态；调用方确认完整请求估算严格变小后
-// 再提交 nextState（消息与状态必须同时生效或同时放弃）。
-func (l *Loop) tryCompactOnce(
-	ctx context.Context,
-	messages []ai.Message,
-	observe invocationObserver,
-	rt *compactionRuntime,
-) compactionOutcome {
-	fail := func(err error) compactionOutcome {
-		return compactionOutcome{state: rt.state, err: err}
-	}
-	fatal := func(err error) compactionOutcome {
-		return compactionOutcome{state: rt.state, fatal: true, err: err}
-	}
-
-	plan, err := harness.BuildCompactionPlan(messages, rt.state, harness.PlanOptions{
-		RetainRecentUnits: harness.DefaultRetainRecentUnits,
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	encoded, err := harness.MarshalVisibleMessages(plan.SummaryMessages)
-	if err != nil {
-		return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", fmt.Errorf("encode summary input: %w", err)))
-	}
-
-	summaryGenerate := &generateState{phase: observability.GenerationPhaseCompaction, rt: rt}
-	response, _, err := l.generateWithRetry(ctx, summaryGenerate, []ai.Message{
-		{Role: ai.RoleSystem, Content: []ai.ContentBlock{ai.TextBlock(compactionSystemPrompt)}},
-		{Role: ai.RoleUser, Content: []ai.ContentBlock{ai.TextBlock(string(encoded))}},
-	}, nil, nil)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return fatal(err)
-		}
-		return fail(err)
-	}
-
-	if response == nil {
-		return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
-			errors.New("provider returned an empty summary response")))
-	}
-
-	// 记账顺序固定：校验 Usage → 立即记账并累加预算 → 校验正文
-	// 与收敛条件 → 固定 Outcome（accepted / contract_invalid）。
-	if err = response.Usage.ValidateMetered(); err != nil {
-		return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction usage", err))
-	}
-	var contractMessages []ai.Message
-	var contractState harness.CompactionState
-	finalize := func(error) {}
-	if observe != nil {
-		finalizeObserve, observeErr := observe(*response.Usage, summaryGenerate.lastRequestIndex, string(response.FinishReason))
-		if observeErr != nil {
-			// 预算错误先于契约判定：Invocation 已入账，Outcome 保持 accepted。
-			if finalizeObserve != nil {
-				finalizeObserve(nil)
-			}
-			return fatal(observeErr)
-		}
-		finalize = finalizeObserve
-	}
-	contractErr := func() error {
-		if err := response.ValidateThinking(); err != nil {
-			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
-		}
-		text, err := response.Content.Text()
-		if err != nil {
-			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
-		}
-		compacted, nextState, err := harness.ApplySummary(messages, plan, text, rt.state)
-		if err != nil {
-			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
-		}
-		if harness.VisibleMessagesBytes(compacted[plan.Start:plan.Start+1]) >= harness.VisibleMessagesBytes(plan.SummaryMessages) {
-			return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
-				errors.New("compaction checkpoint is not smaller than the replaced range"))
-		}
-		contractMessages = compacted
-		contractState = nextState
-		return nil
-	}()
-	finalize(contractErr)
-	if contractErr != nil {
-		return fail(contractErr)
-	}
-	return compactionOutcome{
-		messages:      contractMessages,
-		state:         contractState,
-		summaryTokens: response.Usage.OutputTokens,
-	}
 }
 
 func defaultPruneOptions() harness.PruneOptions {

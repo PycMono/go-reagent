@@ -59,6 +59,26 @@ type EventListener interface {
 	OnEvent(context.Context, AgentEvent)
 }
 
+// EmitMessageStart 通知监听器开始生成消息。
+func EmitMessageStart(ctx context.Context, listener EventListener) {
+	listener.OnEvent(ctx, NewMessageStartEvent())
+}
+
+// EmitMessageUpdate 向监听器发送消息增量。
+func EmitMessageUpdate(ctx context.Context, listener EventListener, block ai.ContentBlock) {
+	listener.OnEvent(ctx, NewMessageUpdateEvent(block))
+}
+
+// EmitMessageEnd 向监听器发送完整消息。
+func EmitMessageEnd(ctx context.Context, listener EventListener, message ai.Message) {
+	listener.OnEvent(ctx, NewMessageEndEvent(message))
+}
+
+// EmitToolEvent 向监听器发送工具生命周期事件。
+func EmitToolEvent(ctx context.Context, listener EventListener, event toolexec.Event) {
+	listener.OnEvent(ctx, NewAgentToolEvent(event))
+}
+
 // nopListener 丢弃全部事件，用于把可选 EventListener 归一化为非 nil。
 type nopListener struct{}
 

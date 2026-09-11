@@ -18,6 +18,8 @@ type Key struct{ Kind, TenantID, AgentID, ConversationID, VersionID, OperationID
 type Request struct {
 	Key     Key
 	Version agent.Version
+	// CandidateRoot is server-owned and is never bound from an HTTP request.
+	CandidateRoot string
 }
 type ManagedRuntime interface {
 	pi.Runner
@@ -30,6 +32,7 @@ type Factory interface {
 type Lease struct {
 	Runner  pi.Runner
 	Release func()
+	Stop    func() error
 }
 type Options struct {
 	MaxInstances, MaxInstancesPerTenant                               int
@@ -82,7 +85,7 @@ func NewManager(factory Factory, options Options) (*Manager, error) {
 func (m *Manager) signal() { close(m.changed); m.changed = make(chan struct{}) }
 func validRequest(r Request) bool {
 	k := r.Key
-	return (k.Kind == "chat" || k.Kind == "training" || k.Kind == "validation") && identity.ValidID(k.TenantID) && identity.ValidID(k.AgentID) &&
+	return (k.Kind == "chat" || k.Kind == "training" || k.Kind == "preview" || k.Kind == "validation") && identity.ValidID(k.TenantID) && identity.ValidID(k.AgentID) &&
 		identity.ValidID(k.ConversationID) && identity.ValidID(k.VersionID) && k.SpecDigest != "" && r.Version.ID == k.VersionID &&
 		r.Version.AgentID == k.AgentID && r.Version.TenantID == k.TenantID && r.Version.SpecDigest == k.SpecDigest &&
 		(k.Kind == "chat" || identity.ValidID(k.OperationID))
@@ -91,6 +94,24 @@ func (m *Manager) Acquire(ctx context.Context, r Request) (*Lease, error) {
 	if !validRequest(r) {
 		return nil, errors.New("runtime key does not match version")
 	}
+	return m.acquire(ctx, r, false)
+}
+
+// ReserveValidation uses the same quotas/FIFO as model instances. Structural
+// checks and isolated interpreters need capacity but do not need a model client.
+func (m *Manager) ReserveValidation(ctx context.Context, tenant, agentID, operation string) (func(), error) {
+	if !identity.ValidID(tenant) || !identity.ValidID(agentID) || !identity.ValidID(operation) {
+		return nil, errors.New("invalid validation scope")
+	}
+	r := Request{Key: Key{Kind: "validation", TenantID: tenant, AgentID: agentID, ConversationID: operation, OperationID: operation}}
+	lease, err := m.acquire(ctx, r, true)
+	if err != nil {
+		return nil, err
+	}
+	return lease.Release, nil
+}
+
+func (m *Manager) acquire(ctx context.Context, r Request, reservation bool) (*Lease, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, m.options.AcquireTimeout)
 	defer cancel()
 	w := &waiter{request: r}
@@ -141,6 +162,12 @@ func (m *Manager) Acquire(ctx context.Context, r Request) (*Lease, error) {
 			if m.fits(r.Key) {
 				e := &entry{key: r.Key, creating: true, leased: true}
 				m.entries[r.Key] = e
+				if reservation {
+					e.creating = false
+					lease := m.lease(e)
+					m.mu.Unlock()
+					return &Lease{Release: func() { _ = lease.Stop() }, Stop: lease.Stop}, nil
+				}
 				m.mu.Unlock()
 				return m.create(ctx, e, r)
 			}
@@ -228,7 +255,17 @@ func (m *Manager) evictable(k Key) *entry {
 }
 func (m *Manager) lease(e *entry) *Lease {
 	var once sync.Once
-	return &Lease{Runner: e.runtime, Release: func() {
+	var stopErr error
+	return &Lease{Runner: e.runtime, Stop: func() error {
+		once.Do(func() {
+			m.mu.Lock()
+			e.leased = false
+			e.closing = true
+			m.mu.Unlock()
+			stopErr = m.closeEntry(e)
+		})
+		return stopErr
+	}, Release: func() {
 		once.Do(func() {
 			m.mu.Lock()
 			e.leased = false

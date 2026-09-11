@@ -1,12 +1,9 @@
 package observability
 
-import "github.com/PycMono/go-reagent/pi/ai"
-
 // 本文件固定《Agent Tracing 与成本可观测性设计》（docs/superpowers/specs/
 // 2026-08-20-agent-tracing-observability-design.md）第 4 章的 Trace 语义常量
 // 与全部领域枚举：Span 名称、属性 Key、Retry Event 名称，以及 Phase/
-// Outcome/Acceptance 等枚举（拼写由 semantics_test.go 锁定）。
-// 指标名称/Label/Bucket 等 Metrics 语义见 metrics.go。
+// Outcome 等枚举（拼写由 semantics_test.go 锁定）。
 //
 // gen_ai.* 名称封装自 OTel semantic-conventions gen-ai（development 状态）。
 // Development 名称统一在本文件封装，业务代码不得直接引用
@@ -145,49 +142,6 @@ const (
 	GenerationOutcomeFailed           GenerationOutcome = "failed"
 	GenerationOutcomeCanceled         GenerationOutcome = "canceled"
 	GenerationOutcomeDeadlineExceeded GenerationOutcome = "deadline_exceeded"
-)
-
-// RequestOutcome 是物理请求/Tool/Compaction 指标的 outcome Label（§8.2–8.4）。
-// 无错误时 error_code 统一填 ErrorCodeNone。
-type RequestOutcome string
-
-const (
-	RequestOutcomeSuccess          RequestOutcome = "success"
-	RequestOutcomeError            RequestOutcome = "error"
-	RequestOutcomeCanceled         RequestOutcome = "canceled"
-	RequestOutcomeDeadlineExceeded RequestOutcome = "deadline_exceeded"
-)
-
-// ErrorCodeNone 是 Metrics error_code Label 在无错误时的固定填充值。
-const ErrorCodeNone = "none"
-
-// Acceptance 是可信 Invocation 的契约验收结果（§8.2、§9.3）。
-type Acceptance string
-
-const (
-	AcceptanceAccepted        Acceptance = "accepted"
-	AcceptanceContractInvalid Acceptance = "contract_invalid"
-)
-
-// CostQuality 是成本可信度（§8.2、§9.1）；取值定义在 ai.Usage 所属包，
-// 此处为类型别名以保持 Metrics 代码的统一引用。
-type CostQuality = ai.CostQuality
-
-const (
-	CostQualityExact     = ai.CostQualityExact
-	CostQualityEstimated = ai.CostQualityEstimated
-)
-
-// TokenType 是 reagent.model.tokens 的 token_type Label（§8.2）；
-// 后三项是子集，不能全部求和。
-type TokenType string
-
-const (
-	TokenTypeInputTotal  TokenType = "input_total"
-	TokenTypeOutputTotal TokenType = "output_total"
-	TokenTypeCacheRead   TokenType = "cache_read"
-	TokenTypeCacheWrite  TokenType = "cache_write"
-	TokenTypeReasoning   TokenType = "reasoning"
 )
 
 // CompactionReason 是 Compaction 触发原因（§4.7）。

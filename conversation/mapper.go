@@ -12,6 +12,17 @@ import (
 	"github.com/PycMono/go-reagent/pi/governor"
 )
 
+// MapTrainingResult maps completed outputs after training has durably admitted
+// its user input. It intentionally does not append another user message.
+func MapTrainingResult(result pi.RunResult, runID string) ([]*conversationentity.Message, []*conversationentity.ModelInvocation) {
+	return messagesToDomain(result.NewMessages, runID), invocationsToDomain(result.Invocations, runID, "")
+}
+
+// TrainingHistory uses the same canonical history projection as ordinary chat.
+func TrainingHistory(messages []*conversationentity.Message) ([]pi.Message, error) {
+	return messagesToHistory(messages)
+}
+
 func messagesToDomain(messages []ai.Message, runID string) []*conversationentity.Message {
 	if messages == nil {
 		return nil

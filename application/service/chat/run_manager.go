@@ -34,9 +34,13 @@ type ActiveRun struct {
 type activeRunEntry struct {
 	id     string
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func (s *Service) StartRun(ctx context.Context, userID, conversationID string, param dto.StartRunDTO) (*ActiveRun, error) {
+	if s != nil && s.platform != nil {
+		return s.startBoundRun(ctx, userID, conversationID, param)
+	}
 	userID = strings.TrimSpace(userID)
 	conversationID = strings.TrimSpace(conversationID)
 	content := strings.TrimSpace(param.Content)
@@ -78,23 +82,26 @@ func (s *Service) StartRun(ctx context.Context, userID, conversationID string, p
 	}
 	runID := s.ids.NextID()
 	runCtx, cancel := context.WithCancel(ctx)
-	s.active[key] = &activeRunEntry{id: runID, cancel: cancel}
+	s.active[key] = &activeRunEntry{id: runID, cancel: cancel, done: make(chan struct{})}
 	s.activeMu.Unlock()
 
 	events := make(chan vo.RunEventVO, runEventQueueSize)
 	events <- vo.RunEventVO{Type: vo.RunEventRunStarted, RunID: runID}
-	go s.executeRun(runCtx, key, userID, conversationID, runID, content, imageURLs, profile.Code, profileContext, events)
+	go s.executeRun(runCtx, key, userID, conversationID, runID, content, imageURLs, profile.Code, profileContext, events, s.runner)
 	return &ActiveRun{ID: runID, Events: events}, nil
 }
 
-func (s *Service) CancelRun(_ context.Context, userID, conversationID, runID string) error {
+func (s *Service) CancelRun(ctx context.Context, userID, conversationID, runID string) error {
+	if err := s.requireOwner(ctx, userID); err != nil {
+		return err
+	}
 	userID = strings.TrimSpace(userID)
 	conversationID = strings.TrimSpace(conversationID)
 	runID = strings.TrimSpace(runID)
 	if !validIdentity(userID) || !validIdentity(conversationID) || !validIdentity(runID) {
 		return commonerrors.ErrInvalidParam
 	}
-	key := activeRunKey(userID, conversationID)
+	key := s.scopedRunKey(ctx, userID, conversationID)
 	s.activeMu.Lock()
 	entry, found := s.active[key]
 	if !found || entry.id != runID {
@@ -114,6 +121,7 @@ func (s *Service) executeRun(
 	profileCode string,
 	profileContext []pi.ContextBlock,
 	events chan vo.RunEventVO,
+	runtime conversation.Runner,
 ) {
 	defer close(events)
 	defer s.releaseRun(key, runID)
@@ -137,10 +145,14 @@ func (s *Service) executeRun(
 		for _, imageURL := range imageURLs {
 			inputBlocks = append(inputBlocks, ai.ImageBlock(imageURL))
 		}
-		result, err = s.runner.Run(ctx, conversation.RunRequest{
+		policy := responsePolicy
+		if s.platform != nil {
+			policy = ""
+		} // Published AGENTS.md owns each Agent's response behavior.
+		result, err = runtime.Run(ctx, conversation.RunRequest{
 			UserID: userID, ConversationID: conversationID, RunID: runID,
 			Input:          ai.Message{Role: ai.RoleUser, Content: inputBlocks},
-			ResponsePolicy: responsePolicy,
+			ResponsePolicy: policy,
 			Context:        profileContext,
 		}, listener)
 		// 终止原因与 RunTotals 无论成败都写入（§3）。
@@ -164,10 +176,6 @@ func (s *Service) executeRun(
 		}
 		return terminationReason
 	}))
-	if terminationReason == "" {
-		terminationReason = "error"
-	}
-	piobservability.RecordChatRun(ctx, profileCode, string(piobservability.TransportHTTPSSE), terminationReason)
 	if runErr != nil {
 		sendTerminalEvent(ctx, events, vo.RunEventVO{
 			Type: vo.RunEventRunFailed, RunID: runID, Error: runErrorVO(runErr, result.Termination),
@@ -213,6 +221,9 @@ func (s *Service) releaseRun(key, runID string) {
 	if entry, found := s.active[key]; found && entry.id == runID {
 		delete(s.active, key)
 		entry.cancel()
+		if entry.done != nil {
+			close(entry.done)
+		}
 	}
 }
 

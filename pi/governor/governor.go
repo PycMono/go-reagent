@@ -107,6 +107,7 @@ func (b *BatchBudget) Exhausted() bool {
 
 	b.governor.mu.Lock()
 	defer b.governor.mu.Unlock()
+
 	return b.governor.exhausted
 }
 
@@ -117,6 +118,7 @@ func (b *BatchBudget) FirstBudgetError() error {
 	}
 	b.governor.mu.Lock()
 	defer b.governor.mu.Unlock()
+
 	return b.governor.firstErr
 }
 
@@ -174,33 +176,36 @@ func (g *Governor) setFirstErrLocked(err error) error {
 
 // CheckTurnLimit 在进入下一 turn 前检查 MaxTurns 是否越界；子代理 Governor
 // 额外检查父预算账户是否已触顶。
-func (g *Governor) CheckTurnLimit() error {
+// shouldExit 表示是否应退出运行，err 提供具体退出原因；可继续时返回 false, nil。
+func (g *Governor) CheckTurnLimit() (shouldExit bool, err error) {
 	g.mu.Lock()
-	turnsErr := error(nil)
+	var turnsErr error
 	if g.limits.MaxTurns > 0 && g.totals.Turns >= g.limits.MaxTurns {
 		turnsErr = pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitTurns})
 	}
 	g.mu.Unlock()
 	if turnsErr != nil {
-		return turnsErr
+		return true, turnsErr
 	}
 
 	if g.parent != nil && g.parent.Exhausted() {
-		return g.parent.FirstBudgetError()
+		return true, g.parent.FirstBudgetError()
 	}
-	return nil
+	return false, nil
 }
 
 // StartTurn 只在确定将进入该 turn 时递增。
 func (g *Governor) StartTurn() {
 	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	g.totals.Turns++
-	g.mu.Unlock()
 }
 
 func (g *Governor) Turns() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	return g.totals.Turns
 }
 

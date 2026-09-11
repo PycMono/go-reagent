@@ -153,6 +153,39 @@ test("publishing requires ready state and explicit manual confirmation", async f
   const result = await publishTraining(session, "summary", true, io);
   assert.equal(result.path, "/api/v1/training-sessions/t%2F1/publish");
   assert.deepEqual(result.body, {
-    request_id: "request-1", expected_row_version: 4, change_summary: "summary", confirm_manual_review: true,
+    request_id: "request-1", expected_row_version: 4, change_summary: "summary", human_confirmed: true,
   });
+});
+
+test("chat target rejects invalid UTF-8 and blank explicit IDs", function () {
+  for (const search of ["?agent_id=%FF", "?conversation_id=%E4%B8", "?agent_id=%20", "?agent_id=", "?conversation_id="]) {
+    assert.throws(() => resolveChatTarget(search), /参数/);
+  }
+});
+
+test("starting another chat clears both text and image drafts", async function () {
+  const { clearChatDraft } = await import("./agent-navigation.js");
+  const input = { value: "previous agent private question" };
+  const imageURL = { value: "https://example.test/private.png" };
+  clearChatDraft({ input, imageURL });
+  assert.equal(input.value, "");
+  assert.equal(imageURL.value, "");
+  assert.doesNotThrow(() => clearChatDraft({ input }));
+});
+
+test("archived history disables composer and shows its read-only notice", async function () {
+  const { updateChatAvailability } = await import("./agent-navigation.js");
+  const ui = { send: {}, input: {}, imageURL: {}, readOnlyNotice: {} };
+  const state = { running: false, selectedAgent: { selectable: true }, readOnly: true };
+  updateChatAvailability(state, ui);
+  assert.equal(ui.send.disabled, true);
+  assert.equal(ui.input.disabled, true);
+  assert.equal(ui.imageURL.disabled, true);
+  assert.equal(ui.readOnlyNotice.hidden, false);
+  state.readOnly = false;
+  updateChatAvailability(state, ui);
+  assert.equal(ui.send.disabled, false);
+  assert.equal(ui.input.disabled, false);
+  assert.equal(ui.imageURL.disabled, false);
+  assert.equal(ui.readOnlyNotice.hidden, true);
 });

@@ -91,7 +91,7 @@ func newTestChain(stream *fakeRawStream) (*TracingProvider, *CostTracker) {
 	if err != nil {
 		panic(err)
 	}
-	return NewTracingProvider(tracker, "openai", "test", "test-model"), tracker
+	return NewTracingProvider(tracker, "openai", "test-model"), tracker
 }
 
 func hintedContext() context.Context {

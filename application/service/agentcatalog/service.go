@@ -218,12 +218,26 @@ func (s *Service) create(ctx context.Context, p identity.Principal, in dto.Creat
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.builder.PrepareInitial(ctx, p, a, s.ids.NextID(), in.ModelConfig)
+	return s.completeDraft(ctx, p, a, in.ModelConfig)
+}
+
+func (s *Service) completeDraft(ctx context.Context, p identity.Principal, a agent.Agent, model dto.ModelChoice) (*vo.AgentVO, error) {
+	if a.Status != "enabled" || a.ActiveVersionID != nil {
+		return Project(a, true), commonerrors.ErrConflict
+	}
+	v, err := s.builder.PrepareInitial(ctx, p, a, s.ids.NextID(), model)
 	if err != nil {
 		return Project(a, true), err
 	}
 	if err := s.repository.CommitInitial(ctx, a, v, a.RowVersion); err != nil {
 		return Project(a, true), err
+	}
+	if completion, ok := s.builder.(interface {
+		CompleteInitial(context.Context, agent.Version) error
+	}); ok {
+		// The database is authoritative once committed. A failed cleanup keeps
+		// the journal for recovery but does not turn a successful creation into failure.
+		_ = completion.CompleteInitial(ctx, v)
 	}
 	a, err = s.repository.Find(ctx, p.TenantID, a.ID)
 	return Project(a, true), err
@@ -310,7 +324,7 @@ func (s *Service) Bootstrap(ctx context.Context, p identity.Principal, code stri
 	existing, err := s.repository.FindBootstrap(ctx, p.TenantID, code)
 	if err == nil {
 		if existing.ActiveVersionID == nil {
-			return Project(existing, true), commonerrors.ErrConflict
+			return s.completeDraft(ctx, p, existing, dto.ModelChoice{})
 		}
 		return Project(existing, true), nil
 	}

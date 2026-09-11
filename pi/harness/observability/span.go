@@ -9,7 +9,6 @@ package observability
 //   Span 一律走 contexttracing.WithSpan + ClassifyError
 // - RecordRetry*：§4.8 Retry Wait 三事件写入 Generate Span
 //
-// Metrics 的错误分类 Label 推导（OutcomeOf/ErrorCodeLabel）见 record.go。
 
 import (
 	"context"

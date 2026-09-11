@@ -7,10 +7,8 @@ import (
 
 	"go.uber.org/fx"
 
-	chatservice "github.com/PycMono/go-reagent/application/service/chat"
 	chattools "github.com/PycMono/go-reagent/application/tool/chat"
 	"github.com/PycMono/go-reagent/config"
-	"github.com/PycMono/go-reagent/conversation"
 	"github.com/PycMono/go-reagent/infrastructure"
 	agentprofiledriver "github.com/PycMono/go-reagent/infrastructure/driver/agentprofile"
 	"github.com/PycMono/go-reagent/infrastructure/notice"
@@ -29,10 +27,8 @@ var Register = fx.Options(
 		config.NewWorkDir,
 		agentprofiledriver.NewCatalog,
 	),
-	fx.Provide(newApp, newAgentRunner),
 	infrastructure.Register,
-	conversation.Register,
-	chatservice.Register,
+	platformRegister,
 )
 
 // appParams 是组合根收集的全部装配输入：group 汇聚应用层供数，

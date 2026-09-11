@@ -16,6 +16,9 @@ import (
 )
 
 func (config *Config) normalizeAndValidate(options loadOptions) error {
+	if err := config.normalizeAgentPlatform(); err != nil {
+		return err
+	}
 	if err := config.normalizeAndValidatePlatforms(); err != nil {
 		return err
 	}

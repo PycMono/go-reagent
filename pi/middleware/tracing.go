@@ -2,18 +2,16 @@ package middleware
 
 import (
 	"context"
-	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 )
 
-// Tracing 为每次实际 Tool 执行创建 execute_tool Span 并记录执行指标。
+// Tracing 为每次实际 Tool 执行创建 execute_tool Span 。
 // Span 只记录元数据与长度，不采集参数/输出正文；状态与生命周期由
 // WithSpan 管理。
 func Tracing(e *Execution) {
-	startedAt := time.Now()
 	err := contexttracing.WithSpan(e.Ctx, observability.ToolSpanName(e.Definition.Name), func(ctx context.Context) error {
 		e.Ctx = ctx
 		contexttracing.WithKV(ctx,
@@ -34,7 +32,6 @@ func Tracing(e *Execution) {
 		}
 		fields = append(fields, observability.ErrorFields(e.Err)...)
 		contexttracing.WithKV(ctx, fields...)
-		observability.RecordToolExecution(ctx, e.Definition.Name, e.Err, time.Since(startedAt))
 		return e.Err
 	}, contexttracing.WithErrorClassifier(observability.ClassifyError))
 	e.Err = err

@@ -2,6 +2,7 @@ package dto
 
 // ListConversationsQuery describes keyset pagination for the conversation list.
 type ListConversationsQuery struct {
+	AgentID     string `form:"agent_id" binding:"omitempty,max=32"`
 	Cursor      string `form:"cursor"`
 	Limit       int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Keyword     string `form:"keyword" binding:"omitempty,max=255"`
@@ -9,7 +10,8 @@ type ListConversationsQuery struct {
 }
 
 type CreateConversationDTO struct {
-	ProfileCode string `json:"profile_code" binding:"required,max=64"`
+	AgentID     string `json:"agent_id" binding:"omitempty,max=32"`
+	ProfileCode string `json:"profile_code" binding:"omitempty,max=64"`
 }
 
 type RenameConversationDTO struct {
