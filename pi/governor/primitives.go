@@ -40,7 +40,7 @@ func (s *Sequencer) Next() (uint32, error) {
 	for {
 		current := s.value.Load()
 		if current == math.MaxUint32 {
-			return 0, pierrors.Wrap(pierrors.ErrorCodeInternal, "request sequencer",
+			return 0, pierrors.ErrInternal.Wrap(
 				errors.New("provider request index overflow"))
 		}
 		if s.value.CompareAndSwap(current, current+1) {

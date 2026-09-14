@@ -24,9 +24,7 @@ func PanicRecovery(e *Execution) {
 			logsdk.Any("stack", debug.Stack()),
 		)
 		e.Output = ai.ToolOutput{}
-		e.Block(pierrors.Wrap(
-			pierrors.ErrorCodeToolPanic,
-			"tool panic",
+		e.Block(pierrors.ErrToolPanic.Wrap(
 			errors.New("tool execution failed"),
 		))
 	}()

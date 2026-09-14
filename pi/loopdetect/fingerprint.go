@@ -73,7 +73,7 @@ func outcomeSignature(callSig signature, event toolexec.Event) signature {
 	canonical, err := json.Marshal([]any{
 		hex.EncodeToString(callSig[:]),
 		event.IsError,
-		string(event.ErrorCode),
+		event.ErrorCode,
 		content,
 	})
 	if err != nil {

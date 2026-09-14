@@ -18,9 +18,7 @@ func flakyTool(name string, failures int, calls *int) *stubTool {
 		execute: func(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
 			*calls++
 			if *calls <= failures {
-				return ai.ToolOutput{}, pierrors.Wrap(
-					pierrors.ErrorCodeToolRuntime,
-					"call tool",
+				return ai.ToolOutput{}, pierrors.ErrToolRuntime.Wrap(
 					errors.New("connection reset"),
 				)
 			}
@@ -55,8 +53,8 @@ func TestRetryGivesUpAfterAttempts(t *testing.T) {
 	if calls != 3 {
 		t.Fatalf("calls = %d, want 3（含首次）", calls)
 	}
-	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrorCodeToolRuntime {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeToolRuntime)
+	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrToolRuntime.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrToolRuntime.Code())
 	}
 }
 
@@ -77,9 +75,7 @@ func TestRetrySkipsPermanentError(t *testing.T) {
 		name: "mcp_search",
 		execute: func(context.Context, json.RawMessage, ai.UpdateEmitter) (ai.ToolOutput, error) {
 			calls++
-			return ai.ToolOutput{}, pierrors.Wrap(
-				pierrors.ErrorCodeToolPermissionDenied,
-				"tool permission",
+			return ai.ToolOutput{}, pierrors.ErrToolPermissionDenied.Wrap(
 				errors.New("denied"),
 			)
 		},

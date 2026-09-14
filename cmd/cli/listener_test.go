@@ -56,7 +56,7 @@ func TestListenerToolEventsWithDuration(t *testing.T) {
 	call := ai.ToolCall{ID: "c1", Name: "read", Arguments: []byte(`{"path":"main.go"}`)}
 	listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(call)))
 	listener.clock = func() time.Time { return base.Add(120 * time.Millisecond) }
-	listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(call, ai.ToolOutput{}, false, "")))
+	listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(call, ai.ToolOutput{}, false, 0)))
 
 	got := stderr.String()
 	if !strings.Contains(got, "🔧 read") || !strings.Contains(got, "✅ read（120ms）") {
@@ -71,7 +71,7 @@ func TestListenerToolEndError(t *testing.T) {
 	listener, _, stderr := newTestListener()
 	call := ai.ToolCall{ID: "c2", Name: "exec"}
 	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewEndEvent(
-		call, ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("exit status 1")}}, true, "",
+		call, ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("exit status 1")}}, true, 0,
 	)))
 	if !strings.Contains(stderr.String(), "❌ exec") || !strings.Contains(stderr.String(), "exit status 1") {
 		t.Fatalf("失败工具输出不符合预期: %q", stderr.String())
@@ -109,7 +109,7 @@ func TestListenerConcurrentEventsLineIntegrity(t *testing.T) {
 			defer wg.Done()
 			call := ai.ToolCall{ID: strings.Repeat("x", 1) + string(rune('a'+i)), Name: "tool"}
 			listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(call)))
-			listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(call, ai.ToolOutput{}, false, "")))
+			listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(call, ai.ToolOutput{}, false, 0)))
 		}(i)
 	}
 	wg.Wait()

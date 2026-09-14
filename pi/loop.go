@@ -171,7 +171,7 @@ func (l *Loop) execute(
 		compactedHistory, compactErr := l.maybeCompact(ctx, state.contextHistory, state.availableTools, rt, observeCompaction)
 		if compactErr != nil {
 			done = true
-			return fmt.Errorf("action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", compactErr))
+			return fmt.Errorf("action 阶段生成失败: %w", pierrors.ErrAIGeneration.Wrap(compactErr))
 		}
 		state.contextHistory = compactedHistory
 
@@ -185,13 +185,13 @@ func (l *Loop) execute(
 		}, observeCompaction, rt)
 		if genErr != nil {
 			done = true
-			return fmt.Errorf("action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", genErr))
+			return fmt.Errorf("action 阶段生成失败: %w", pierrors.ErrAIGeneration.Wrap(genErr))
 		}
 		state.contextHistory = generated.context
 		actionResp := generated.message
 		if actionResp == nil || actionResp.Usage == nil {
 			done = true
-			return fmt.Errorf("action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", actionResp.ValidateAction()))
+			return fmt.Errorf("action 阶段生成失败: %w", pierrors.ErrAIGeneration.Wrap(actionResp.ValidateAction()))
 		}
 
 		// 可信 Usage 先于契约校验入账并累加预算。
@@ -207,7 +207,7 @@ func (l *Loop) execute(
 		if actionContractErr != nil {
 			state.invocations[actionIndex].Outcome = governor.OutcomeContractInvalid
 			done = true
-			return fmt.Errorf("action 阶段生成失败: %w", pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "action", actionContractErr))
+			return fmt.Errorf("action 阶段生成失败: %w", pierrors.ErrAIGeneration.Wrap(actionContractErr))
 		}
 		if actionBudgetErr != nil {
 			// 预算已达到：无工具的完整 Action 仍是可持久化的业务消息；
@@ -237,7 +237,7 @@ func (l *Loop) execute(
 			// 不执行工具调度；provisional delta 由 run.failed 路径丢弃。
 			done = true
 			return fmt.Errorf("agent 运行因工具循环护栏终止: %w",
-				pierrors.Wrap(pierrors.ErrorCodeRunLoopDetected, "tool loop detection",
+				pierrors.ErrRunLoopDetected.Wrap(
 					loopdetect.NewError(admission.Intervention)))
 		case loopdetect.DecisionRecover:
 			// 提交完整协议组（原始 Assistant + 每个调用的合成结果），不调用
@@ -339,7 +339,7 @@ func (l *Loop) executeToolBatch(
 		if errors.Is(scheduleErr, context.Canceled) || errors.Is(scheduleErr, context.DeadlineExceeded) {
 			return fmt.Errorf("agent 运行已取消: %w", scheduleErr)
 		}
-		return fmt.Errorf("%w: schedule tools: %w", pierrors.ErrToolRuntime, scheduleErr)
+		return pierrors.ErrToolRuntime.Wrap(fmt.Errorf("schedule tools: %w", scheduleErr))
 	}
 
 	// 按原始下标合并调度结果与合成拒绝结果。
@@ -358,11 +358,11 @@ func (l *Loop) executeToolBatch(
 	// 为 error 而非 loop_detected）。
 	if !toolexec.ResultsMatchCalls(actionResp.ToolCalls, results) {
 		for _, call := range actionResp.ToolCalls {
-			state.appendToolResultMessage(toolexec.NewRejectedEvent(call, pierrors.ErrorCodeInternal,
+			state.appendToolResultMessage(toolexec.NewRejectedEvent(call, pierrors.ErrInternal,
 				"工具批次结果对齐失败，执行状态未知，请勿自动重试"))
 		}
 		return fmt.Errorf("agent 运行因内部错误终止: %w",
-			pierrors.Wrap(pierrors.ErrorCodeInternal, "tool batch outcome reconciliation",
+			pierrors.ErrInternal.Wrap(
 				errors.New("tool results misaligned with requested calls")))
 	}
 
@@ -398,7 +398,7 @@ func (l *Loop) planToolBatch(
 				rejected = make(map[int]toolexec.Event)
 				silent = make(map[int]bool)
 			}
-			rejected[index] = toolexec.NewRejectedEvent(call, pierrors.ErrorCodeToolPermissionDenied,
+			rejected[index] = toolexec.NewRejectedEvent(call, pierrors.ErrToolPermissionDenied,
 				fmt.Sprintf("tool %q is not available in this run", call.Name))
 			silent[index] = true
 			continue
@@ -409,7 +409,7 @@ func (l *Loop) planToolBatch(
 				if rejected == nil {
 					rejected = make(map[int]toolexec.Event)
 				}
-				rejected[index] = toolexec.NewRejectedEvent(call, pierrors.ErrorCodeRunLimitExceeded,
+				rejected[index] = toolexec.NewRejectedEvent(call, pierrors.ErrRunLimitExceeded,
 					fmt.Sprintf("单批子代理调用超过上限 %d，请分批委派", maxSubagentCallsPerBatch))
 				continue
 			}

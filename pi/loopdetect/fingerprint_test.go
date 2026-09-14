@@ -15,7 +15,7 @@ func makeCall(id, name, args string) ai.ToolCall {
 func makeResult(call ai.ToolCall, text string) toolexec.Event {
 	return toolexec.NewEndEvent(call, ai.ToolOutput{
 		Content: []ai.ContentBlock{ai.TextBlock(text)},
-	}, false, "")
+	}, false, 0)
 }
 
 // 1. JSON object key 顺序和无意义空白不同，Call signature 相同。
@@ -75,7 +75,7 @@ func TestOutcomeSignatureSensitivity(t *testing.T) {
 
 	changed := []toolexec.Event{
 		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("ok")}, IsError: true},
-		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("ok")}, ErrorCode: "tool_timeout"},
+		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("ok")}, ErrorCode: 30006},
 		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("different")}},
 		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{ai.TextBlock("a"), ai.TextBlock("b")}},
 		{Phase: toolexec.EventEnd, Call: call, Content: []ai.ContentBlock{{Type: "image", Text: "ok"}}},

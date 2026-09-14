@@ -23,7 +23,7 @@ func TestRunListenerMapsPublicPiEvents(t *testing.T) {
 	})))
 	listener.OnEvent(context.Background(), pi.NewAgentToolEvent(toolexec.NewEndEvent(
 		ai.ToolCall{ID: "call-1", Name: "read"},
-		ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("file")}}, false, "",
+		ai.ToolOutput{Content: []ai.ContentBlock{ai.TextBlock("file")}}, false, 0,
 	)))
 	listener.OnEvent(context.Background(), pi.NewMessageStartEvent())
 	listener.OnEvent(context.Background(), pi.NewMessageUpdateEvent(ai.TextBlock("do")))

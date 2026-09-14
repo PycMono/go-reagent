@@ -95,10 +95,11 @@ func TestProcessSupervisorSandboxPayloadDoesNotInheritHostEnvironment(t *testing
 				TmpDir:    tmpDir,
 			}},
 		}
-		env, err := supervisor.payloadEnv(map[string]string{"EXPLICIT": "ok"})
+		spec, err := sandbox.PrepareCommandSpec(supervisor.runner, supervisor.workspace.path, "", map[string]string{"EXPLICIT": "ok"})
 		if err != nil {
 			t.Fatalf("%s payloadEnv() error = %v", tt.backend, err)
 		}
+		env := spec.PayloadEnv
 		joined := strings.Join(env, "\n")
 		if strings.Contains(joined, "REAGENT_HOST_SECRET=") {
 			t.Fatalf("%s 泄露宿主环境: %v", tt.backend, env)
@@ -115,7 +116,7 @@ func TestProcessSupervisorSandboxPayloadRejectsContractOverrides(t *testing.T) {
 		Backend: "seatbelt", WriteMode: "restricted", TmpDir: filepath.Join(root, ".tmp"),
 	}}}
 	for _, key := range []string{"HOME", "PATH", "TMPDIR"} {
-		if _, err := supervisor.payloadEnv(map[string]string{key: "/override"}); err == nil {
+		if _, err := sandbox.PrepareCommandSpec(supervisor.runner, supervisor.workspace.path, "", map[string]string{key: "/override"}); err == nil {
 			t.Fatalf("contract variable %s override accepted", key)
 		}
 	}
@@ -129,7 +130,7 @@ func TestProcessSupervisorSandboxPayloadRejectsInvalidEnvironmentName(t *testing
 			Network: "allow",
 		}},
 	}
-	if _, err := supervisor.payloadEnv(map[string]string{"BAD=NAME": "value"}); err == nil {
+	if _, err := sandbox.PrepareCommandSpec(supervisor.runner, supervisor.workspace.path, "", map[string]string{"BAD=NAME": "value"}); err == nil {
 		t.Fatal("含等号的环境变量名应被拒绝")
 	}
 }

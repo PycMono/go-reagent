@@ -115,11 +115,11 @@ func (s *ProcessSupervisor) Start(ctx context.Context, start ProcessStart) (*pro
 	if err != nil {
 		return nil, fmt.Errorf("解析工作区目录失败: %w", err)
 	}
-	payloadEnv, err := s.payloadEnv(start.Env)
+	spec, err := sandbox.PrepareCommandSpec(s.runner, s.workspace.path, workDir, start.Env)
 	if err != nil {
 		return nil, err
 	}
-	cmd, err := s.runner.BuildShell(start.Command, sandbox.CommandSpec{WorkDir: workDir, PayloadEnv: payloadEnv})
+	cmd, err := s.runner.BuildShell(start.Command, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -177,30 +177,6 @@ func (s *ProcessSupervisor) Start(ctx context.Context, start ProcessStart) (*pro
 		}()
 	}
 	return session, nil
-}
-
-func (s *ProcessSupervisor) payloadEnv(overrides map[string]string) ([]string, error) {
-	policy := s.runner.Policy()
-	if policy.Backend == "host" {
-		return sandbox.HostPayloadEnv(overrides)
-	}
-	extras := make([]string, 0, len(overrides))
-	keys := make([]string, 0, len(overrides))
-	for key := range overrides {
-		if key == "" || strings.ContainsAny(key, "=\x00") {
-			return nil, fmt.Errorf("无效环境变量名: %q", key)
-		}
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		extras = append(extras, key+"="+overrides[key])
-	}
-	tmpDir, err := sandbox.PayloadTmpDir(policy, s.workspace.path)
-	if err != nil {
-		return nil, err
-	}
-	return sandbox.BuildSandboxPayloadEnv(s.workspace.path, tmpDir, extras)
 }
 
 func (s *ProcessSupervisor) List() []ProcessSnapshot {

@@ -50,7 +50,7 @@ func TestGovernorRejectsTokenOverflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := governor.Observe(Invocation{Sequence: 2, Usage: usage})
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeInternal {
+	if pierrors.CodeOf(err) != pierrors.ErrInternal.Code() {
 		t.Fatalf("observe() error = %v, want internal overflow error", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestGovernorCompensatedCostSummation(t *testing.T) {
 }
 
 func TestTerminationFromErrorPriority(t *testing.T) {
-	limitErr := pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitCostUSD})
+	limitErr := pierrors.ErrRunLimitExceeded.Wrap(&limitError{kind: LimitCostUSD})
 	joined := errors.Join(context.Canceled, limitErr)
 	if got := TerminationFromError(joined, Totals{}); got.Reason != TerminationCanceled {
 		t.Fatalf("reason = %q, want canceled priority", got.Reason)
@@ -93,7 +93,7 @@ func TestTerminationFromErrorPriority(t *testing.T) {
 }
 
 func TestTerminationFromErrorLoopDetected(t *testing.T) {
-	loopErr := pierrors.Wrap(pierrors.ErrorCodeRunLoopDetected, "tool loop detection",
+	loopErr := pierrors.ErrRunLoopDetected.Wrap(
 		&loopdetect.Error{Pattern: loopdetect.PatternStableOutcome, Count: 5, ToolNames: []string{"search"}})
 	if got := TerminationFromError(loopErr, Totals{}); got.Reason != TerminationLoopDetected {
 		t.Fatalf("reason = %q, want loop_detected", got.Reason)

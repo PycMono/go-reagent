@@ -49,13 +49,13 @@ func (limits Limits) withDefaults() Limits {
 // Validate 校验额度值的固有契约：不允许负数、NaN 或无穷；零值只表示不限制。
 func (limits Limits) Validate() error {
 	if limits.MaxTurns < 0 {
-		return fmt.Errorf("%w: max turns must not be negative", pierrors.ErrRequestInvalid)
+		return pierrors.ErrRequestInvalid.Wrap(fmt.Errorf("max turns must not be negative"))
 	}
 	if limits.MaxTotalTokens < 0 {
-		return fmt.Errorf("%w: max total tokens must not be negative", pierrors.ErrRequestInvalid)
+		return pierrors.ErrRequestInvalid.Wrap(fmt.Errorf("max total tokens must not be negative"))
 	}
 	if limits.MaxCostUSD < 0 || math.IsNaN(limits.MaxCostUSD) || math.IsInf(limits.MaxCostUSD, 0) {
-		return fmt.Errorf("%w: max cost usd must be finite and non-negative", pierrors.ErrRequestInvalid)
+		return pierrors.ErrRequestInvalid.Wrap(fmt.Errorf("max cost usd must be finite and non-negative"))
 	}
 	return nil
 }

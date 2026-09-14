@@ -24,7 +24,7 @@ func commitLoopRecoveryResults(
 	listener EventListener,
 ) {
 	for _, call := range calls {
-		result := toolexec.NewRejectedEvent(call, pierrors.ErrorCodeRunLoopDetected,
+		result := toolexec.NewRejectedEvent(call, pierrors.ErrRunLoopDetected,
 			"工具循环护栏阻止了本批次执行：检测到重复且无进展的调用。请停止当前重试路径，改用不同方案，或明确说明无法继续。")
 		EmitToolEvent(ctx, listener, toolexec.NewStartEvent(call))
 		EmitToolEvent(ctx, listener, result)

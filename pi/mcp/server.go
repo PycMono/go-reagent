@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -40,8 +41,8 @@ type ServerOptions struct {
 	ToolPrefix string
 }
 
-// New 批量装配扩展：环境引用在此取值，stdio 按 Runner 后端选择继承
-// 宿主环境直拉或经沙箱包装拉起；任一 server 失败即整体失败。
+// New 批量装配扩展：解析配置中的环境引用，stdio 统一经 Runner 构造进程；
+// 任一 server 失败即整体失败。
 func New(opts []ServerOptions, root tools.Root, runner sandbox.Runner) (extension.Extensions, error) {
 	extensions := make(extension.Extensions, 0, len(opts))
 	for _, options := range opts {
@@ -56,7 +57,7 @@ func New(opts []ServerOptions, root tools.Root, runner sandbox.Runner) (extensio
 }
 
 // newServerExtension 根据 transport 声明构造 HTTP 或 stdio 传输，并组装
-// 单个扩展。stdio host 继承宿主环境；沙箱后端通过 Runner 包装拉起。
+// 单个扩展。stdio 的工作目录和环境策略由公共执行层处理。
 func newServerExtension(options ServerOptions, root tools.Root, runner sandbox.Runner) (extension.Extension, error) {
 	var transport Transport
 	switch options.Transport {
@@ -95,34 +96,22 @@ func newServerExtension(options ServerOptions, root tools.Root, runner sandbox.R
 			resolvedEnv[key] = value
 		}
 
-		policy := runner.Policy()
-		if policy.Backend == "host" && policy.WriteMode == "all" {
-			childEnv, err := sandbox.HostPayloadEnv(resolvedEnv)
-			if err != nil {
-				return nil, err
-			}
-			stdioTransport, err := NewStdioTransport(StdioTransportOptions{
-				Command: options.Command,
-				Args:    append([]string(nil), options.Args...),
-				Env:     childEnv,
-				WorkDir: options.CWD,
-				Timeout: options.Timeout,
-			})
-			if err != nil {
-				return nil, err
-			}
-			transport = stdioTransport
-			break
-		}
-
-		options.Env = resolvedEnv
-		buildCommand, err := sandboxBuildCommand(runner, string(root), options)
+		spec, err := sandbox.PrepareCommandSpec(runner, string(root), options.CWD, resolvedEnv)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("prepare MCP server %q command: %w", options.Name, err)
+		}
+		if options.Command == "" {
+			return nil, errors.New("mcp stdio command is required")
+		}
+		argv := append([]string{options.Command}, options.Args...)
+		for _, value := range append([]string{options.CWD}, argv...) {
+			if containsNUL(value) {
+				return nil, errors.New("mcp stdio command/args/cwd must not contain NUL")
+			}
 		}
 		stdioTransport, err := NewStdioTransport(StdioTransportOptions{
 			Timeout:      options.Timeout,
-			BuildCommand: buildCommand,
+			BuildCommand: func() (*exec.Cmd, error) { return runner.BuildArgv(argv, spec) },
 		})
 		if err != nil {
 			return nil, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/PycMono/go-reagent/pi/ai"
@@ -165,7 +166,7 @@ func TestTracingProviderSuccessSpan(t *testing.T) {
 
 func TestTracingProviderFailureSpanKeepsNoUsage(t *testing.T) {
 	exporter := installTracer(t)
-	stream := &fakeRawStream{err: pierrors.Wrap(pierrors.ErrorCodeAITransient, "test", errors.New("boom"))}
+	stream := &fakeRawStream{err: pierrors.ErrAITransient.Wrap(errors.New("boom"))}
 	provider, _ := newTestChain(stream)
 
 	s := provider.Stream(hintedContext(), nil, nil)
@@ -177,11 +178,11 @@ func TestTracingProviderFailureSpanKeepsNoUsage(t *testing.T) {
 	s.Close()
 
 	span := onlySpan(t, exporter)
-	if span.Status.Code != codes.Error || span.Status.Description != string(pierrors.ErrorCodeAITransient) {
+	if span.Status.Code != codes.Error || span.Status.Description != strconv.Itoa(pierrors.ErrAITransient.Code()) {
 		t.Fatalf("status = %v/%q", span.Status.Code, span.Status.Description)
 	}
-	if spanAttr(span, AttrErrorType) != string(pierrors.ErrorCodeAITransient) ||
-		spanAttr(span, AttrReagentErrorCode) != string(pierrors.ErrorCodeAITransient) {
+	if spanAttr(span, AttrErrorType) != strconv.Itoa(pierrors.ErrAITransient.Code()) ||
+		spanAttr(span, AttrReagentErrorCode) != strconv.Itoa(pierrors.ErrAITransient.Code()) {
 		t.Fatalf("错误分类属性缺失: %v", span.Attributes)
 	}
 	if spanAttr(span, "gen_ai.usage.input_tokens") != nil || spanAttr(span, AttrInvocationCostUSD) != nil {
@@ -204,8 +205,8 @@ func TestTracingProviderCloseBeforeResultEndsOnce(t *testing.T) {
 	s.Close()
 
 	span := onlySpan(t, exporter)
-	if span.Status.Code != codes.Error || span.Status.Description != "unknown" {
-		// abandoned 映射为 error/unknown（errStreamAbandoned 无项目错误码）。
+	if span.Status.Code != codes.Error || span.Status.Description != "0" {
+		// abandoned 映射为 error/"0"（errStreamAbandoned 无项目错误码，CodeOf 返回 0）。
 		t.Fatalf("abandoned status = %v/%q", span.Status.Code, span.Status.Description)
 	}
 	if stream.closed != 2 || stream.resultCalls != 1 {

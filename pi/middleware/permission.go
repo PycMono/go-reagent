@@ -34,9 +34,7 @@ func Permission(rules []PermissionRule) Handler {
 				reason = "命中权限 deny 规则"
 			}
 			e.Output = ai.ToolOutput{}
-			e.Block(pierrors.Wrap(
-				pierrors.ErrorCodeToolPermissionDenied,
-				"tool permission",
+			e.Block(pierrors.ErrToolPermissionDenied.Wrap(
 				fmt.Errorf("tool %q: %s", e.Definition.Name, reason),
 			))
 			return

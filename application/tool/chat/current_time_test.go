@@ -44,7 +44,7 @@ func TestCurrentTimeToolRejectsInvalidTimezoneAndExtraArguments(t *testing.T) {
 		`{"timezone":"Asia/Tokyo","location":"Tokyo"}`,
 	} {
 		_, err := tool.Execute(context.Background(), json.RawMessage(arguments), nil)
-		if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolInvalidArguments {
+		if pierrors.CodeOf(err) != pierrors.ErrToolInvalidArguments.Code() {
 			t.Fatalf("arguments = %s, error = %v", arguments, err)
 		}
 	}

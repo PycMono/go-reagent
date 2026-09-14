@@ -52,12 +52,12 @@ func (b *alertListener) OnEvent(ctx context.Context, event AgentEvent) {
 	}
 	// 循环护栏 recover 的合成结果不是工具执行失败，不产生 tool_error
 	// 告警；Run 终止时由 run_error 告警兜底。
-	if toolEvent.ErrorCode == pierrors.ErrorCodeRunLoopDetected {
+	if toolEvent.ErrorCode == pierrors.ErrRunLoopDetected.Code() {
 		return
 	}
 	summary := fmt.Sprintf("工具 %s 执行失败", toolEvent.Call.Name)
-	if toolEvent.ErrorCode != "" {
-		summary += fmt.Sprintf("（错误码 %s）", toolEvent.ErrorCode)
+	if toolEvent.ErrorCode != 0 {
+		summary += fmt.Sprintf("（错误码 %d）", toolEvent.ErrorCode)
 	}
 	b.notify(ctx, Notification{Kind: NotificationToolError, Summary: summary})
 }

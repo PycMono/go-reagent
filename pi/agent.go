@@ -367,7 +367,8 @@ func (a *Agent) prepareRunContext(ctx context.Context, request RunRequest) (harn
 	}
 
 	if input.Role != ai.RoleUser {
-		return harness.Context{}, fmt.Errorf("%w: input sender type must be customer", pierrors.ErrRequestInvalid)
+		return harness.Context{}, pierrors.ErrRequestInvalid.Wrap(
+			fmt.Errorf("input sender type must be customer"))
 	}
 	blocks := make([]harness.ContextBlock, len(request.Context))
 	for index, block := range request.Context {

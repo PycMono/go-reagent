@@ -45,5 +45,5 @@ func invalidArguments(message string, cause error) error {
 	if cause == nil {
 		cause = errors.New(message)
 	}
-	return pierrors.Wrap(pierrors.ErrorCodeToolInvalidArguments, "chat tool arguments", cause)
+	return pierrors.ErrToolInvalidArguments.Wrap(cause)
 }

@@ -252,7 +252,7 @@ func (l *Loop) compact(
 
 		encoded, err := harness.MarshalVisibleMessages(plan.SummaryMessages)
 		if err != nil {
-			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", fmt.Errorf("encode summary input: %w", err)))
+			return fail(pierrors.ErrAIGeneration.Wrap(fmt.Errorf("encode summary input: %w", err)))
 		}
 
 		summaryGenerate := &generateState{phase: observability.GenerationPhaseCompaction, rt: rt}
@@ -268,14 +268,14 @@ func (l *Loop) compact(
 		}
 
 		if response == nil {
-			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
+			return fail(pierrors.ErrAIGeneration.Wrap(
 				errors.New("provider returned an empty summary response")))
 		}
 
 		// 记账顺序固定：校验 Usage → 立即记账并累加预算 → 校验正文
 		// 与收敛条件 → 固定 Outcome（accepted / contract_invalid）。
 		if err = response.Usage.ValidateMetered(); err != nil {
-			return fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction usage", err))
+			return fail(pierrors.ErrAIGeneration.Wrap(err))
 		}
 		var contractMessages []ai.Message
 		var contractState harness.CompactionState
@@ -293,18 +293,18 @@ func (l *Loop) compact(
 		}
 		contractErr := func() error {
 			if err := response.ValidateThinking(); err != nil {
-				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+				return pierrors.ErrAIGeneration.Wrap(err)
 			}
 			text, err := response.Content.Text()
 			if err != nil {
-				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+				return pierrors.ErrAIGeneration.Wrap(err)
 			}
 			compacted, nextState, err := harness.ApplySummary(messages, plan, text, rt.state)
 			if err != nil {
-				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction", err)
+				return pierrors.ErrAIGeneration.Wrap(err)
 			}
 			if harness.VisibleMessagesBytes(compacted[plan.Start:plan.Start+1]) >= harness.VisibleMessagesBytes(plan.SummaryMessages) {
-				return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "context compaction",
+				return pierrors.ErrAIGeneration.Wrap(
 					errors.New("compaction checkpoint is not smaller than the replaced range"))
 			}
 			contractMessages = compacted

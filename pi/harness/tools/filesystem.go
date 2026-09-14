@@ -36,7 +36,7 @@ func NewWorkspace(workDir Root) (*Workspace, error) {
 	policy, err := workspacepolicy.Normalize(workspace.path, workspacepolicy.Policy{WriteMode: workspacepolicy.All})
 	if err != nil {
 		_ = workspace.root.Close()
-		return nil, fmt.Errorf("%w: 创建工作区策略失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("创建工作区策略失败: %w", err))
 	}
 	workspace.policy = policy
 	return workspace, nil
@@ -46,7 +46,7 @@ func NewWorkspace(workDir Root) (*Workspace, error) {
 // policy's independently rooted writable subtrees.
 func NewWorkspaceWithPolicy(workDir Root, policy *workspacepolicy.Normalized) (*Workspace, error) {
 	if policy == nil {
-		return nil, fmt.Errorf("%w: workspace policy 不能为空", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("workspace policy 不能为空"))
 	}
 	workspace, err := openWorkspace(workDir)
 	if err != nil {
@@ -54,7 +54,7 @@ func NewWorkspaceWithPolicy(workDir Root, policy *workspacepolicy.Normalized) (*
 	}
 	if workspace.path != policy.Root() {
 		_ = workspace.root.Close()
-		return nil, fmt.Errorf("%w: workspace policy root 不匹配", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("workspace policy root 不匹配"))
 	}
 	workspace.policy = policy
 	if policy.Mode() == workspacepolicy.All {
@@ -134,29 +134,29 @@ func openTrustedPrefix(workspaceRoot *os.Root, prefix string) (*os.Root, error) 
 func openWorkspace(workDir Root) (*Workspace, error) {
 	path := strings.TrimSpace(string(workDir))
 	if path == "" {
-		return nil, fmt.Errorf("%w: workDir 不能为空", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("workDir 不能为空"))
 	}
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 解析工作区失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("解析工作区失败: %w", err))
 	}
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 解析工作区真实路径失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("解析工作区真实路径失败: %w", err))
 	}
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 检查工作区失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("检查工作区失败: %w", err))
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: workDir 必须是目录", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("workDir 必须是目录"))
 	}
 
 	root, err := os.OpenRoot(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 打开工作区失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("打开工作区失败: %w", err))
 	}
 
 	workspace := &Workspace{path: resolvedPath, root: root}

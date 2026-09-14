@@ -10,12 +10,12 @@ import (
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
 )
 
-func permissionErrorCode(t *testing.T, err error) pierrors.ErrorCode {
+func permissionErrorCode(t *testing.T, err error) int {
 	t.Helper()
 	if err == nil {
 		t.Fatal("Err should be set")
 	}
-	return pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", err))
+	return pierrors.CodeOf(pierrors.ClassifyTool(err))
 }
 
 // deny 规则命中：Block 且错误码为 tool_permission_denied，Tool 不执行。
@@ -36,8 +36,8 @@ func TestPermissionBlocksDeniedCall(t *testing.T) {
 
 	runChain(e, Permission(rules), ExecuteTool)
 
-	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrorCodeToolPermissionDenied {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeToolPermissionDenied)
+	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrToolPermissionDenied.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrToolPermissionDenied.Code())
 	}
 	if executed {
 		t.Fatal("denied tool should not execute")

@@ -11,9 +11,7 @@ func SchemaValidation(e *Execution) {
 	if e.ValidateArgs != nil {
 		if err := e.ValidateArgs(e.Call.Arguments); err != nil {
 			e.Output = ai.ToolOutput{}
-			e.Block(pierrors.Wrap(
-				pierrors.ErrorCodeToolInvalidArguments,
-				"tool arguments",
+			e.Block(pierrors.ErrToolInvalidArguments.Wrap(
 				err,
 			))
 			return

@@ -124,23 +124,23 @@ type subagentArgs struct {
 func (t *SubagentTool) Execute(ctx context.Context, raw json.RawMessage, emit ai.UpdateEmitter) (ai.ToolOutput, error) {
 	pipeline := t.bound.Load()
 	if pipeline == nil {
-		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeInternal, "subagent",
+		return ai.ToolOutput{}, pierrors.ErrInternal.Wrap(
 			errors.New("subagent tool is not bound"))
 	}
 	if governor.SubagentDepth(ctx) >= governor.MaxSubagentDepth {
-		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeRequestInvalid, "subagent",
+		return ai.ToolOutput{}, pierrors.ErrRequestInvalid.Wrap(
 			errors.New("subagent nesting depth exceeded"))
 	}
 	var args subagentArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeToolInvalidArguments, "subagent", err)
+		return ai.ToolOutput{}, pierrors.ErrToolInvalidArguments.Wrap(err)
 	}
 	// maxLength/minLength 已由中间件的 schema 校验强制（JSON Schema 按
 	// Unicode 码点计数）；此处只需拦截 schema 挡不住的全空白输入。
 	args.Task = strings.TrimSpace(args.Task)
 	args.Context = strings.TrimSpace(args.Context)
 	if args.Task == "" {
-		return ai.ToolOutput{}, pierrors.Wrap(pierrors.ErrorCodeToolInvalidArguments, "subagent",
+		return ai.ToolOutput{}, pierrors.ErrToolInvalidArguments.Wrap(
 			errors.New("task must not be empty"))
 	}
 

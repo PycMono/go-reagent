@@ -127,8 +127,8 @@ func TestPanicRecoveryConvertsPanicToError(t *testing.T) {
 	if e.Err == nil {
 		t.Fatal("Err should be set after panic")
 	}
-	if code := pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", e.Err)); code != pierrors.ErrorCodeToolPanic {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeToolPanic)
+	if code := pierrors.CodeOf(pierrors.ClassifyTool(e.Err)); code != pierrors.ErrToolPanic.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrToolPanic.Code())
 	}
 	if reached {
 		t.Fatal("handler after panicking handler should not run")
@@ -152,8 +152,8 @@ func TestSchemaValidationBlocksOnInvalidArguments(t *testing.T) {
 	if e.Err == nil {
 		t.Fatal("Err should be set on invalid arguments")
 	}
-	if code := pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", e.Err)); code != pierrors.ErrorCodeToolInvalidArguments {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeToolInvalidArguments)
+	if code := pierrors.CodeOf(pierrors.ClassifyTool(e.Err)); code != pierrors.ErrToolInvalidArguments.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrToolInvalidArguments.Code())
 	}
 	if executed {
 		t.Fatal("tool should not execute on invalid arguments")

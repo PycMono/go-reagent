@@ -30,9 +30,7 @@ func Timeout(d time.Duration) Handler {
 		// canceled/deadline_exceeded，不在此覆盖。
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) && parent.Err() == nil {
 			e.Output = ai.ToolOutput{}
-			e.Err = pierrors.Wrap(
-				pierrors.ErrorCodeToolTimeout,
-				"tool timeout",
+			e.Err = pierrors.ErrToolTimeout.Wrap(
 				ctx.Err(),
 			)
 		}

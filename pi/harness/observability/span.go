@@ -13,6 +13,7 @@ package observability
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
@@ -27,7 +28,7 @@ func ClassifyError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return string(pierrors.ErrorCodeOf(err))
+	return strconv.Itoa(pierrors.CodeOf(err))
 }
 
 // ErrorFields 返回失败操作的 error.type / reagent.error.code 属性（§4.9）；
@@ -36,10 +37,10 @@ func ErrorFields(err error) []contexttracing.Field {
 	if err == nil {
 		return nil
 	}
-	code := pierrors.ErrorCodeOf(err)
-	fields := []contexttracing.Field{contexttracing.KV(AttrErrorType, string(code))}
-	if code != pierrors.ErrorCodeUnknown {
-		fields = append(fields, contexttracing.KV(AttrReagentErrorCode, string(code)))
+	code := pierrors.CodeOf(err)
+	fields := []contexttracing.Field{contexttracing.KV(AttrErrorType, strconv.Itoa(code))}
+	if code != 0 {
+		fields = append(fields, contexttracing.KV(AttrReagentErrorCode, strconv.Itoa(code)))
 	}
 	return fields
 }

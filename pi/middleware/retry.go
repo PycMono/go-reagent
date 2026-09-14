@@ -11,9 +11,9 @@ import (
 // retryableCodes 是允许重试的工具错误码：泛型运行时失败与执行超时。
 // 参数校验、权限拒绝、资源不存在等确定性错误重试无意义；取消与整体
 // 超期由 Run 层处置，绝不在此重试。
-var retryableCodes = map[pierrors.ErrorCode]struct{}{
-	pierrors.ErrorCodeToolRuntime: {},
-	pierrors.ErrorCodeToolTimeout: {},
+var retryableCodes = map[int]struct{}{
+	pierrors.ErrToolRuntime.Code(): {},
+	pierrors.ErrToolTimeout.Code(): {},
 }
 
 const (
@@ -80,6 +80,6 @@ func Retry(attempts int, backoff time.Duration, tools []string) Handler {
 }
 
 func isRetryable(err error) bool {
-	_, ok := retryableCodes[pierrors.ErrorCodeOf(err)]
+	_, ok := retryableCodes[pierrors.CodeOf(err)]
 	return ok
 }

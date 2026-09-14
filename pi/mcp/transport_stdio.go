@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 )
 
 // stdioCloseGracePeriod 是正常关闭时等待子进程自然退出的最长时间；
@@ -32,7 +34,7 @@ type StdioTransportOptions struct {
 	// BuildCommand 与旧字段严格互斥（设计 §7）：非 nil 时 Command/Args/Env/WorkDir
 	// 必须全为零值，否则构造报错（防止两半配置静默拼接）；回调返回 (nil, nil)
 	// 同样报错。设置后进程组设置收口到 Runner，transport 不再调用
-	// configureProcessGroup（重复赋值 SysProcAttr 会互相覆盖）。
+	// sandbox.ConfigureProcessGroup（重复赋值 SysProcAttr 会互相覆盖）。
 	BuildCommand func() (*exec.Cmd, error)
 }
 
@@ -176,7 +178,7 @@ func (t *StdioTransport) start() {
 	var command *exec.Cmd
 	if t.options.BuildCommand != nil {
 		// 回调路径：进程构造（含沙箱包装、进程组设置）收口到 Runner（设计 §7），
-		// transport 不再调用 configureProcessGroup——两者都会给 SysProcAttr
+		// transport 不再调用 sandbox.ConfigureProcessGroup——两者都会给 SysProcAttr
 		// 赋值，重复设置会互相覆盖。
 		cmd, err := t.options.BuildCommand()
 		if err != nil {
@@ -192,7 +194,7 @@ func (t *StdioTransport) start() {
 		command = exec.Command(t.options.Command, t.options.Args...)
 		command.Dir = t.options.WorkDir
 		command.Env = t.options.Env
-		configureProcessGroup(command)
+		sandbox.ConfigureProcessGroup(command)
 	}
 
 	stdin, err := command.StdinPipe()
@@ -329,7 +331,7 @@ func (t *StdioTransport) killProcessTree() {
 	if command == nil || command.Process == nil {
 		return
 	}
-	_ = killProcessTree(command.Process)
+	_ = sandbox.KillProcessGroup(command.Process)
 }
 
 func (t *StdioTransport) Send(ctx context.Context, request Request) (Response, error) {

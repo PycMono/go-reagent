@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	contexttracing "github.com/PycMono/go-context-sdk/tracing"
@@ -65,7 +66,7 @@ func (l *Loop) generate(
 		response, published, genErr := l.generateWithRetry(ctx, state, ai.MergeMessages(messages, ephemeral), tools, onText)
 		result = generationResult{message: response, context: messages}
 		// 只有尚未发布文本的上下文超限请求可以压缩后重试。
-		if genErr != nil && !published && pierrors.ErrorCodeOf(genErr) == pierrors.ErrorCodeAIContextOverflow {
+		if genErr != nil && !published && pierrors.ErrAIContextOverflow.Match(genErr) {
 			result, genErr = l.recoverOverflow(ctx, state, response, genErr, messages, ephemeral, tools, onText, onCompactionUsage)
 		}
 		result.attempts = state.attempts
@@ -75,10 +76,10 @@ func (l *Loop) generate(
 		outcome := observability.GenerationOutcomeSucceeded
 		if genErr != nil {
 			outcome = observability.GenerationOutcomeFailed
-			switch pierrors.ErrorCodeOf(genErr) {
-			case pierrors.ErrorCodeCanceled:
+			switch {
+			case pierrors.ErrCanceled.Match(genErr):
 				outcome = observability.GenerationOutcomeCanceled
-			case pierrors.ErrorCodeDeadlineExceeded:
+			case pierrors.ErrDeadlineExceeded.Match(genErr):
 				outcome = observability.GenerationOutcomeDeadlineExceeded
 			}
 		}
@@ -131,8 +132,7 @@ func (l *Loop) generateWithRetry(
 		retry.Context(ctx),
 		retry.LastErrorOnly(true),
 		retry.RetryIf(func(err error) bool {
-			code := pierrors.ErrorCodeOf(err)
-			return !published && (code == pierrors.ErrorCodeAITransient || code == pierrors.ErrorCodeAIRateLimited)
+			return !published && (pierrors.ErrAITransient.Match(err) || pierrors.ErrAIRateLimited.Match(err))
 		}),
 		retry.DelayType(func(attempt uint, _ error, _ *retry.Config) time.Duration {
 			return retryDelay(int(attempt - 1))
@@ -145,12 +145,12 @@ func (l *Loop) generateWithRetry(
 			waitingForRetry = true
 			scheduledAt = time.Now()
 			delay := retryDelay(int(attempt))
-			reason := string(pierrors.ErrorCodeOf(err))
+			reason := strconv.Itoa(pierrors.CodeOf(err))
 			// 重试等待事件写入当前 Span。
 			observability.RecordRetryScheduled(ctx, state.attempts+1, delay, reason)
 			logsdk.Warn(ctx, "model generation retry",
 				logsdk.Any("component", "model_recovery"),
-				logsdk.Any("error_code", pierrors.ErrorCodeOf(err)),
+				logsdk.Any("error_code", pierrors.CodeOf(err)),
 				logsdk.Any("retry", attempt+1),
 				logsdk.Any("delay_ms", delay.Milliseconds()),
 			)

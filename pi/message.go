@@ -35,10 +35,10 @@ func (request RunRequest) Validate() error {
 	}
 	for index, block := range request.Context {
 		if strings.TrimSpace(block.Name) == "" {
-			return fmt.Errorf("%w: context block %d name must not be empty", pierrors.ErrRequestInvalid, index)
+			return pierrors.ErrRequestInvalid.Wrap(fmt.Errorf("context block %d name must not be empty", index))
 		}
 		if strings.TrimSpace(block.Content) == "" {
-			return fmt.Errorf("%w: context block %d content must not be empty", pierrors.ErrRequestInvalid, index)
+			return pierrors.ErrRequestInvalid.Wrap(fmt.Errorf("context block %d content must not be empty", index))
 		}
 	}
 
@@ -93,15 +93,15 @@ type Message struct {
 // Message2AI 校验业务消息并转换为模型内部消息。
 func (message Message) Message2AI() (ai.Message, error) {
 	if message.ContentType != "text" {
-		return ai.Message{}, fmt.Errorf(
-			"%w: message content type must be %q, got %q",
-			pierrors.ErrRequestInvalid,
+		return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(fmt.Errorf(
+			"message content type must be %q, got %q",
 			"text",
 			message.ContentType,
-		)
+		))
 	}
 	if strings.TrimSpace(message.Content) == "" {
-		return ai.Message{}, fmt.Errorf("%w: message content must not be empty", pierrors.ErrRequestInvalid)
+		return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(
+			fmt.Errorf("message content must not be empty"))
 	}
 
 	var role ai.Role
@@ -111,26 +111,27 @@ func (message Message) Message2AI() (ai.Message, error) {
 	case "ai":
 		role = ai.RoleAssistant
 	default:
-		return ai.Message{}, fmt.Errorf(
-			"%w: unsupported message sender type %q",
-			pierrors.ErrRequestInvalid,
+		return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(fmt.Errorf(
+			"unsupported message sender type %q",
 			message.SenderType,
-		)
+		))
 	}
 
 	content := []ai.ContentBlock{ai.TextBlock(message.Content)}
 	if len(message.ImageURLs) > 0 {
 		if role != ai.RoleUser {
-			return ai.Message{}, fmt.Errorf("%w: only customer messages may attach images", pierrors.ErrRequestInvalid)
+			return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(
+				fmt.Errorf("only customer messages may attach images"))
 		}
 		if len(message.ImageURLs) > MaxImagesPerMessage {
-			return ai.Message{}, fmt.Errorf("%w: at most %d images per message, got %d",
-				pierrors.ErrRequestInvalid, MaxImagesPerMessage, len(message.ImageURLs))
+			return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(fmt.Errorf(
+				"at most %d images per message, got %d",
+				MaxImagesPerMessage, len(message.ImageURLs)))
 		}
 		for _, imageURL := range message.ImageURLs {
 			block := ai.ImageBlock(imageURL)
 			if err := block.Validate(); err != nil {
-				return ai.Message{}, fmt.Errorf("%w: %v", pierrors.ErrRequestInvalid, err)
+				return ai.Message{}, pierrors.ErrRequestInvalid.Wrap(err)
 			}
 			content = append(content, block)
 		}

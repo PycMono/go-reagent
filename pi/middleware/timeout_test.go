@@ -26,8 +26,8 @@ func TestTimeoutConvertsSlowToolToToolTimeout(t *testing.T) {
 
 	runChain(e, Timeout(20*time.Millisecond), ExecuteTool)
 
-	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrorCodeToolTimeout {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeToolTimeout)
+	if code := permissionErrorCode(t, e.Err); code != pierrors.ErrToolTimeout.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrToolTimeout.Code())
 	}
 	// 返回后 e.Ctx 应还原为父 ctx（可被 Retry 安全重跑）。
 	if e.Ctx.Err() != nil {
@@ -69,7 +69,7 @@ func TestTimeoutDoesNotOverrideParentCancellation(t *testing.T) {
 	cancel()
 	<-done
 
-	if code := pierrors.ErrorCodeOf(e.Err); code != pierrors.ErrorCodeCanceled {
-		t.Fatalf("error code = %v, want %v", code, pierrors.ErrorCodeCanceled)
+	if code := pierrors.CodeOf(e.Err); code != pierrors.ErrCanceled.Code() {
+		t.Fatalf("error code = %v, want %v", code, pierrors.ErrCanceled.Code())
 	}
 }

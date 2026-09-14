@@ -70,13 +70,12 @@ func (err *transportError) Error() string {
 
 func (err *transportError) Unwrap() error { return err.cause }
 
-// ErrorCode 把 transport 失败归入 pi 的通用错误码（pierrors.ErrorCodeOf
-// 经 CodedError 读取）：本地读写/远端错误归 tool_runtime_failed，关闭中
-// 的请求归 agent_closed；取消与超时不在此判断，由 cause 链命中
-// canceled / deadline_exceeded。
-func (err *transportError) ErrorCode() pierrors.ErrorCode {
+// Code 把 transport 失败归入 pi 的通用错误码（pierrors.CodeOf 经错误链
+// 读取 int 码）：本地读写/远端错误归 tool_runtime，关闭中的请求归 closed；
+// 取消与超时不在此判断，由 cause 链命中 canceled / deadline_exceeded。
+func (err *transportError) Code() int {
 	if err.kind == "transport closed" {
-		return pierrors.ErrorCodeClosed
+		return pierrors.ErrClosed.Code()
 	}
-	return pierrors.ErrorCodeToolRuntime
+	return pierrors.ErrToolRuntime.Code()
 }

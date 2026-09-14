@@ -236,7 +236,7 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewStartEvent(skillCall)))
 		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(skillCall, ai.ToolOutput{
 			Content: []ai.ContentBlock{ai.TextBlock("private skill instructions")},
-		}, false, "")))
+		}, false, 0)))
 
 		fileCall := ai.ToolCall{ID: "call-file", Name: "read", Arguments: []byte(`{"path":"README.md"}`)}
 		listener.OnEvent(ctx, pi.NewMessageStartEvent())
@@ -247,7 +247,7 @@ func TestStartRunDoesNotExposeSkillReadsOrReadContents(t *testing.T) {
 		})))
 		listener.OnEvent(ctx, pi.NewAgentToolEvent(toolexec.NewEndEvent(fileCall, ai.ToolOutput{
 			Content: []ai.ContentBlock{ai.TextBlock("private file body")},
-		}, false, "")))
+		}, false, 0)))
 		return pi.RunResult{}, nil
 	})
 	service := chatservice.NewService(repo, &controllerIDs{values: []string{"run-1"}}, runner, controllerCatalog{})

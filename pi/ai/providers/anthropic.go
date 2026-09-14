@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/PycMono/go-reagent/pi/ai"
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
@@ -43,11 +42,11 @@ func (p *AnthropicImpl) Stream(
 ) ai.Stream {
 	messages, system, err := toAnthropicMessages(msgs, p.vision)
 	if err != nil {
-		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.ErrAIGeneration.Wrap(fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	tools, err := toAnthropicTools(availableTools)
 	if err != nil {
-		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.ErrAIGeneration.Wrap(fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := anthropicsdk.MessageNewParams{
@@ -84,7 +83,7 @@ func (s *anthropicStream) Next() bool {
 	for s.stream.Next() {
 		event := s.stream.Current()
 		if err := s.message.Accumulate(event); err != nil {
-			return s.fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "anthropic stream", err))
+			return s.fail(pierrors.ErrAIGeneration.Wrap(err))
 		}
 		switch current := event.AsAny().(type) {
 		case anthropicsdk.ContentBlockDeltaEvent:
@@ -118,9 +117,7 @@ func (s *anthropicStream) Close() error {
 
 func (s *anthropicStream) finish() error {
 	if s.message.StopReason == anthropicsdk.StopReasonModelContextWindowExceeded {
-		return pierrors.Wrap(
-			pierrors.ErrorCodeAIContextOverflow,
-			"anthropic stream",
+		return pierrors.ErrAIContextOverflow.Wrap(
 			errors.New("model context window exceeded"),
 		)
 	}
@@ -168,27 +165,34 @@ func anthropicFinishReason(reason anthropicsdk.StopReason) ai.FinishReason {
 }
 
 func (p *AnthropicImpl) classifyError(err error) error {
-	info := pierrors.AIProviderErrorInfo{Err: err}
+	code := pierrors.ErrAIGeneration
+	switch {
+	case errors.Is(err, context.Canceled):
+		code = pierrors.ErrCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		code = pierrors.ErrDeadlineExceeded
+	}
 	var apiErr *anthropicsdk.Error
 	if errors.As(err, &apiErr) {
-		info.StatusCode = apiErr.StatusCode
 		switch apiErr.Type() {
 		case anthropicsdk.ErrorTypeBillingError:
-			info.QuotaExceeded = true
+			code = pierrors.ErrAIQuotaExceeded
 		case anthropicsdk.ErrorTypeRateLimitError:
-			info.StatusCode = http.StatusTooManyRequests
-		case anthropicsdk.ErrorTypeTimeoutError:
-			info.StatusCode = http.StatusRequestTimeout
-		case anthropicsdk.ErrorTypeOverloadedError,
+			code = pierrors.ErrAIRateLimited
+		case anthropicsdk.ErrorTypeTimeoutError,
+			anthropicsdk.ErrorTypeOverloadedError,
 			anthropicsdk.ErrorTypeAPIError:
-			info.StatusCode = http.StatusInternalServerError
-		case anthropicsdk.ErrorTypeAuthenticationError:
-			info.StatusCode = http.StatusUnauthorized
-		case anthropicsdk.ErrorTypePermissionError:
-			info.StatusCode = http.StatusForbidden
+			code = pierrors.ErrAITransient
+		case anthropicsdk.ErrorTypeAuthenticationError,
+			anthropicsdk.ErrorTypePermissionError:
+			code = pierrors.ErrAIUnauthorized
+		default:
+			code = pierrors.HTTPStatusToCode(apiErr.StatusCode)
 		}
+	} else if pierrors.IsTransientNetwork(err) {
+		code = pierrors.ErrAITransient
 	}
-	return pierrors.ClassifyAIProvider(info)
+	return code.Wrap(err)
 }
 
 func toAnthropicMessages(messages []ai.Message, vision bool) ([]anthropicsdk.MessageParam, []anthropicsdk.TextBlockParam, error) {

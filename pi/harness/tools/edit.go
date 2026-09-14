@@ -323,9 +323,7 @@ func findUniqueTextMatch(content, oldText string) (textMatch, error) {
 		return match, err
 	}
 
-	return textMatch{}, pierrors.Wrap(
-		pierrors.ErrorCodeToolEditNoMatch,
-		"edit match",
+	return textMatch{}, pierrors.ErrToolEditNoMatch.Wrap(
 		errors.New("在文件中未找到 oldText，请先调用 read 确认文件内容和缩进"),
 	)
 }
@@ -367,9 +365,7 @@ func requireUniqueMatch(matches []textMatch) (textMatch, bool, error) {
 	case 1:
 		return matches[0], true, nil
 	default:
-		return textMatch{}, false, pierrors.Wrap(
-			pierrors.ErrorCodeToolEditNotUnique,
-			"edit match",
+		return textMatch{}, false, pierrors.ErrToolEditNotUnique.Wrap(
 			fmt.Errorf("模糊匹配到了 %d 处相似代码，请提供更多上下文以确保唯一性", len(matches)),
 		)
 	}

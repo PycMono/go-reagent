@@ -222,18 +222,14 @@ func (runtime *Runtime) executeWave(
 
 func normalizeEndEvent(call ai.ToolCall, output ai.ToolOutput, err error) Event {
 	isError := err != nil
-	var errorCode pierrors.ErrorCode
+	var errorCode int
 	if isError {
-		errorCode = pierrors.ErrorCodeOf(pierrors.ClassifyTool("tool execute", err))
+		errorCode = pierrors.CodeOf(pierrors.ClassifyTool(err))
 	}
 	if len(output.Content) == 0 {
 		text := "(no output)"
 		if isError {
 			text = err.Error()
-			var classified *pierrors.Error
-			if errors.As(err, &classified) {
-				text = classified.Err.Error()
-			}
 		}
 		output.Content = ai.ContentBlocks{ai.TextBlock(text)}
 	}

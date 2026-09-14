@@ -25,10 +25,10 @@ type Event struct {
 	Call   ai.ToolCall    `json:"call"`
 	Update *ai.ToolUpdate `json:"update,omitempty"`
 
-	Content   ai.ContentBlocks   `json:"content,omitempty"`
-	Details   any                `json:"details,omitempty"`
-	IsError   bool               `json:"is_error,omitempty"`
-	ErrorCode pierrors.ErrorCode `json:"error_code,omitempty"`
+	Content   ai.ContentBlocks `json:"content,omitempty"`
+	Details   any              `json:"details,omitempty"`
+	IsError   bool             `json:"is_error,omitempty"`
+	ErrorCode int              `json:"error_code,omitempty"`
 }
 
 func NewStartEvent(call ai.ToolCall) Event {
@@ -43,7 +43,7 @@ func NewEndEvent(
 	call ai.ToolCall,
 	output ai.ToolOutput,
 	isError bool,
-	errorCode pierrors.ErrorCode,
+	errorCode int,
 ) Event {
 	return Event{
 		Phase:     EventEnd,
@@ -71,10 +71,10 @@ func ResultsMatchCalls(calls ai.ToolCalls, events []Event) bool {
 }
 
 // NewRejectedEvent 构造一条确定性合成的 IsError 工具结束事件。
-func NewRejectedEvent(call ai.ToolCall, code pierrors.ErrorCode, text string) Event {
+func NewRejectedEvent(call ai.ToolCall, codeErr *pierrors.CodeError, text string) Event {
 	return NewEndEvent(call, ai.ToolOutput{
 		Content: []ai.ContentBlock{ai.TextBlock(text)},
-	}, true, code)
+	}, true, codeErr.Code())
 }
 
 // ResultMessage 将工具结束事件转换为模型消息，复制内容以隔离后续修改。

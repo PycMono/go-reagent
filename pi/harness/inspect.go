@@ -48,7 +48,7 @@ func loadWorkspaceSnapshot(ctx context.Context, workDir string) (workspaceSnapsh
 	}
 	snapshot, err := skills.Discover(workDir)
 	if err != nil {
-		return workspaceSnapshot{}, fmt.Errorf("%w: 发现 Agent Skills 失败: %w", pierrors.ErrWorkspaceInvalid, err)
+		return workspaceSnapshot{}, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("发现 Agent Skills 失败: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
 		return workspaceSnapshot{}, err

@@ -44,11 +44,11 @@ func (p *OpenAIImpl) Stream(
 ) ai.Stream {
 	openAIMessages, err := toOpenAIMessages(msgs, p.vision)
 	if err != nil {
-		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.ErrAIGeneration.Wrap(fmt.Errorf("%s 消息转换失败: %w", p.name, err)))
 	}
 	openAITools, err := toOpenAITools(availableTools)
 	if err != nil {
-		return newFailedStream(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
+		return newFailedStream(pierrors.ErrAIGeneration.Wrap(fmt.Errorf("%s 工具定义转换失败: %w", p.name, err)))
 	}
 
 	params := openaisdk.ChatCompletionNewParams{
@@ -91,7 +91,7 @@ func (s *openAIStream) Next() bool {
 	for s.stream.Next() {
 		chunk := s.stream.Current()
 		if !s.accumulator.AddChunk(chunk) {
-			return s.fail(pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", errors.New("流式响应拼接失败")))
+			return s.fail(pierrors.ErrAIGeneration.Wrap(errors.New("流式响应拼接失败")))
 		}
 		if chunk.JSON.Usage.Valid() && chunk.Usage.JSON.PromptTokens.Valid() &&
 			chunk.Usage.JSON.CompletionTokens.Valid() {
@@ -130,7 +130,7 @@ func (s *openAIStream) Close() error {
 func (s *openAIStream) finish() error {
 	response := s.accumulator.ChatCompletion
 	if len(response.Choices) == 0 {
-		return pierrors.Wrap(pierrors.ErrorCodeAIGeneration, "openai stream", fmt.Errorf("%s API 返回空 choices", s.provider.name))
+		return pierrors.ErrAIGeneration.Wrap(fmt.Errorf("%s API 返回空 choices", s.provider.name))
 	}
 
 	message := response.Choices[0].Message
@@ -170,14 +170,27 @@ func openAIFinishReason(reason string) ai.FinishReason {
 }
 
 func (p *OpenAIImpl) classifyError(err error) error {
-	info := pierrors.AIProviderErrorInfo{Err: err}
+	code := pierrors.ErrAIGeneration
+	switch {
+	case errors.Is(err, context.Canceled):
+		code = pierrors.ErrCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		code = pierrors.ErrDeadlineExceeded
+	}
 	var apiErr *openaisdk.Error
 	if errors.As(err, &apiErr) {
-		info.StatusCode = apiErr.StatusCode
-		info.ContextOverflow = apiErr.Code == "context_length_exceeded"
-		info.QuotaExceeded = apiErr.Code == "insufficient_quota"
+		switch {
+		case apiErr.Code == "context_length_exceeded":
+			code = pierrors.ErrAIContextOverflow
+		case apiErr.Code == "insufficient_quota":
+			code = pierrors.ErrAIQuotaExceeded
+		default:
+			code = pierrors.HTTPStatusToCode(apiErr.StatusCode)
+		}
+	} else if pierrors.IsTransientNetwork(err) {
+		code = pierrors.ErrAITransient
 	}
-	return pierrors.ClassifyAIProvider(info)
+	return code.Wrap(err)
 }
 
 func toOpenAIMessages(messages []ai.Message, vision bool) ([]openaisdk.ChatCompletionMessageParamUnion, error) {

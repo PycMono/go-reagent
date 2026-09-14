@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/PycMono/go-reagent/common/vo"
 	"github.com/PycMono/go-reagent/pi"
@@ -67,7 +68,7 @@ func mapRunEvent(runID string, event pi.AgentEvent) (vo.RunEventVO, bool, bool) 
 				result.Tool.Details = event.Tool.Details
 			}
 			result.Tool.IsError = event.Tool.IsError
-			result.Tool.ErrorCode = string(event.Tool.ErrorCode)
+			result.Tool.ErrorCode = strconv.Itoa(event.Tool.ErrorCode)
 			return result, true, true
 		}
 	case pi.AgentEventMessageStart:

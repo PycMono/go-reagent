@@ -23,7 +23,7 @@ func TestFindUniqueTextMatchExact(t *testing.T) {
 
 func TestFindUniqueTextMatchRejectsExactAmbiguity(t *testing.T) {
 	_, err := findUniqueTextMatch("same\nsame\n", "same")
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
+	if pierrors.CodeOf(err) != pierrors.ErrToolEditNotUnique.Code() {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -38,7 +38,7 @@ func TestFindUniqueTextMatchNormalizesOnlyNewlines(t *testing.T) {
 
 func TestFindUniqueTextMatchRejectsNormalizedNewlineAmbiguity(t *testing.T) {
 	_, err := findUniqueTextMatch("x\r\ny\r\nx\r\ny", "x\ny")
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
+	if pierrors.CodeOf(err) != pierrors.ErrToolEditNotUnique.Code() {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -63,14 +63,14 @@ func TestFindUniqueTextMatchIgnoresLineIndentation(t *testing.T) {
 func TestFindUniqueTextMatchRejectsLineAmbiguity(t *testing.T) {
 	content := "\tif true {\n\t\trun()\n\t}\n\tif true {\n\t\trun()\n\t}\n"
 	_, err := findUniqueTextMatch(content, "if true {\nrun()\n}")
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNotUnique {
+	if pierrors.CodeOf(err) != pierrors.ErrToolEditNotUnique.Code() {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestFindUniqueTextMatchReportsNoMatch(t *testing.T) {
 	_, err := findUniqueTextMatch("present", "missing")
-	if pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeToolEditNoMatch {
+	if pierrors.CodeOf(err) != pierrors.ErrToolEditNoMatch.Code() {
 		t.Fatalf("error = %v", err)
 	}
 }

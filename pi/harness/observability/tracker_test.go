@@ -92,7 +92,7 @@ func TestCostTrackerRejectsMissingUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
-	if err == nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
+	if err == nil || pierrors.CodeOf(err) != pierrors.ErrAIGeneration.Code() {
 		t.Fatalf("Stream().Result() error = %v, want generation error", err)
 	}
 	if result != nil {
@@ -111,7 +111,7 @@ func TestCostTrackerRejectsInvalidTokenUsage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result, err := streamResult(tracker.Stream(context.Background(), nil, nil)); result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
+		if result, err := streamResult(tracker.Stream(context.Background(), nil, nil)); result != nil || pierrors.CodeOf(err) != pierrors.ErrAIGeneration.Code() {
 			t.Fatalf("Stream().Result() = %#v, %v, want nil generation error", result, err)
 		}
 	}
@@ -144,7 +144,7 @@ func TestCostTrackerRejectsCostOutsideLedgerRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := streamResult(tracker.Stream(context.Background(), nil, nil))
-	if result != nil || pierrors.ErrorCodeOf(err) != pierrors.ErrorCodeAIGeneration {
+	if result != nil || pierrors.CodeOf(err) != pierrors.ErrAIGeneration.Code() {
 		t.Fatalf("Stream().Result() = %#v, %v, want nil generation error", result, err)
 	}
 }

@@ -17,10 +17,12 @@ type limitError struct {
 }
 
 func (err *limitError) Error() string {
-	return fmt.Sprintf("%v: %s", pierrors.ErrRunLimitExceeded, err.kind)
+	return fmt.Sprintf("%d|%s: %s", pierrors.ErrRunLimitExceeded.Code(), pierrors.ErrRunLimitExceeded.Message(), err.kind)
 }
 
 func (err *limitError) Unwrap() error { return pierrors.ErrRunLimitExceeded }
+
+func (err *limitError) Code() int { return pierrors.ErrRunLimitExceeded.Code() }
 
 // ErrParentBudgetExhausted 是父预算触顶取消 batchCtx 的专属 cause：
 // 用于把内部预算取消与用户取消/真实 deadline 区分开。
@@ -154,10 +156,10 @@ func (g *Governor) accumulateLocked(invocation Invocation) error {
 
 	// 判断是否达到上限
 	if g.limits.MaxCostUSD > 0 && g.totals.CostUSD >= g.limits.MaxCostUSD {
-		return g.setFirstErrLocked(pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitCostUSD}))
+		return g.setFirstErrLocked(pierrors.ErrRunLimitExceeded.Wrap(&limitError{kind: LimitCostUSD}))
 	}
 	if g.limits.MaxTotalTokens > 0 && g.totals.TotalTokens >= g.limits.MaxTotalTokens {
-		return g.setFirstErrLocked(pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitTotalTokens}))
+		return g.setFirstErrLocked(pierrors.ErrRunLimitExceeded.Wrap(&limitError{kind: LimitTotalTokens}))
 	}
 
 	return nil
@@ -181,7 +183,7 @@ func (g *Governor) CheckTurnLimit() (shouldExit bool, err error) {
 	g.mu.Lock()
 	var turnsErr error
 	if g.limits.MaxTurns > 0 && g.totals.Turns >= g.limits.MaxTurns {
-		turnsErr = pierrors.Wrap(pierrors.ErrorCodeRunLimitExceeded, "run budget", &limitError{kind: LimitTurns})
+		turnsErr = pierrors.ErrRunLimitExceeded.Wrap(&limitError{kind: LimitTurns})
 	}
 	g.mu.Unlock()
 	if turnsErr != nil {
@@ -250,9 +252,7 @@ func checkedAddInt64(a, b int64) (int64, bool) {
 }
 
 func totalsOverflow(field string) error {
-	return pierrors.Wrap(
-		pierrors.ErrorCodeInternal,
-		"run budget",
+	return pierrors.ErrInternal.Wrap(
 		fmt.Errorf("run totals %s exceeded the supported range", field),
 	)
 }

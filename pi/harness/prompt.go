@@ -69,26 +69,26 @@ func composePrompt(agents []byte, snapshot *skills.Snapshot) (ai.Message, skills
 
 func (c *PromptComposer) loadAgentsInstructions() ([]byte, error) {
 	if strings.TrimSpace(c.workDir) == "" {
-		return nil, fmt.Errorf("%w: workDir is required", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("workDir is required"))
 	}
 	root, err := os.OpenRoot(c.workDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: open workDir: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("open workDir: %w", err))
 	}
 	defer root.Close()
 
 	content, err := readRootRegularFile(root, "AGENTS.md")
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w: AGENTS.md is required", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("AGENTS.md is required"))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: read AGENTS.md: %w", pierrors.ErrWorkspaceInvalid, err)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("read AGENTS.md: %w", err))
 	}
 	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
-		return nil, fmt.Errorf("%w: AGENTS.md must be valid UTF-8 text", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("AGENTS.md must be valid UTF-8 text"))
 	}
 	if strings.TrimSpace(string(content)) == "" {
-		return nil, fmt.Errorf("%w: AGENTS.md must not be empty", pierrors.ErrWorkspaceInvalid)
+		return nil, pierrors.ErrWorkspaceInvalid.Wrap(fmt.Errorf("AGENTS.md must not be empty"))
 	}
 	return content, nil
 }
