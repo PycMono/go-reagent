@@ -39,20 +39,6 @@ type subagentPipeline struct {
 // IsSubagentTool 实现 toolexec.SubagentTool 标记接口。
 func (t *SubagentTool) IsSubagentTool() bool { return true }
 
-// Bound 报告子管线是否已在启动期绑定（诊断用）。
-func (t *SubagentTool) Bound() bool { return t.bound.Load() != nil }
-
-// ChildTools 返回绑定的子运行工具白名单快照（诊断用，未绑定返回 nil）。
-func (t *SubagentTool) ChildTools() ai.ToolDefinitions {
-	if pipeline := t.bound.Load(); pipeline != nil {
-		return pipeline.childTools
-	}
-	return nil
-}
-
-// SetWhitelist 覆盖子运行工具白名单（测试构造非法白名单用）。
-func (t *SubagentTool) SetWhitelist(tools []string) { t.tools = tools }
-
 // NewResearchSubagentTool 创建内置查证子代理工具（未绑定占位），
 // 供 pi.New 的调用方经 Options.Subagents 传入，Start 后自动绑定。
 func NewResearchSubagentTool() *SubagentTool { return newResearchSubagentTool() }

@@ -65,9 +65,6 @@ func WithLoopDetection(config loopdetect.Config) LoopOption {
 	}
 }
 
-// CompactionConfig 返回 Loop 生效的压缩配置（诊断用）。
-func (l *Loop) CompactionConfig() harness.CompactionConfig { return l.compaction }
-
 // maxSubagentCallsPerBatch 是单个工具批次允许执行的子代理调用上限
 // （toolexec.Runtime 对 wave 内每个调用都创建 goroutine，maxParallel 只限并发
 // 不限总数）。超出的调用不调度，确定性生成 IsError 结果。
