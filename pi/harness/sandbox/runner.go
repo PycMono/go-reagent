@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 // Policy SandboxPolicy 是后端的生效策略，用于工具描述、CLI banner 与 Details。

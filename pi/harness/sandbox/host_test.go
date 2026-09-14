@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestHostPayloadEnvRejectsPathOverride(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/PycMono/go-reagent/infrastructure/notice"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 // Register 装配完整 Agent 依赖图：config.PIRuntimeOptions 完成全部配置
@@ -67,13 +68,13 @@ func serverAgentOptions(params appParams) (pi.Options, error) {
 	opts.AllowWrite = false
 	opts.BuiltinSubagent = true
 	if params.Config.Agent.WorkspacePolicy == nil {
-		opts.WorkspacePolicy = pi.WorkspacePolicy{
-			WriteMode:        pi.WorkspaceWriteRestricted,
+		opts.WorkspacePolicy = workspacepolicy.Policy{
+			WriteMode:        workspacepolicy.Restricted,
 			WritablePrefixes: []string{".tmp", "scratch"},
 		}
 		return opts, nil
 	}
-	if opts.WorkspacePolicy.WriteMode != pi.WorkspaceWriteRestricted || !slices.Contains(opts.WorkspacePolicy.WritablePrefixes, ".tmp") {
+	if opts.WorkspacePolicy.WriteMode != workspacepolicy.Restricted || !slices.Contains(opts.WorkspacePolicy.WritablePrefixes, ".tmp") {
 		return pi.Options{}, fmt.Errorf("server agent workspace policy must be restricted and include .tmp")
 	}
 	for _, prefix := range opts.WorkspacePolicy.WritablePrefixes {

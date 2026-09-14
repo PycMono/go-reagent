@@ -22,6 +22,7 @@ import (
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func main() {
@@ -368,7 +369,7 @@ func cliAgentOptions(runtime *runtimeConfig, cfg *config.Config, flags cliFlags)
 	options.AllowWrite = flags.allowWrite || flags.yolo
 	options.AllowExec = flags.allowExec || flags.yolo
 	if options.WorkspacePolicy.WriteMode == "" {
-		options.WorkspacePolicy.WriteMode = pi.WorkspaceWriteAll
+		options.WorkspacePolicy.WriteMode = workspacepolicy.All
 	}
 	return options, nil
 }

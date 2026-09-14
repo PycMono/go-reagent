@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestWorkspacePolicyConfigCopiesPrefixes(t *testing.T) {
 	p := WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}
 	got := p.PI()
 	p.WritablePrefixes[0] = "unsafe"
-	if got.WriteMode != pi.WorkspaceWriteRestricted || !reflect.DeepEqual(got.WritablePrefixes, []string{".tmp", "scratch"}) {
+	if got.WriteMode != workspacepolicy.Restricted || !reflect.DeepEqual(got.WritablePrefixes, []string{".tmp", "scratch"}) {
 		t.Fatalf("policy alias or mapping error: %+v", got)
 	}
 }
@@ -23,12 +23,12 @@ func TestWorkspacePolicyConfigCopiesPrefixes(t *testing.T) {
 func TestLoadWorkspacePolicyFormats(t *testing.T) {
 	for _, tt := range []struct {
 		name, extension, agent string
-		wantMode               pi.WorkspaceWriteMode
+		wantMode               workspacepolicy.Mode
 		wantPrefixes           []string
 	}{
-		{name: "JSON all", extension: ".json", agent: `"workspace_policy":{"write_mode":"all","writable_prefixes":[]}`, wantMode: pi.WorkspaceWriteAll},
-		{name: "YAML restricted", extension: ".yaml", agent: "workspace_policy:\n    write_mode: restricted\n    writable_prefixes: [.tmp, scratch]", wantMode: pi.WorkspaceWriteRestricted, wantPrefixes: []string{".tmp", "scratch"}},
-		{name: "TOML restricted", extension: ".toml", agent: "[agent.workspace_policy]\nwrite_mode = \"restricted\"\nwritable_prefixes = [\".tmp\", \"scratch\"]", wantMode: pi.WorkspaceWriteRestricted, wantPrefixes: []string{".tmp", "scratch"}},
+		{name: "JSON all", extension: ".json", agent: `"workspace_policy":{"write_mode":"all","writable_prefixes":[]}`, wantMode: workspacepolicy.All},
+		{name: "YAML restricted", extension: ".yaml", agent: "workspace_policy:\n    write_mode: restricted\n    writable_prefixes: [.tmp, scratch]", wantMode: workspacepolicy.Restricted, wantPrefixes: []string{".tmp", "scratch"}},
+		{name: "TOML restricted", extension: ".toml", agent: "[agent.workspace_policy]\nwrite_mode = \"restricted\"\nwritable_prefixes = [\".tmp\", \"scratch\"]", wantMode: workspacepolicy.Restricted, wantPrefixes: []string{".tmp", "scratch"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workspace := t.TempDir()

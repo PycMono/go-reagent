@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestRestrictedHostFailsClosed(t *testing.T) {

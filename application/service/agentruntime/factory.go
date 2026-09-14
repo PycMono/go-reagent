@@ -13,6 +13,7 @@ import (
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai"
 	"github.com/PycMono/go-reagent/pi/harness"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 type PIFactory struct {
@@ -67,7 +68,7 @@ func (f *PIFactory) optionsFor(r Request, workDir string) (pi.Options, error) {
 		return pi.Options{}, errors.New("production runtime requires restricted readable workspace")
 	}
 	opts := pi.Options{WorkDir: workDir, AllowExec: s.Runtime.AllowExec, AllowWrite: false, BuiltinSubagent: s.Tools.Builtin.Subagent,
-		WorkspacePolicy: pi.WorkspacePolicy{WriteMode: pi.WorkspaceWriteRestricted, WritablePrefixes: append([]string{}, s.Runtime.WritePolicy.WritablePrefixes...)},
+		WorkspacePolicy: workspacepolicy.Policy{WriteMode: workspacepolicy.Restricted, WritablePrefixes: append([]string{}, s.Runtime.WritePolicy.WritablePrefixes...)},
 		LoopDetection:   s.Runtime.LoopDetection, Compaction: harness.CompactionConfig{ContextWindowTokens: s.Runtime.Compaction.ContextWindowTokens, EnablePrune: s.Runtime.Compaction.EnablePrune}, Notifiers: f.Notifiers}
 	// Server policy may be narrower, but never lets a saved version write behavior.
 	for _, prefix := range opts.WorkspacePolicy.WritablePrefixes {
@@ -162,7 +163,7 @@ func (f *PIFactory) authorOptions(r Request) (pi.Options, error) {
 		tools = []ai.Tool{fileTool}
 	}
 	return pi.Options{WorkDir: r.CandidateRoot, Platform: platform,
-		WorkspacePolicy: pi.WorkspacePolicy{WriteMode: pi.WorkspaceWriteRestricted},
+		WorkspacePolicy: workspacepolicy.Policy{WriteMode: workspacepolicy.Restricted},
 		Tools:           tools, LoopDetection: snapshot.Runtime.LoopDetection,
 		Compaction: harness.CompactionConfig{ContextWindowTokens: snapshot.Runtime.Compaction.ContextWindowTokens, EnablePrune: snapshot.Runtime.Compaction.EnablePrune}}, nil
 }

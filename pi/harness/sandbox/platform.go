@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 const probeTimeout = 10 * time.Second

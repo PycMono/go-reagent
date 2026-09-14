@@ -1,10 +1,10 @@
 package config
 
 import (
-	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 const (
@@ -95,9 +95,9 @@ type WorkspacePolicyConfig struct {
 	WritablePrefixes []string `json:"writable_prefixes" yaml:"writable_prefixes" toml:"writable_prefixes"`
 }
 
-func (config WorkspacePolicyConfig) PI() pi.WorkspacePolicy {
-	return pi.WorkspacePolicy{
-		WriteMode:        pi.WorkspaceWriteMode(config.WriteMode),
+func (config WorkspacePolicyConfig) PI() workspacepolicy.Policy {
+	return workspacepolicy.Policy{
+		WriteMode:        workspacepolicy.Mode(config.WriteMode),
 		WritablePrefixes: append([]string(nil), config.WritablePrefixes...),
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
 	"github.com/PycMono/go-reagent/pi/governor"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestParseFlagsValidation(t *testing.T) {
@@ -228,7 +229,7 @@ func buildToolsetAgent(t *testing.T, flags cliFlags) *pi.Agent {
 		Platform:        runtime.options,
 		AllowWrite:      flags.allowWrite || flags.yolo,
 		AllowExec:       flags.allowExec || flags.yolo,
-		WorkspacePolicy: pi.WorkspacePolicy{WriteMode: pi.WorkspaceWriteAll},
+		WorkspacePolicy: workspacepolicy.Policy{WriteMode: workspacepolicy.All},
 	})
 	if err != nil {
 		t.Fatalf("pi.New 失败: %v", err)
@@ -282,13 +283,13 @@ func TestCLIWorkspacePolicyDefaultsToAllOnlyWhenUnset(t *testing.T) {
 		name   string
 		policy *config.WorkspacePolicyConfig
 		flags  cliFlags
-		mode   pi.WorkspaceWriteMode
+		mode   workspacepolicy.Mode
 		prefix []string
 	}{
-		{name: "unset", mode: pi.WorkspaceWriteAll},
-		{name: "restricted write", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{"scratch"}}, flags: cliFlags{allowWrite: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{"scratch"}},
-		{name: "restricted exec", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{allowExec: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{".tmp", "scratch"}},
-		{name: "restricted yolo", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{yolo: true}, mode: pi.WorkspaceWriteRestricted, prefix: []string{".tmp", "scratch"}},
+		{name: "unset", mode: workspacepolicy.All},
+		{name: "restricted write", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{"scratch"}}, flags: cliFlags{allowWrite: true}, mode: workspacepolicy.Restricted, prefix: []string{"scratch"}},
+		{name: "restricted exec", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{allowExec: true}, mode: workspacepolicy.Restricted, prefix: []string{".tmp", "scratch"}},
+		{name: "restricted yolo", policy: &config.WorkspacePolicyConfig{WriteMode: "restricted", WritablePrefixes: []string{".tmp", "scratch"}}, flags: cliFlags{yolo: true}, mode: workspacepolicy.Restricted, prefix: []string{".tmp", "scratch"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workDir := t.TempDir()

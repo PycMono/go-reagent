@@ -1,7 +1,7 @@
 package sandbox
 
 import (
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 	"os"
 	"path/filepath"
 	"runtime"

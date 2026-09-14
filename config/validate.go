@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/PycMono/go-reagent/pi"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func (config *Config) normalizeAndValidate(options loadOptions) error {
@@ -397,7 +397,7 @@ func (config *AgentConfig) normalizeAndValidate(options loadOptions) error {
 	// 把解析后的绝对路径写回配置，下游装配层不再做任何解析与校验。
 	config.WorkspaceDir = resolved
 	if config.WorkspacePolicy != nil {
-		if err := pi.ValidateWorkspacePolicy(resolved, config.WorkspacePolicy.PI()); err != nil {
+		if _, err := workspacepolicy.Normalize(resolved, config.WorkspacePolicy.PI()); err != nil {
 			return fmt.Errorf("agent.workspace_policy: %w", err)
 		}
 	}

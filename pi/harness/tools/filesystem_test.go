@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestWorkspaceRestrictedCannotTruncateBundle(t *testing.T) {

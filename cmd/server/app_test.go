@@ -7,6 +7,7 @@ import (
 	"github.com/PycMono/go-reagent/config"
 	"github.com/PycMono/go-reagent/pi"
 	"github.com/PycMono/go-reagent/pi/ai/providers"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 func TestServerAgentOptionsUsesSafeDefaultsWithoutWriteTools(t *testing.T) {
@@ -17,7 +18,7 @@ func TestServerAgentOptionsUsesSafeDefaultsWithoutWriteTools(t *testing.T) {
 	if opts.AllowWrite || !opts.AllowExec || !opts.BuiltinSubagent {
 		t.Fatalf("capabilities = write:%v exec:%v subagent:%v", opts.AllowWrite, opts.AllowExec, opts.BuiltinSubagent)
 	}
-	if opts.WorkspacePolicy.WriteMode != pi.WorkspaceWriteRestricted || !reflect.DeepEqual(opts.WorkspacePolicy.WritablePrefixes, []string{".tmp", "scratch"}) {
+	if opts.WorkspacePolicy.WriteMode != workspacepolicy.Restricted || !reflect.DeepEqual(opts.WorkspacePolicy.WritablePrefixes, []string{".tmp", "scratch"}) {
 		t.Fatalf("policy = %+v", opts.WorkspacePolicy)
 	}
 }

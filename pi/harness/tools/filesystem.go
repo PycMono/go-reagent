@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	pierrors "github.com/PycMono/go-reagent/pi/errors"
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 // Root is the filesystem root shared by workspace-aware tools.

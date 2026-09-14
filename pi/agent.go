@@ -16,11 +16,11 @@ import (
 	"github.com/PycMono/go-reagent/pi/harness/observability"
 	"github.com/PycMono/go-reagent/pi/harness/sandbox"
 	"github.com/PycMono/go-reagent/pi/harness/tools"
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
 	"github.com/PycMono/go-reagent/pi/loopdetect"
 	pimcp "github.com/PycMono/go-reagent/pi/mcp"
 	"github.com/PycMono/go-reagent/pi/middleware"
 	"github.com/PycMono/go-reagent/pi/toolexec"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 )
 
 const defaultMaxParallelTools = 4
@@ -208,7 +208,7 @@ func normalizeWorkspaceOptions(opts Options) (*workspacepolicy.Normalized, bool,
 		if opts.AllowWrite || needsProcess {
 			return nil, false, errors.New("pi: workspace policy must be explicit when write or process execution is enabled")
 		}
-		policy.WriteMode = WorkspaceWriteRestricted
+		policy.WriteMode = workspacepolicy.Restricted
 	}
 	normalized, err := workspacepolicy.Normalize(opts.WorkDir, policy)
 	return normalized, needsProcess, err
@@ -403,7 +403,7 @@ type Options struct {
 	// 内置 Coding 工具档位：read 恒装；write/exec 按能力开关。
 	AllowWrite      bool
 	AllowExec       bool
-	WorkspacePolicy WorkspacePolicy
+	WorkspacePolicy workspacepolicy.Policy
 }
 
 // WorkDir 是 Agent 的工作区路径(由组合根供数)。

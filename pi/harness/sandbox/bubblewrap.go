@@ -2,7 +2,7 @@ package sandbox
 
 import (
 	"fmt"
-	"github.com/PycMono/go-reagent/pi/internal/workspacepolicy"
+	"github.com/PycMono/go-reagent/pi/workspacepolicy"
 	"os"
 	"os/exec"
 	"path/filepath"
