@@ -12,7 +12,7 @@
 原完整平台方案保留在 Git 历史；本版替代其数据库、业务流程和阶段安排，不再要求实现
 自动评测、模型微调、独立模型注册或可靠事件投递平台。
 
-当前参考基线：go-reagent `master@9eb5e37` 的运行结构，以及 内部参考项目 本地仓库的
+当前参考基线：go-reagent `master@9eb5e37` 的运行结构，以及内部参考项目本地仓库的
 `packages/store-sqlite/src/schema.ts`、`packages/store-spec/src/types.ts` 和训练发布源码。
 Phase 1A 实现时仍须以实际 checkout 检查调用位置。
 
@@ -44,9 +44,9 @@ agent_training_sessions
 安全边界不因表数减少而取消：管理员认证、租户校验、OS 沙箱、实际文件检查、不可变
 版本、发布原子切换及重复请求处理仍属于第一版要求。
 
-## 2. 内部参考项目 的参考方式
+## 2. 内部参考项目的实现方式
 
-内部参考项目 的相关真实表及用法：
+内部参考项目的相关真实表及用法：
 
 | 表 | 用途 |
 | --- | --- |
@@ -60,14 +60,14 @@ agent_training_sessions
 训练复用普通会话和成员，通过临时 `agent.train_self` 能力修改成员 cwd，完成训练后
 生成 Git 版本并登记 agent_versions。运行实例按 member.id 创建。证据在
 `packages/server/src/session-member-provisioning.ts`、`agent-runtime/manager.ts` 和
-`routes/agent-training.ts`。内部参考项目 的版本只固定 Bundle，模型配置是实时状态。
+`routes/agent-training.ts`。内部参考项目的版本只固定 Bundle，模型配置是实时状态。
 
 内部参考项目 使用两层检查：工具调用时检查路径和权限，发布时再次检查真实 Git diff。
 Gate A 不解析 bash 写入，因此不能作为唯一安全边界。对应文件为
 `packages/agent/src/runtime-adapters/gate-a.ts` 与 `packages/server/src/bundle-commit.ts`。
-其 Bundle gitignore 中的附件由 `.reference-repo/` 条目覆盖，并非独立条目。
+其 Bundle gitignore 中的附件由 `项目根目录条目` 条目覆盖，并非独立条目。
 
-本版借鉴会话独立目录、Git 文件历史和人工发布，不复制 内部参考项目 全部业务表。
+本版借鉴会话独立目录、Git 文件历史和人工发布，不复制内部参考项目全部业务表。
 go-reagent 没有 SessionMember 模型，因此保留一张独立训练会话表，复用现有聊天存储；
 为保证整体回滚，把模型和工具快照直接放入 agent_versions，而不再拆 Bundle/Model/Release。
 

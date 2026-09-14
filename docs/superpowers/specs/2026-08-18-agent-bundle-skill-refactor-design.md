@@ -2,7 +2,7 @@
 
 ## 目标
 
-参考 内部参考项目 的 Agent Bundle 分层方式，重构 Web Chat 默认 Workspace 中的通用 Agent、7 个专业 Agent Profile 及其 Skills。重构后，`AGENTS.md` 只负责稳定身份和全局边界，`SKILL.md` 负责一个明确任务的执行协议，稳定领域资料放入 `references/`，固定输出结构按需放入 `templates/`。
+借鉴内部参考项目的 Agent Bundle 分层方式，重构 Web Chat 默认 Workspace 中的通用 Agent、7 个专业 Agent Profile 及其 Skills。重构后，`AGENTS.md` 只负责稳定身份和全局边界，`SKILL.md` 负责一个明确任务的执行协议，稳定领域资料放入 `references/`，固定输出结构按需放入 `templates/`。
 
 本次不训练或修改模型权重。系统通过 Skill frontmatter 的 `description` 让模型按当前任务发现 Skill，再通过已注册的 `read` 工具按需读取完整 `SKILL.md`。
 
@@ -18,7 +18,7 @@
 - 不修改 `pi/`，不改变 `skills/`、`.agents/skills/`、`.claw/skills/` 的发现优先级。
 - 不内置药物剂量、地方性法律结论、车型实时价格/配置/召回等易变化事实。
 
-## 与 内部参考项目 的映射
+## 与内部参考项目的映射
 
 ```text
 内部参考项目 Agent Bundle       -> workspaces/chat/profiles/<profile-code>/
@@ -29,7 +29,7 @@ Stable bundle resources    -> profiles/<profile-code>/references/
 Task output templates      -> profiles/<profile-code>/skills/<skill>/templates/
 ```
 
-go-reagent 继续使用现有 `skills/` 约定，不引入 内部参考项目 的 `.pi/skills/`、斜杠命令、`argument-hint` 或 `requiredRole` 语义。
+go-reagent 继续使用现有 `skills/` 约定，不引入内部参考项目的 `.pi/skills/`、斜杠命令、`argument-hint` 或 `requiredRole` 语义。
 
 ## 目标目录
 
